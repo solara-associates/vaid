@@ -1,0 +1,29 @@
+[package]
+name = "vaid-pop"
+# The proof-of-possession signing primitive: the minimal, self-contained surface
+# an external client needs to authenticate a VAID-bound request. Bump MAJOR on any
+# change to the PoP canonicalization / wire shape (RequestAuthPayload field names,
+# JCS, digest, signature) — that breaks byte-identity against the frozen
+# conformance vector.
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["solara.associates"]
+description = "VAID proof-of-possession signing primitive (Rust): the canonical JCS→SHA-256→Ed25519 primitive of the verifiable agent-action identity (VAID) standard, plus the per-request RequestAuthPayload, identity newtypes, and operator-signing port. One source a signer and a conforming verifier agree against. A SYNTHERA standard, by solara.associates."
+repository = "https://github.com/solara-associates/vaid"
+homepage = "https://github.com/solara-associates/vaid"
+documentation = "https://docs.rs/vaid-pop"
+readme = "README.md"
+keywords = ["synthera", "vaid", "proof-of-possession", "ed25519", "signing"]
+categories = ["cryptography", "authentication", "api-bindings"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = "0.2"
+sha2 = { workspace = true }
+ring = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }

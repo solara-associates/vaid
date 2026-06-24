@@ -1,0 +1,31 @@
+# Synthera VAID — open standard layer (Apache-2.0).
+# Fresh workspace. Members are EXACTLY the two open crates: the proof-of-possession
+# signing primitive and the reference Rust client SDK built on it. No closed-plane
+# crate is a member, and no dependency resolves to one.
+[workspace]
+resolver = "2"
+members = [
+    "crates/vaid-pop",
+    "crates/vaid-client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["solara.associates"]
+
+# Dependency versions the two crates inherit via `{ workspace = true }`.
+# `vaid-pop` resolves to the LOCAL path in THIS repo.
+[workspace.dependencies]
+vaid-pop = { path = "crates/vaid-pop", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ring = "0.17"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+async-trait = "0.1"
+thiserror = "2"
+base64 = "0.22"
+tokio = { version = "1", features = ["full"] }

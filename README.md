@@ -1,0 +1,145 @@
+# Synthera VAID
+
+The open standard layer for verifiable agent-action identity (VAID).
+
+A VAID is a portable identity bound to an action that an autonomous agent takes.
+This repository defines how a VAID-bound request is canonicalized and signed, and
+ships a reference Rust SDK that produces and verifies those signatures. It is the
+interoperability contract: any client that follows it produces bytes that any
+conforming verifier accepts, with no shared runtime and no network service in
+between.
+
+## What this is
+
+Two crates, and nothing else:
+
+- **`vaid-pop`** is the proof-of-possession (PoP) primitive. It defines
+  one canonicalization path: RFC 8785 JSON Canonicalization Scheme (JCS), then
+  SHA-256 over the canonical bytes, then a pure Ed25519 signature over the 32-byte
+  digest. It also defines the request payload that gets signed and the VAID
+  identity types that payload binds. This is the byte-level specification, written
+  as code.
+
+- **`vaid-client`** is the reference SDK built on that primitive. It turns a
+  minted VAID document and a holder key into the four signed headers a request
+  carries, and it does not reimplement any of the canonicalization. It depends
+  only on `vaid-pop`.
+
+That is the entire open scope. There is no server, no database, and no runtime to
+stand up. You add the two crates to a Rust project and call them.
+
+## What it does
+
+A developer can create a VAID identifier, sign a request against it, and verify
+that signature, standalone, using only these crates.
+
+### Sign and verify directly with the primitive
+
+```rust
+use chrono::Utc;
+use ring::rand::SystemRandom;
+use ring::signature::{Ed25519KeyPair, KeyPair};
+use sha2::{Digest, Sha256};
+
+use vaid_pop::VaidId;
+use vaid_pop::request_auth::RequestAuthPayload;
+use vaid_pop::vaid_pop::{sign_payload, verify_signed_payload};
+
+// The payload binds body_sha256, so it must be the lowercase hex SHA-256 of the
+// exact request body bytes. The SDK below computes this for you; here it is shown
+// explicitly so the primitive example binds a real body, not an empty string.
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// 1. Create a VAID identifier for the action, and hold an Ed25519 key.
+let vaid = VaidId::new();
+let rng = SystemRandom::new();
+let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+let key = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+// 2. Describe the request this VAID is authorizing.
+let request_body = br#"{"task":"summarize the Q3 report"}"#;
+let payload = RequestAuthPayload {
+    vaid_id: vaid,
+    method: "POST".into(),
+    path: "/v1/agents/execute".into(),
+    body_sha256: hex_sha256(request_body),
+    tenant_id: "acme".into(),
+    timestamp: Utc::now(),
+    client_nonce: "a-fresh-per-request-nonce".into(),
+};
+
+// 3. Sign: JCS, then SHA-256, then Ed25519 over the digest.
+let signature = sign_payload(&payload, &key);
+
+// 4. Verify against the holder's public key.
+let verified = verify_signed_payload(&payload, key.public_key().as_ref(), &signature);
+assert!(verified);
+```
+
+### Produce request headers with the SDK
+
+For the common case of authenticating an HTTP request, the SDK takes the minted
+VAID document and your key and returns the four headers to attach. It hashes the
+body, generates a fresh nonce, and stamps a current timestamp for you.
+
+```rust
+use ring::signature::Ed25519KeyPair;
+use vaid_client::RequestSigner;
+
+let signer = RequestSigner::from_vaid_json(vaid_document_json, key)?;
+let headers = signer.sign_headers("POST", "/v1/agents/execute", request_body)?;
+
+// headers.into_pairs() yields, in order:
+//   x-synthera-vaid, x-synthera-timestamp, x-synthera-nonce, x-synthera-signature
+for (name, value) in headers.into_pairs() {
+    request.set_header(name, value);
+}
+```
+
+A runnable version of this path is in
+`crates/vaid-client/examples/emit_pop.rs`.
+
+### Proof that the bytes are portable
+
+The signing path is pinned by a frozen test vector,
+`crates/vaid-client/tests/vectors/operator_pop_v1.json`. The conformance test
+reproduces that vector's exact SHA-256 digest and its exact Ed25519 signature from
+the fixed inputs. That is the interoperability guarantee made concrete: an
+independent implementation that hits the same vector is byte-compatible with this
+one.
+
+```
+cargo test
+```
+
+The conformance suite and the primitive's own round-trip and tamper-rejection
+tests run with nothing else present.
+
+## What is deliberately not here
+
+This repository is the standard and its reference signer. The following are on the
+roadmap and are intentionally absent today, so their absence is a statement of
+scope, not an oversight:
+
+- A reference VAID mint, including delegation and attenuation of a VAID into a
+  narrower child VAID.
+- The policy language for expressing what a VAID is permitted to do.
+
+Until those are published, treat this repository as the signing and verification
+contract only. It does not issue authority and it does not evaluate permission.
+
+## The commercial boundary
+
+The production control plane is a separate commercial product and is not in this
+repository. That product provides the hosted VAID authority that issues and
+revokes identities, the policy engine that decides what each VAID may do, the
+federation layer that routes action across tenants, the enforcement mesh that
+applies those decisions at call time, and the audit-of-record that retains a
+verifiable history. None of that is required to use what is here, and none of it
+is included here. This repository stands on its own as the open standard.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

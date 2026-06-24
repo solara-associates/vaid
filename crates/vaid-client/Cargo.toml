@@ -1,0 +1,36 @@
+[package]
+name = "vaid-client"
+# This crate is the SEED of a general Synthera Rust client SDK: proof-of-possession
+# request signing (`auth`) is its first capability; HTTP operations against a
+# deployment are the intended next inhabitants. Bump major on any change to the
+# PoP canonicalization / wire shape (breaks byte-identity with a conforming
+# verifier).
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["solara.associates"]
+description = "VAID reference client SDK (Rust) for the verifiable agent-action identity standard. First capability: proof-of-possession request signing, byte-identical to any conforming verifier. A SYNTHERA standard, by solara.associates."
+repository = "https://github.com/solara-associates/vaid"
+homepage = "https://github.com/solara-associates/vaid"
+documentation = "https://docs.rs/vaid-client"
+readme = "README.md"
+keywords = ["synthera", "agents", "vaid", "proof-of-possession", "signing"]
+categories = ["api-bindings", "cryptography", "authentication"]
+
+[dependencies]
+# The canonicalization + signing PRIMITIVE lives in vaid-pop
+# (`vaid_pop`, `request_auth`, `OperatorSigningPort`, VaidId/TenantId). This crate
+# builds the client-side header assembly ON it and does NOT reimplement JCS — so a
+# conforming verifier derives identical bytes by construction. Its publish closure
+# is just {vaid-pop, vaid-client}.
+vaid-pop = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+ring = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true }

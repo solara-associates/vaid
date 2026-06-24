@@ -1,0 +1,13 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Backtraces
+rustc-ice-*.txt
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
