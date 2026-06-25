@@ -4,29 +4,38 @@ The open standard layer for verifiable agent-action identity (VAID).
 
 A VAID is a portable identity bound to an action that an autonomous agent takes.
 This repository defines how a VAID-bound request is canonicalized and signed, and
-ships a reference Rust SDK that produces and verifies those signatures. It is the
-interoperability contract: any client that follows it produces bytes that any
-conforming verifier accepts, with no shared runtime and no network service in
-between.
+ships reference SDKs — in **Rust and Python** — that produce and verify those
+signatures. It is the interoperability contract: any client that follows it
+produces bytes that any conforming verifier accepts, with no shared runtime and
+no network service in between. Both reference SDKs reproduce the same frozen
+conformance vector byte-for-byte — that is the cross-language proof, made
+concrete (see [Two languages, one vector](#two-languages-one-vector)).
 
 ## What this is
 
-Two crates, and nothing else:
+The byte-level standard, and reference implementations of it in two languages:
 
-- **`vaid-pop`** is the proof-of-possession (PoP) primitive. It defines
-  one canonicalization path: RFC 8785 JSON Canonicalization Scheme (JCS), then
-  SHA-256 over the canonical bytes, then a pure Ed25519 signature over the 32-byte
-  digest. It also defines the request payload that gets signed and the VAID
-  identity types that payload binds. This is the byte-level specification, written
-  as code.
+- **`vaid-pop`** (Rust, `crates/vaid-pop`) is the proof-of-possession (PoP)
+  primitive. It defines one canonicalization path: RFC 8785 JSON Canonicalization
+  Scheme (JCS), then SHA-256 over the canonical bytes, then a pure Ed25519
+  signature over the 32-byte digest. It also defines the request payload that gets
+  signed and the VAID identity types that payload binds. This is the byte-level
+  specification, written as code.
 
-- **`vaid-client`** is the reference SDK built on that primitive. It turns a
-  minted VAID document and a holder key into the four signed headers a request
-  carries, and it does not reimplement any of the canonicalization. It depends
-  only on `vaid-pop`.
+- **`vaid-client`** (Rust, `crates/vaid-client`) is the reference SDK built on
+  that primitive. It turns a minted VAID document and a holder key into the four
+  signed headers a request carries, and it does not reimplement any of the
+  canonicalization. It depends only on `vaid-pop`.
+
+- **`vaid-pop`** (Python, `python/vaid-pop`) is the Python reference signer — the
+  single Python definition of the same PoP contract. It mirrors the Rust
+  canonicalization path exactly (RFC 8785 JCS → SHA-256 → pure Ed25519) and is
+  locked to the same frozen vector. It depends only on `cryptography` and
+  `rfc8785`, nothing else.
 
 That is the entire open scope. There is no server, no database, and no runtime to
-stand up. You add the two crates to a Rust project and call them.
+stand up. You add the Rust crates to a Cargo project, or `pip install` the Python
+package, and call them.
 
 ## What it does
 
@@ -116,6 +125,26 @@ cargo test
 
 The conformance suite and the primitive's own round-trip and tamper-rejection
 tests run with nothing else present.
+
+## Two languages, one vector
+
+The frozen vector `crates/vaid-client/tests/vectors/operator_pop_v1.json` is the
+single source of truth. The Python reference signer under `python/vaid-pop`
+vendors a byte-identical copy of it and reproduces the **same SHA-256 digest and
+the same Ed25519 signature** from the same fixed inputs — proven from the
+installed package, with no repo checkout required:
+
+```
+cd python/vaid-pop
+pip install .
+vaid-pop-conformance        # PASS = installed signer == frozen vector, byte-for-byte
+```
+
+So the interoperability guarantee is not a claim about a spec document — it is two
+independent implementations, in two languages, with no shared runtime, hitting the
+same bytes. The Rust `cargo test` above and the Python `vaid-pop-conformance`
+assert against the same vector; the repo's `pop-conformance` CI job runs both and
+fails on any divergence. That is the standard, proven.
 
 ## What is deliberately not here
 

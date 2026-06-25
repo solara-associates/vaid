@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaid-pop"
+# Independent semver. Additive-minor for new optional fields; major for any
+# canonicalization / field-name change (those break cross-language byte-identity
+# against operator_pop_v1.json).
+version = "0.1.0"
+description = "Canonical Python proof-of-possession (PoP) request signer for the VAID standard."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "solara.associates", email = "info@solara.associates" }]
+keywords = ["vaid", "agent-identity", "ed25519", "proof-of-possession", "cryptography", "signing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# cryptography = Ed25519 (no stdlib option); rfc8785 = RFC 8785 JCS, spec-for-spec
+# identical to the Rust serde_jcs path so the canonical bytes agree by construction
+# (locked by the vendored operator_pop_v1.json). NOTE: standardized on rfc8785 — do
+# NOT substitute another JCS library without re-proving byte-equality against the
+# frozen vector.
+dependencies = [
+    "cryptography>=42.0",
+    "rfc8785>=0.1.2",
+]
+
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can run
+# `vaid-pop-conformance` to prove the signer they got reproduces the frozen
+# cross-language vector byte-for-byte. Ships in the wheel (it's a package module),
+# unlike the repo `tests/` suite.
+vaid-pop-conformance = "vaid_pop.conformance:main"
+
+[project.urls]
+Homepage = "https://github.com/solara-associates/vaid"
+Repository = "https://github.com/solara-associates/vaid"
+Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-pop"
+Issues = "https://github.com/solara-associates/vaid/issues"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+# The vendored conformance vector ships inside the wheel so a consumer's CI runs
+# the firewall against the exact bytes this signer was proven against.
+packages = ["vaid_pop"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vaid_pop", "tests", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

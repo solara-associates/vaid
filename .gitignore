@@ -11,3 +11,14 @@ rustc-ice-*.txt
 *.swp
 .idea/
 .vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+.buildvenv/
+.installtest/
