@@ -1,5 +1,9 @@
 # Synthera VAID
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![SDKs: Rust + Python](https://img.shields.io/badge/SDKs-Rust%20%2B%20Python-orange.svg)](#what-this-is)
+[![Conformance: byte-for-byte](https://img.shields.io/badge/conformance-byte--for--byte-brightgreen.svg)](#two-languages-one-vector)
+
 The open standard layer for verifiable agent-action identity (VAID).
 
 A VAID is a portable identity bound to an action that an autonomous agent takes.
@@ -169,6 +173,19 @@ applies those decisions at call time, and the audit-of-record that retains a
 verifiable history. None of that is required to use what is here, and none of it
 is included here. This repository stands on its own as the open standard.
 
+## Contributing & community
+
+VAID is an interoperability contract, so the bar for contributions is concrete:
+any change must keep both reference SDKs reproducing the frozen conformance vector
+byte-for-byte.
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — dev setup (Rust + Python), the
+  conformance bar, and how to propose standard-affecting changes.
+- **[SECURITY.md](SECURITY.md)** — report vulnerabilities privately
+  (`info@solara.associates`); please don't open public issues for them.
+- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — Contributor Covenant 2.1.
+
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Copyright © 2026 solara.associates.
