@@ -1,0 +1,42 @@
+# Conformance gate: the 8/8 conformance + byte-identical cross-language checks are
+# the product claim, so we run them continuously on every push/PR to main.
+# All actions are pinned to full commit SHAs (trailing tag comment for readability).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust conformance (cargo test --workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: cargo test --workspace --locked
+        run: cargo test --workspace --locked
+
+  python:
+    name: Python conformance (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install vaid-pop + test deps
+        run: python -m pip install --upgrade pip && python -m pip install "./python/vaid-pop[test]"
+      - name: pytest conformance suite
+        run: python -m pytest python/vaid-pop
