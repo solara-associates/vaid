@@ -1,0 +1,46 @@
+[package]
+name = "vaid-mint"
+# The open, self-hostable REFERENCE mint for the VAID standard: mint a root VAID
+# and mint attenuated child VAIDs (delegation with scope/capability containment).
+# This is the open engine of the HashiCorp-Vault split — the durable revocation
+# store, KMS-backed kernel keys, and audit-of-record are the closed managed
+# authority and deliberately live outside this crate. Bump MAJOR on any change to
+# the canonical VAID document shape / signing bytes (breaks self-consistency
+# against the frozen mint vector).
+#
+# This is a SELF-CONSISTENT INDEPENDENT reference implementation. It is NOT
+# byte-identical-conformance-locked against the closed VAID format (that format is
+# still moving); the frozen vector proves only that this repo's Rust and Python
+# minters agree with each other.
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["solara.associates"]
+description = "VAID reference mint (Rust): mint a root VAID and mint attenuated child VAIDs (scope/capability-contained delegation) over the JCS→SHA-256→Ed25519 primitive. The open, self-hostable engine of the verifiable agent-action identity (VAID) standard. A SYNTHERA standard, by solara.associates."
+repository = "https://github.com/solara-associates/vaid"
+homepage = "https://github.com/solara-associates/vaid"
+documentation = "https://docs.rs/vaid-mint"
+readme = "README.md"
+keywords = ["synthera", "vaid", "delegation", "attenuation", "ed25519"]
+categories = ["cryptography", "authentication", "api-bindings"]
+
+[dependencies]
+# The VAID identity newtypes (VaidId/TenantId) and the canonical PoP primitive
+# (JCS→SHA-256→Ed25519) are reused from vaid-pop, NOT reimplemented — so the
+# mint's proof-of-possession bytes are identical to what a conforming verifier
+# derives, by construction.
+vaid-pop = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The VAID-document canonicalizer nulls `kernel_signature` and JCS-canonicalizes
+# the whole document; serde_jcs is the same RFC 8785 implementation vaid-pop uses.
+serde_jcs = "0.2"
+sha2 = { workspace = true }
+ring = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

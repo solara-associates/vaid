@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaid-mint"
+# Independent semver. Additive-minor for new optional fields; MAJOR for any change
+# to the canonical VAID document shape / signing bytes (those break cross-language
+# byte-identity against mint_v1.json).
+version = "0.1.0"
+description = "The open, self-hostable reference mint (Python) for the VAID standard: mint a root VAID and mint attenuated child VAIDs (scope/capability-contained delegation)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "solara.associates", email = "info@solara.associates" }]
+keywords = ["vaid", "agent-identity", "ed25519", "delegation", "attenuation", "mint"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# vaid-pop supplies the shared JCS→SHA-256→Ed25519 PoP primitive (mint reuses it
+# for proof-of-possession, NOT reimplemented). cryptography = Ed25519; rfc8785 =
+# RFC 8785 JCS, byte-identical to the Rust serde_jcs path (locked by mint_v1.json).
+# Do NOT substitute another JCS library without re-proving byte-equality.
+dependencies = [
+    "vaid-pop",
+    "cryptography>=42.0",
+    "rfc8785>=0.1.2",
+]
+
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can run
+# `vaid-mint-conformance` to prove the mint they got reproduces the frozen
+# cross-language VAID-document vector byte-for-byte.
+vaid-mint-conformance = "vaid_mint.conformance:main"
+
+[project.urls]
+Homepage = "https://github.com/solara-associates/vaid"
+Repository = "https://github.com/solara-associates/vaid"
+Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-mint"
+Issues = "https://github.com/solara-associates/vaid/issues"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+# The vendored conformance vector ships inside the wheel so a consumer's CI runs
+# the firewall against the exact bytes this mint was proven against.
+packages = ["vaid_mint"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vaid_mint", "tests", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

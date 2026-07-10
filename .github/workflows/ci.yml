@@ -36,10 +36,13 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      - name: Install vaid-pop + test deps
-        run: python -m pip install --upgrade pip && python -m pip install "./python/vaid-pop[test]"
-      - name: pytest conformance suite
-        run: python -m pytest python/vaid-pop
+      - name: Install vaid-pop + vaid-mint + test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python/vaid-pop[test]"
+          python -m pip install "./python/vaid-mint[test]"
+      - name: pytest conformance suite (vaid-pop + vaid-mint)
+        run: python -m pytest python/vaid-pop python/vaid-mint
 
   conformance-drift:
     name: PoP conformance drift-check (Rust == Python == vector, byte-identical)
@@ -73,3 +76,37 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install "./python/vaid-pop[test]"
       - name: Python conformance gate (pytest)
         run: python -m pytest python/vaid-pop/tests/test_conformance.py
+
+  mint-conformance-drift:
+    name: Mint conformance drift-check (Rust == Python == vector, byte-identical)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # (a) The two vendored copies of the mint vector MUST be byte-identical.
+      - name: Cross-language mint-vector byte-identity (cmp)
+        run: |
+          cmp \
+            crates/vaid-mint/tests/vectors/mint_v1.json \
+            python/vaid-mint/vaid_mint/vectors/mint_v1.json
+      # (b) Re-run BOTH mint conformance gates against their vendored vectors:
+      # Rust output == vector AND Python output == vector, and (via cmp) the two
+      # vectors are the same bytes ⇒ Rust == Python. Self-consistent within this
+      # repo (Decision B), not conformant against the closed VAID format.
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: Rust mint conformance gate (cargo test -p vaid-mint --test mint_conformance)
+        run: cargo test -p vaid-mint --test mint_conformance --locked
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install vaid-pop + vaid-mint + test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python/vaid-pop[test]"
+          python -m pip install "./python/vaid-mint[test]"
+      - name: Python mint conformance gate (pytest)
+        run: python -m pytest python/vaid-mint/tests/test_mint_conformance.py

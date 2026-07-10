@@ -7,6 +7,7 @@ resolver = "2"
 members = [
     "crates/vaid-pop",
     "crates/vaid-client",
+    "crates/vaid-mint",
 ]
 
 [workspace.package]
