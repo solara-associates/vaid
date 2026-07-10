@@ -47,9 +47,47 @@ class ConformanceError(AssertionError):
 
 
 def load_vector() -> dict:
-    """The conformance vector bundled with the installed package."""
+    """The operator-PoP conformance vector bundled with the installed package."""
     data = files("vaid_pop").joinpath("vectors/operator_pop_v1.json").read_text()
     return json.loads(data)
+
+
+def load_completion_vector() -> dict:
+    """The completion-record conformance vector bundled with the installed package."""
+    data = files("vaid_pop").joinpath("vectors/completion_v1.json").read_text()
+    return json.loads(data)
+
+
+def check_completion(v: dict) -> None:
+    """Python JCS + SHA-256 + Ed25519 over the camelCase CompletionRecord reproduce
+    the frozen digest + signature, and the AssuranceTier strings match (the enum
+    drift guard — the first vector with an enum)."""
+    from vaid_pop import AssuranceTier
+
+    digest = canonical_request_signing_bytes(v["input"])
+    if digest.hex() != v["digest_sha256_hex"]:
+        raise ConformanceError(
+            f"completion digest diverged from the frozen vector — BLOCKER\n"
+            f"  got    = {digest.hex()}\n  vector = {v['digest_sha256_hex']}"
+        )
+    seed = bytes.fromhex(v["ed25519"]["private_key_seed_hex"])
+    sk = Ed25519PrivateKey.from_private_bytes(seed)
+    sig = sk.sign(digest)
+    if sig.hex() != v["ed25519"]["signature_hex"]:
+        raise ConformanceError(
+            f"completion signature diverged from the frozen vector — BLOCKER\n"
+            f"  got    = {sig.hex()}\n  vector = {v['ed25519']['signature_hex']}"
+        )
+    py_tiers = [
+        AssuranceTier.SELF_REPORTED.value,
+        AssuranceTier.COUNTER_SIGNED.value,
+        AssuranceTier.THIRD_PARTY_ATTESTED.value,
+    ]
+    if py_tiers != v["assurance_tier_strings"]:
+        raise ConformanceError(
+            f"AssuranceTier strings diverged from the frozen vector — BLOCKER\n"
+            f"  got    = {py_tiers}\n  vector = {v['assurance_tier_strings']}"
+        )
 
 
 def check_digest(v: dict) -> None:
@@ -135,6 +173,7 @@ def run() -> dict:
     check_digest(v)
     check_signature(v)
     check_request_signer(v)
+    check_completion(load_completion_vector())
     return v
 
 
@@ -153,17 +192,24 @@ def test_packaged_request_signer_matches_frozen_vector() -> None:
     check_request_signer(load_vector())
 
 
+def test_packaged_completion_matches_frozen_vector() -> None:
+    check_completion(load_completion_vector())
+
+
 def main() -> int:
     try:
         v = run()
     except ConformanceError as exc:
         print(f"CROSS-LANGUAGE PoP FIREWALL: MISMATCH — BLOCKER\n{exc}")
         return 1
+    c = load_completion_vector()
     print(
-        "CROSS-LANGUAGE PoP FIREWALL: PASS — installed signer == frozen vector, "
+        "CROSS-LANGUAGE PoP FIREWALL: PASS — installed signer == frozen vectors, "
         "byte-for-byte\n"
-        f"  digest    = {v['digest_sha256_hex']}\n"
-        f"  signature = {v['ed25519']['signature_hex']}"
+        f"  operator   digest    = {v['digest_sha256_hex']}\n"
+        f"  operator   signature = {v['ed25519']['signature_hex']}\n"
+        f"  completion digest    = {c['digest_sha256_hex']}\n"
+        f"  completion signature = {c['ed25519']['signature_hex']}"
     )
     return 0
 

@@ -15,6 +15,7 @@ Usage::
     headers = signer.sign_headers("POST", "/vaid/mint", body_bytes)
 """
 
+from vaid_pop.completion import AssuranceTier, build_completion_record
 from vaid_pop.signer import (
     HEADER_NONCE,
     HEADER_SIGNATURE,
@@ -31,6 +32,8 @@ __all__ = [
     "canonical_request_signing_bytes",
     "build_request_auth_payload",
     "utc_whole_second_rfc3339",
+    "AssuranceTier",
+    "build_completion_record",
     "HEADER_VAID",
     "HEADER_TIMESTAMP",
     "HEADER_NONCE",
