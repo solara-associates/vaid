@@ -1,0 +1,20 @@
+{
+  "_comment": "Path-with-query conformance vector (v1). Load-bearing. `input` is a real RequestAuthPayload (camelCase) whose `path` is the on-the-wire request target INCLUDING the query string — the pinned signing convention for framework adapters (httpx `raw_path`), NOT path-only. Signing path-only would leave the query outside the signature (tamperable), so this is a security decision. A conforming signer MUST produce `digest_sha256_hex` from `input` via JCS (RFC 8785) -> SHA-256 and reproduce `ed25519.signature_hex` byte-for-byte from the seed. Same JCS→SHA-256→Ed25519 primitive as operator_pop_v1.json.",
+  "digest_sha256_hex": "b5b3c06fe6fe9a3c7ea848abd2d8d974f71f37f2373fe3bb041821ded88de755",
+  "ed25519": {
+    "_comment": "Deterministic test key (same RFC 8032 seed as operator_pop_v1.json). Any conforming implementation derives the same public key and produces the same signature over digest_sha256_hex.",
+    "private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "signature_hex": "eb67e1148bce0d3a3386882bf85139ef23f84a5ed876dadb992a666854afeee90d46281df65e1f96f543d1f0bd8f63ec70cbf0a141091f0c5a6bbe281d41880b"
+  },
+  "input": {
+    "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "clientNonce": "0123456789abcdef0123456789abcdef",
+    "method": "POST",
+    "path": "/vaid/mint?tenant=acme&limit=10",
+    "tenantId": "synthera-control-plane",
+    "timestamp": "2026-06-04T12:00:00Z",
+    "vaidId": "11111111-1111-1111-1111-111111111111"
+  },
+  "scheme": "JCS(RFC8785) -> SHA-256 -> pure Ed25519 over the 32-byte digest as raw message; raw 64-byte signature; raw 32-byte Ed25519 public key"
+}

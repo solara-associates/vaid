@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaid-langchain"
+version = "0.1.0"
+description = "LangChain request-signing adapter for the VAID standard: sign every outbound agent HTTP request with a VAID proof-of-possession via a thin httpx.Auth seam."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "solara.associates", email = "info@solara.associates" }]
+keywords = ["vaid", "langchain", "agents", "proof-of-possession", "httpx", "signing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# vaid-pop = the shared JCS→SHA-256→Ed25519 PoP signer (VaidAuth defers to it,
+# never reimplements it). httpx = the client-auth seam (VaidAuth is an httpx.Auth).
+# langchain-core is OPTIONAL: VaidAuth works with any httpx client standalone;
+# only `make_vaid_tool` needs it, and it is imported lazily.
+dependencies = [
+    "vaid-pop",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain-core>=0.3",
+]
+test = [
+    "pytest>=8.0",
+    "langchain-core>=0.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/solara-associates/vaid"
+Repository = "https://github.com/solara-associates/vaid"
+Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-langchain"
+Issues = "https://github.com/solara-associates/vaid/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vaid_langchain"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vaid_langchain", "tests", "examples", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
