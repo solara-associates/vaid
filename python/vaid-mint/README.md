@@ -8,6 +8,24 @@ The Python mirror of the Rust `vaid-mint` crate: the open, self-hostable
 - **`mint_child`** — **attenuated delegation**: an authenticated parent mints a
   child whose authority is always a subset of its own (`child ⊆ parent`).
 
+## Trust model — read this before using the mint
+
+This is a reference implementation with two deliberate, **unguarded** defaults:
+
+1. **`mint_root` has no authorization gate by default (`PermitAll`).** Anyone who
+   can call this code can mint a root VAID. Supply a real `AuthorizationGate` for
+   anything beyond local experimentation.
+2. **`mint_child` is intentionally ungated — attenuation *is* the authorization.**
+   Any holder of a valid parent VAID can mint children from it; a child can only
+   *narrow* scope/capabilities relative to its parent, never widen
+   (`child ⊆ parent`). Possession of a parent VAID is itself the authorization
+   boundary for delegation here. **Treat parent-VAID custody with the same care as
+   a credential.**
+
+Neither of these is a security recommendation for production use — they are the
+honest defaults of a self-hostable reference mint. See the sections below for
+where each is enforced in code.
+
 ```python
 from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
 
