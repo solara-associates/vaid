@@ -128,16 +128,13 @@ except Exception as e:
     failures.append(f"vaid-mint: {e}")
     print(f"    ✗ vaid-mint: {e}")
 
-# ---- vaid-langchain: pathquery_v1. No packaged firewall of its own, so reuse
-#      the installed vaid-pop conformance logic on the installed pathquery vector
-#      (it is a RequestAuthPayload vector, same shape as operator). ----
+# ---- vaid-langchain: pathquery_v1, via its OWN packaged firewall (not vaid-pop's).
+#      vlc.run() checks the adapter's request-target convention + digest + signature
+#      + the end-to-end signer path against the wheel's vendored vector. ----
 try:
-    import vaid_pop.conformance as vpc
+    import vaid_langchain.conformance as vlc
     same_bytes("vaid_langchain", "pathquery_v1.json", os.environ["TRUTH_PATHQUERY"], "vaid-langchain/pathquery")
-    pq = installed_vector("vaid_langchain", "pathquery_v1.json")
-    assert "?" in pq["input"]["path"], "pathquery vector must carry a query string"
-    vpc.check_digest(pq)
-    vpc.check_signature(pq)
+    vlc.run()
     print("    ✓ vaid-langchain: pathquery_v1 reproduced")
 except Exception as e:
     failures.append(f"vaid-langchain: {e}")

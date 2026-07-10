@@ -28,6 +28,12 @@ dependencies = [
     "httpx>=0.27",
 ]
 
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can run
+# `vaid-langchain-conformance` to prove the adapter they got reproduces the frozen
+# path-with-query vector byte-for-byte (via its own use of vaid-pop).
+vaid-langchain-conformance = "vaid_langchain.conformance:main"
+
 [project.optional-dependencies]
 langchain = [
     "langchain-core>=0.3",
