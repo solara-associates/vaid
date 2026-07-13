@@ -125,7 +125,7 @@ discipline to the whole signed document.
 
 This is an **independent** reference implementation. Its VAID document shape is
 self-consistent within this repo and is **not** pinned byte-for-byte against the
-closed substrate's (still-moving) VAID format. The forthcoming frozen mint vector
+managed authority's (still-moving) VAID format. The forthcoming frozen mint vector
 proves only that this repo's Rust and (planned) Python minters agree with each
 other.
 

@@ -59,7 +59,7 @@ def byo_seed(public_key_der: bytes) -> VaidSeed:
     return VaidSeed(
         agent_class="runner",
         version="1.0.0",
-        tenant_id="codex",
+        tenant_id="acme",
         scope_boundary=["data.x"],
         capability_set=["read"],
         public_key_der=public_key_der,
@@ -111,7 +111,7 @@ def test_root_generate_and_discard_mints_and_audits():
     seed = VaidSeed(
         agent_class="researcher",
         version="1.0.0",
-        tenant_id="codex",
+        tenant_id="acme",
         scope_boundary=["data.governance"],
         capability_set=["read.documents"],
     )
@@ -166,7 +166,7 @@ def test_root_byo_key_replay_is_rejected():
 def test_root_mint_denied_by_gate_has_no_side_effects():
     audit = InMemoryAudit()
     svc = MintService(ReferenceIssuer.ephemeral(1), audit, DenyAll())
-    seed = VaidSeed(agent_class="x", version="1.0.0", tenant_id="codex")
+    seed = VaidSeed(agent_class="x", version="1.0.0", tenant_id="acme")
     with pytest.raises(UnauthorizedError, match="denied by gate"):
         svc.mint_root(seed)
     assert audit.is_empty()
@@ -235,7 +235,7 @@ def test_cross_tenant_child_is_denied():
     k = holder_key()
     pub = pub_bytes(k)
     seed = child_seed(parent, ["data.aifactory.sub"], ["read"], pub)
-    seed.tenant_id = "codex"  # forge a foreign tenant
+    seed.tenant_id = "acme"  # forge a foreign tenant
     pop = make_pop(seed, pub, k, "forge-tenant")
     with pytest.raises(UnauthorizedError, match="cross-tenant delegation is denied"):
         svc.mint_child(seed, parent, pop)

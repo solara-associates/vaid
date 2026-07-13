@@ -7,7 +7,7 @@ that the derived fields (``lineage_hash``, ``vaid_id == agent_id``) match. A
 mismatch is a BLOCKER. The Rust ``mint_conformance`` test asserts the same vector.
 
 Per Decision B this proves self-consistency WITHIN this repo (Rust == Python),
-NOT conformance against the closed substrate's VAID format.
+NOT conformance against the managed authority's VAID format.
 """
 
 from __future__ import annotations

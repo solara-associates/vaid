@@ -9,7 +9,7 @@
 //! of the PoP signing contract and are defined here.
 //!
 //! NOTE (Decision B): this document is self-consistent within this repo. Its
-//! canonical bytes are NOT pinned to the closed substrate's VAID format — that
+//! canonical bytes are NOT pinned to the managed authority's VAID format — that
 //! format is still moving, and a cross-repo byte-identity commitment would be a
 //! maintenance trap until it settles.
 

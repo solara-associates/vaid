@@ -1,6 +1,6 @@
 # Synthera VAID — open standard layer (Apache-2.0).
 # Fresh workspace. Members are EXACTLY the two open crates: the proof-of-possession
-# signing primitive and the reference Rust client SDK built on it. No closed-plane
+# signing primitive and the reference Rust client SDK built on it. No non-public
 # crate is a member, and no dependency resolves to one.
 [workspace]
 resolver = "2"

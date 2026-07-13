@@ -1,6 +1,6 @@
 //! Minimal, self-contained error surface for the reference mint.
 //!
-//! This replaces the closed substrate's broad `SyntheraError` with exactly the
+//! This replaces a broad, catch-all error type with exactly the
 //! variants the mint path raises. Three kinds map cleanly:
 //!
 //! - [`MintError::Unauthorized`] — an authorization/attenuation denial (a child

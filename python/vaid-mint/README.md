@@ -65,7 +65,7 @@ vaid-mint-conformance          # exit 0 = PASS (installed mint == frozen vector)
 ```
 
 Per **Decision B** this is self-consistent within this repo (Rust == Python); it
-is **not** byte-conformant against the closed substrate's (still-moving) VAID
+is **not** byte-conformant against the managed authority's (still-moving) VAID
 format.
 
 ## Install (local dev)

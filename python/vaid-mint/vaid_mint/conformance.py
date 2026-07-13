@@ -13,7 +13,7 @@ the identical vector; a repo-level drift-check proves the two copies are
 byte-identical, so Rust output == Python output == vector.
 
 Per Decision B this proves self-consistency WITHIN this repo, NOT conformance
-against the closed substrate's VAID format.
+against the managed authority's VAID format.
 """
 
 from __future__ import annotations

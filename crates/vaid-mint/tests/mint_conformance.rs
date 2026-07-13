@@ -7,7 +7,7 @@
 //! `vaid_id == agent_id`) match. A mismatch is a BLOCKER.
 //!
 //! Per Decision B this proves self-consistency WITHIN this repo (Rust == Python),
-//! NOT conformance against the closed substrate's VAID format.
+//! NOT conformance against the managed authority's VAID format.
 
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::Value;

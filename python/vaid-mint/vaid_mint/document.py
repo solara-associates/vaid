@@ -11,7 +11,7 @@ cannot cover its own value), canonicalizes the whole document per RFC 8785 (JCS)
 and SHA-256s it — the 32-byte digest the kernel key signs.
 
 Per Decision B this is self-consistent WITHIN this repo (Rust == Python); it is
-NOT byte-conformant against the closed substrate's (still-moving) VAID format.
+NOT byte-conformant against the managed authority's (still-moving) VAID format.
 """
 
 from __future__ import annotations

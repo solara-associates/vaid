@@ -131,7 +131,7 @@ mod tests {
             seed: VaidSeed {
                 agent_class: "researcher".into(),
                 version: "1.0.0".into(),
-                tenant_id: "codex".into(),
+                tenant_id: "acme".into(),
                 parent_vaid: None,
                 scope_boundary: vec!["data.governance.*".into()],
                 capability_set: vec!["read.documents".into()],

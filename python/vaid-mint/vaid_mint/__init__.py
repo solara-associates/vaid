@@ -12,7 +12,7 @@ verbatim. Byte-identity of the signed VAID document with the Rust mint is locked
 by the vendored cross-language vector ``vaid_mint/vectors/mint_v1.json``.
 
 Per Decision B this is self-consistent WITHIN this repo (Rust == Python), NOT
-byte-conformant against the closed substrate's VAID format.
+byte-conformant against the managed authority's VAID format.
 
 Usage::
 

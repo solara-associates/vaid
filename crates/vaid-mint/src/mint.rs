@@ -361,7 +361,7 @@ mod tests {
         VaidSeed {
             agent_class: "runner".into(),
             version: "1.0.0".into(),
-            tenant_id: "codex".into(),
+            tenant_id: "acme".into(),
             parent_vaid: None,
             scope_boundary: vec!["data.x".into()],
             capability_set: vec!["read".into()],
@@ -395,7 +395,7 @@ mod tests {
             seed: VaidSeed {
                 agent_class: "researcher".into(),
                 version: "1.0.0".into(),
-                tenant_id: "codex".into(),
+                tenant_id: "acme".into(),
                 parent_vaid: None,
                 scope_boundary: vec!["data.governance".into()],
                 capability_set: vec!["read.documents".into()],
@@ -434,7 +434,7 @@ mod tests {
             seed: VaidSeed {
                 agent_class: "researcher".into(),
                 version: "1.0.0".into(),
-                tenant_id: "codex".into(),
+                tenant_id: "acme".into(),
                 parent_vaid: None,
                 scope_boundary: vec![],
                 capability_set: vec![],
@@ -630,7 +630,7 @@ mod tests {
         let kp = holder_keypair();
         let pubk = pubkey(&kp);
         let mut seed = child_seed(&parent, vec!["data.aifactory.sub"], vec!["read"], pubk.clone());
-        seed.tenant_id = "codex".into(); // forge a foreign tenant
+        seed.tenant_id = "acme".into(); // forge a foreign tenant
         let pop = make_pop(&seed, &pubk, &kp, "forge-tenant", Utc::now());
         let err = svc
             .mint_child(MintVaidRequest { seed, pop: Some(pop) }, Some(&parent))

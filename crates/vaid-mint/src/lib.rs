@@ -37,7 +37,7 @@
 //!
 //! This is an **independent reference implementation**. Its VAID document shape
 //! is self-consistent within this repo and is **not** pinned to be byte-identical
-//! against the closed substrate's (still-moving) VAID format. The frozen mint
+//! against the managed authority's (still-moving) VAID format. The frozen mint
 //! conformance vector proves only that this repo's Rust and Python minters agree
 //! with each other.
 //!

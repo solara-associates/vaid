@@ -8,7 +8,7 @@
 //! the same `input`.
 //!
 //! This proves self-consistency WITHIN this repo (Decision B) — Rust and Python
-//! minters agree — NOT byte-identity against the closed substrate's VAID format.
+//! minters agree — NOT byte-identity against the managed authority's VAID format.
 //!
 //! The kernel seed is the same RFC 8032 test seed used by `operator_pop_v1.json`,
 //! so the kernel public key is already known; only the VAID digest and the
