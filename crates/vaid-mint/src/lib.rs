@@ -19,9 +19,10 @@
 //! - [`authz`] — the [`authz::AuthorizationGate`] seam for root mints, defaulting
 //!   to [`authz::PermitAll`] (a reference choice, not a security recommendation).
 //!
-//! What is deliberately NOT here (it is the closed managed authority — the
-//! commercial product): durable hash-chained revocation, KMS-backed kernel keys,
-//! the audit-of-record, and any policy/mesh/federation control plane.
+//! Not included here — a hosted authority layers these on top: durable
+//! hash-chained revocation, KMS-backed kernel keys, the audit-of-record, and a
+//! policy/mesh/federation control plane. Revocation is the one gap with
+//! production impact today; see the README's "Trust model" section for mitigation.
 //!
 //! ## Reuse, not reimplementation
 //!

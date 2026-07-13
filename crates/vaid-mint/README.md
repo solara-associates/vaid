@@ -11,6 +11,41 @@ Identity) standard. It does two things:
 
 ## Trust model — read this before using the mint
 
+| Concern | Reference mint (this crate) | Hosted / commercial |
+|---|---|---|
+| Revocation | In-memory, non-durable | Durable, hash-chained |
+| Auth | Pluggable (`AuthorizationGate`) | Pluggable |
+| Audit | Pluggable (`AuditSink`) | Pluggable |
+
+**Revocation is not durable in this release, and there is currently no
+pluggable seam for it.** Unlike auth and audit, which are designed as
+extension points, revocation is a concrete in-memory `HashSet` — it does
+not survive a restart, and a self-hoster cannot currently swap in their
+own durable store without patching the crate directly. If the mint
+process restarts, previously revoked VAIDs are revocable again.
+
+**If you're running this in production, mitigate as follows:**
+
+- **Mint short-lived VAIDs.** `vaid_ttl_hours` controls issuance TTL.
+  Expiry is reported at verification time but is *not* itself enforced
+  as a revocation backstop — a short TTL shrinks the exposure window for
+  a leaked or compromised VAID even without durable revocation, so treat
+  TTL as your primary control today.
+- **Front the mint with a revocation-aware proxy or allowlist** if you
+  need durability across restarts — e.g. a sidecar or gateway that
+  checks a durable deny-list before forwarding to `verify_vaid`.
+- **Do not rely on this crate alone** for revocation guarantees that
+  must survive a process restart.
+
+We consider a pluggable `RevocationCheck` trait (mirroring `AuthorizationGate`
+and `AuditSink`) a natural next step for the reference implementation,
+and welcome contributions here. The hosted product additionally offers
+a durable, hash-chained revocation store — but the absence of a seam in
+the open crate today is a gap, not a deliberate withholding, and we'd
+rather you know how to mitigate it than discover it.
+
+### Unguarded defaults: authorization and delegation
+
 This is a reference implementation with two deliberate, **unguarded** defaults:
 
 1. **`mint_root` has no authorization gate by default (`PermitAll`).** Anyone who
@@ -29,15 +64,17 @@ honest defaults of a self-hostable reference mint. See the sections below (and t
 
 ## The split (why this is only the engine)
 
-This is the open half of a HashiCorp-Vault-style split. The mint *logic* is open
-and runnable by anyone. The **managed authority** — durable hash-chained
-revocation, KMS-backed kernel keys, and the audit-of-record — is the closed
-commercial product and deliberately lives outside this crate.
+This crate is the open half of a HashiCorp-Vault-style split: the mint *logic* is
+open and self-hostable. A hosted authority layers durable, operational hardening
+on top — KMS-backed kernel keys, an audit-of-record, a durable hash-chained
+revocation store, and a policy/mesh/federation control plane. Of these,
+revocation is the one with production impact for self-hosters today; see the
+**Trust model** section above for how to mitigate it.
 
-| Concern | Here (open) | Closed managed authority |
+| Concern | Here (open) | Hosted / commercial |
 |---|---|---|
 | Kernel signing key | ephemeral or caller-supplied bytes | KMS-backed, rotated |
-| Revocation | in-memory, non-durable | durable, hash-chained |
+| Revocation | in-memory — see **Trust model** above | durable, hash-chained |
 | Audit | in-memory / no-op sink | audit-of-record |
 | Policy / mesh / federation | — | control plane |
 

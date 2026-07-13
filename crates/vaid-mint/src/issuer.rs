@@ -3,16 +3,16 @@
 //!
 //! [`VaidIssuer`] is the seam; [`ReferenceIssuer`] is the open, self-hostable
 //! implementation. It holds an Ed25519 kernel key and signs the full canonical
-//! VAID document. Three things the closed managed authority does that this
-//! reference deliberately does NOT:
+//! VAID document. Three things a hosted authority adds that this reference
+//! leaves to the self-hoster:
 //!
 //! - **No KMS / secret-store bootstrap.** The kernel key is either generated
 //!   ephemerally ([`ReferenceIssuer::ephemeral`]) or supplied by the caller
 //!   ([`ReferenceIssuer::from_pkcs8`] / [`ReferenceIssuer::from_seed`]). A
 //!   self-hoster persists and protects that key however they choose.
-//! - **No durable revocation.** Revocation is an in-memory set that does not
-//!   survive restart. The durable, hash-chained revocation store is the
-//!   commercial product.
+//! - **No durable revocation.** The revoked set is in-memory and does not
+//!   survive restart; there is no pluggable seam for it yet. See the crate
+//!   README's "Trust model" section for how to mitigate this when self-hosting.
 //! - **No lineage lookup service.** The child→parent map is kept in memory for
 //!   local inspection only.
 
