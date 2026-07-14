@@ -17,7 +17,7 @@ concrete (see [Two languages, one vector](#two-languages-one-vector)).
 
 ## What this is
 
-The byte-level standard, and reference implementations of it in two languages:
+The byte-level standard, reference implementations in two languages, a reference mint with delegation, a LangChain integration, and completion records:
 
 - **`vaid-pop`** (Rust, `crates/vaid-pop`) is the proof-of-possession (PoP)
   primitive. It defines one canonicalization path: RFC 8785 JSON Canonicalization
@@ -37,9 +37,14 @@ The byte-level standard, and reference implementations of it in two languages:
   locked to the same frozen vector. It depends only on `cryptography` and
   `rfc8785`, nothing else.
 
+- **`vaid-mint`** (Rust + Python, `crates/vaid-mint`, `python/vaid-mint`) is the reference mint. It issues VAIDs, supports attenuated delegation (`mint_child`, where a child's authority is always a subset of its parent's), and documents its trust model plainly — see the crate's own README for what's durable and what isn't in this reference implementation.
+
+- **`vaid-langchain`** (Python, `python/vaid-langchain`) is a LangChain integration that signs requests using the VAID contract via an `httpx.Auth` adapter.
+
+- **completion records** (`vaid-pop`, `completion_v1.json` vector) — a self-reported provenance record for what an agent claims it did. Single-tier assurance today: self-reported only, and the type's own documentation says so.
+
 That is the entire open scope. There is no server, no database, and no runtime to
-stand up. You add the Rust crates to a Cargo project, or `pip install` the Python
-package, and call them.
+stand up beyond the mint if you choose to self-host it. You add the Rust crates to a Cargo project, or `pip install` the Python packages, and call them.
 
 ## What it does
 
@@ -152,16 +157,12 @@ fails on any divergence. That is the standard, proven.
 
 ## What is deliberately not here
 
-This repository is the standard and its reference signer. The following are on the
-roadmap and are intentionally absent today, so their absence is a statement of
-scope, not an oversight:
+This repository is the standard, its reference signer, a reference mint, a LangChain integration, and completion records. Two things remain closed and commercial:
 
-- A reference VAID mint, including delegation and attenuation of a VAID into a
-  narrower child VAID.
 - The policy language for expressing what a VAID is permitted to do.
+- The hosted authority that runs a mint in production — KMS-backed kernel keys, an audit-of-record, durable hash-chained revocation, and a policy/mesh/federation control plane.
 
-Until those are published, treat this repository as the signing and verification
-contract only. It does not issue authority and it does not evaluate permission.
+The reference mint here proves the shape of delegation and attenuation; it is not that hosted authority. One gap in particular is worth naming plainly rather than filing under "commercial": there is currently no pluggable seam for durable revocation in the open crate. That's a real gap we intend to close in the open — see `crates/vaid-mint`'s own trust-model documentation for exactly what's durable, what isn't, and how to mitigate it if you're running this in production today.
 
 ## The commercial boundary
 
