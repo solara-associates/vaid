@@ -10,14 +10,17 @@
 //!   ephemerally ([`ReferenceIssuer::ephemeral`]) or supplied by the caller
 //!   ([`ReferenceIssuer::from_pkcs8`] / [`ReferenceIssuer::from_seed`]). A
 //!   self-hoster persists and protects that key however they choose.
-//! - **No durable revocation.** The revoked set is in-memory and does not
-//!   survive restart; there is no pluggable seam for it yet. See the crate
-//!   README's "Trust model" section for how to mitigate this when self-hosting.
+//! - **Non-durable revocation, but a pluggable seam.** The built-in revoked set
+//!   is in-memory and does not survive restart. A self-hoster can now inject a
+//!   durable backend via the [`crate::revocation::RevocationCheck`] seam
+//!   ([`ReferenceIssuer::with_revocation_check`]) without patching the crate; the
+//!   built-in in-memory set remains the default and any injected check is layered
+//!   on top of it. See the crate README's "Trust model" section.
 //! - **No lineage lookup service.** The child→parent map is kept in memory for
 //!   local inspection only.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Utc};
 use ring::rand::SystemRandom;
@@ -28,6 +31,14 @@ use crate::document::{
     VAID_SIG_VERSION_V2,
 };
 use crate::error::{MintError, MintResult};
+use crate::revocation::RevocationCheck;
+
+/// The default issuance TTL, in hours, when a caller does not supply one. Short
+/// by design: with only non-durable revocation in this reference, a short TTL is
+/// the primary control that bounds the exposure window of a leaked or compromised
+/// VAID (see the README "Trust model"). The constructors still take an explicit
+/// `vaid_ttl_hours`; this constant documents the recommended baseline.
+pub const DEFAULT_VAID_TTL_HOURS: i64 = 1;
 
 /// The issuer seam. The mint holds one of these and asks it to issue signed
 /// documents. Sync (not async): issuing is CPU-only (key handling + one Ed25519
@@ -62,19 +73,26 @@ pub trait VaidIssuer: Send + Sync {
     ) -> MintResult<Vaid>;
 
     /// Verify a VAID against this issuer: correct signature scheme, kernel
-    /// signature valid over the canonical document, and not revoked. Expiry is
-    /// reported separately via [`Vaid::is_expired`] so a caller can distinguish
-    /// "forged" from "expired". A bad signature is `false`, never an error.
+    /// signature valid over the canonical document, **not expired**, and not
+    /// revoked. Expiry is now a hard reject — an expired VAID returns `false`
+    /// even with a valid kernel signature. [`Vaid::is_expired`] remains available
+    /// for a caller that needs to distinguish "forged" from "expired" before
+    /// calling this. A bad signature is `false`, never an error.
     fn verify_vaid(&self, vaid: &Vaid) -> bool;
 }
 
 /// The open reference issuer. Holds an Ed25519 kernel key, an in-memory
-/// child→parent lineage map, and an in-memory revoked set.
+/// child→parent lineage map, an in-memory revoked set (the default revocation
+/// backend), and an optional injected [`RevocationCheck`] layered on top of it.
 pub struct ReferenceIssuer {
     kernel_key_pair: Ed25519KeyPair,
     vaid_ttl_hours: i64,
     lineage: Mutex<HashMap<VaidId, VaidId>>,
     revoked: Mutex<HashSet<VaidId>>,
+    /// An optional additional revocation backend, consulted in `verify_vaid`
+    /// alongside (not instead of) the built-in `revoked` set. `None` by default;
+    /// injected via [`ReferenceIssuer::with_revocation_check`].
+    revocation_check: Option<Arc<dyn RevocationCheck>>,
 }
 
 impl ReferenceIssuer {
@@ -113,7 +131,19 @@ impl ReferenceIssuer {
             vaid_ttl_hours,
             lineage: Mutex::new(HashMap::new()),
             revoked: Mutex::new(HashSet::new()),
+            revocation_check: None,
         }
+    }
+
+    /// Inject an additional [`RevocationCheck`] backend (e.g. a durable,
+    /// restart-surviving store). It is consulted in [`VaidIssuer::verify_vaid`]
+    /// **in addition to** the built-in in-memory revoked set — a VAID is rejected
+    /// if either reports it revoked — so enabling the seam never silently disables
+    /// the built-in behavior. Consumes and re-wraps `self`, preserving the kernel
+    /// key, TTL, and any lineage/revocations already recorded.
+    pub fn with_revocation_check(mut self, revocation_check: Arc<dyn RevocationCheck>) -> Self {
+        self.revocation_check = Some(revocation_check);
+        self
     }
 
     /// The kernel public key (raw 32 bytes) a verifier binds this issuer's VAIDs
@@ -240,8 +270,19 @@ impl VaidIssuer for ReferenceIssuer {
         if vaid.sig_version() != VAID_SIG_VERSION_V2 {
             return false;
         }
+        // TTL is now enforced as a hard reject, not merely reported: an expired
+        // VAID fails verification even with a valid kernel signature.
+        if vaid.is_expired() {
+            return false;
+        }
+        // Built-in in-memory revoked set, plus any injected revocation backend.
         if self.is_revoked(&vaid.vaid_id()) {
             return false;
+        }
+        if let Some(check) = &self.revocation_check {
+            if check.is_revoked(&vaid.vaid_id()) {
+                return false;
+            }
         }
         let public_key = UnparsedPublicKey::new(&ED25519, self.kernel_public_key());
         public_key
@@ -327,6 +368,78 @@ mod tests {
         assert!(issuer.verify_vaid(&vaid));
         issuer.revoke(vaid.vaid_id());
         assert!(!issuer.verify_vaid(&vaid), "a revoked VAID must not verify");
+    }
+
+    #[test]
+    fn expired_vaid_fails_verification() {
+        // A negative TTL issues a VAID whose `expires_at` is already in the past;
+        // its kernel signature is valid but verification must now hard-reject it.
+        let issuer = ReferenceIssuer::ephemeral(-1).unwrap();
+        let vaid = issuer
+            .issue_vaid_with_lineage(
+                AgentClass::new("root"),
+                "1.0.0".into(),
+                TenantId::new("t"),
+                None,
+                vec![],
+                vec![],
+            )
+            .unwrap();
+        assert!(vaid.is_expired(), "fixture must be expired");
+        assert!(
+            !issuer.verify_vaid(&vaid),
+            "an expired VAID must fail verification even with a valid kernel signature"
+        );
+    }
+
+    #[test]
+    fn injected_revocation_check_is_consulted() {
+        use crate::revocation::InMemoryRevocationList;
+
+        let list = Arc::new(InMemoryRevocationList::new());
+        let issuer = ReferenceIssuer::ephemeral(1)
+            .unwrap()
+            .with_revocation_check(list.clone());
+        let vaid = issuer
+            .issue_vaid_with_lineage(
+                AgentClass::new("root"),
+                "1.0.0".into(),
+                TenantId::new("t"),
+                None,
+                vec![],
+                vec![],
+            )
+            .unwrap();
+        assert!(issuer.verify_vaid(&vaid), "not yet revoked → verifies");
+        // Revoke via the injected backend only (not the issuer's built-in set).
+        list.revoke(vaid.vaid_id());
+        assert!(
+            !issuer.verify_vaid(&vaid),
+            "an injected revocation backend must be consulted at verification"
+        );
+    }
+
+    #[test]
+    fn injected_never_revoked_does_not_break_normal_verification() {
+        use crate::revocation::NeverRevoked;
+
+        let issuer = ReferenceIssuer::ephemeral(1)
+            .unwrap()
+            .with_revocation_check(Arc::new(NeverRevoked));
+        let vaid = issuer
+            .issue_vaid_with_lineage(
+                AgentClass::new("root"),
+                "1.0.0".into(),
+                TenantId::new("t"),
+                None,
+                vec![],
+                vec![],
+            )
+            .unwrap();
+        assert!(issuer.verify_vaid(&vaid));
+        // The built-in set still works even with a no-op backend injected.
+        issuer.revoke(vaid.vaid_id());
+        assert!(!issuer.verify_vaid(&vaid), "built-in revoked set still enforced");
     }
 
     #[test]

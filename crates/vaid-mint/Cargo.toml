@@ -12,7 +12,7 @@ name = "vaid-mint"
 # byte-identical-conformance-locked against the closed VAID format (that format is
 # still moving); the frozen vector proves only that this repo's Rust and Python
 # minters agree with each other.
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["solara.associates"]

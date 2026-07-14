@@ -19,10 +19,16 @@
 //! - [`authz`] — the [`authz::AuthorizationGate`] seam for root mints, defaulting
 //!   to [`authz::PermitAll`] (a reference choice, not a security recommendation).
 //!
-//! Not included here — a hosted authority layers these on top: durable
-//! hash-chained revocation, KMS-backed kernel keys, the audit-of-record, and a
-//! policy/mesh/federation control plane. Revocation is the one gap with
-//! production impact today; see the README's "Trust model" section for mitigation.
+//! - [`revocation`] — the [`revocation::RevocationCheck`] seam for injecting a
+//!   revocation backend. The reference keeps a non-durable in-memory revoked set
+//!   as its working default; the seam lets a self-hoster layer a durable store on
+//!   top ([`issuer::ReferenceIssuer::with_revocation_check`]).
+//!
+//! Not included here — a hosted authority layers these on top: a *durable*,
+//! hash-chained revocation store, KMS-backed kernel keys, the audit-of-record,
+//! and a policy/mesh/federation control plane. Revocation *durability* remains
+//! the one gap with production impact today: the seam exists but the shipped
+//! default is in-memory and non-durable. See the README's "Trust model" section.
 //!
 //! ## Reuse, not reimplementation
 //!
@@ -85,6 +91,7 @@ pub mod error;
 pub mod issuer;
 pub mod mint;
 pub mod mint_types;
+pub mod revocation;
 
 pub use document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
@@ -92,6 +99,7 @@ pub use document::{
 };
 pub use authz::{AuthorizationGate, PermitAll};
 pub use error::{MintError, MintResult};
-pub use issuer::{ReferenceIssuer, VaidIssuer};
+pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
+pub use revocation::{InMemoryRevocationList, NeverRevoked, RevocationCheck};
 pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
