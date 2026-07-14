@@ -37,7 +37,7 @@ The byte-level standard, reference implementations in two languages, a reference
   locked to the same frozen vector. It depends only on `cryptography` and
   `rfc8785`, nothing else.
 
-- **`vaid-mint`** (Rust + Python, `crates/vaid-mint`, `python/vaid-mint`) is the reference mint. It issues VAIDs, supports attenuated delegation (`mint_child`, where a child's authority is always a subset of its parent's), and documents its trust model plainly — see the crate's own README for what's durable and what isn't in this reference implementation.
+- **`vaid-mint`** (Rust + Python, `crates/vaid-mint`, `python/vaid-mint`) is the reference mint. It issues VAIDs, supports attenuated delegation (`mint_child`, where a child's authority is always a subset of its parent's), and documents its trust model plainly. The **Rust crate README** (`crates/vaid-mint`) reflects the current 0.1.2 state — TTL enforced at verification and a pluggable `RevocationCheck` seam. The **Python package** (`python/vaid-mint`) has not yet caught up: it remains on 0.1.1 with the original advisory-only expiry and no seam, pending [issue #1](https://github.com/solara-associates/vaid/issues/1). Read the README that matches the implementation you're using for what's durable and what isn't.
 
 - **`vaid-langchain`** (Python, `python/vaid-langchain`) is a LangChain integration that signs requests using the VAID contract via an `httpx.Auth` adapter.
 
@@ -162,7 +162,7 @@ This repository is the standard, its reference signer, a reference mint, a LangC
 - The policy language for expressing what a VAID is permitted to do.
 - The hosted authority that runs a mint in production — KMS-backed kernel keys, an audit-of-record, durable hash-chained revocation, and a policy/mesh/federation control plane.
 
-The reference mint here proves the shape of delegation and attenuation; it is not that hosted authority. One gap in particular is worth naming plainly rather than filing under "commercial": there is currently no pluggable seam for durable revocation in the open crate. That's a real gap we intend to close in the open — see `crates/vaid-mint`'s own trust-model documentation for exactly what's durable, what isn't, and how to mitigate it if you're running this in production today.
+The reference mint here proves the shape of delegation and attenuation; it is not that hosted authority. Revocation is the seam worth naming plainly rather than filing under "commercial": the Rust crate (`vaid-mint` 0.1.2+) now ships a pluggable `RevocationCheck` seam — additive, with an in-memory default, and with VAID expiry (TTL) hard-enforced at verification (1-hour default) — so a self-hoster can wire their own revocation backend without patching the crate. What stays commercial is *durable* revocation itself: the crate ships the seam, not a durable, restart-surviving hash-chained store. This applies to the **Rust crate only** — the PyPI `vaid-mint` package remains on 0.1.1 with the original advisory-only expiry and no seam, tracked in [issue #1](https://github.com/solara-associates/vaid/issues/1). See `crates/vaid-mint`'s own trust-model documentation for exactly what's durable, what isn't, and how to mitigate it if you're running this in production today.
 
 ## The commercial boundary
 
