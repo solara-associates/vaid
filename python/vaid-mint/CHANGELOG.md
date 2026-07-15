@@ -40,24 +40,16 @@ If you need to distinguish "forged" from merely "expired", call the new
 Action required: audit any flow that verifies long-lived or replayed VAIDs, and
 confirm your issuance TTL is long enough for legitimate use before upgrading.
 
-### Scope — release status: in this repository only; PyPI still serves 0.1.1
+### Scope — cross-language parity restored
 
-**This 0.1.2 exists in-repo and is not published.** The latest release on PyPI
-remains **0.1.1**, which has the original no-expiry-check behavior and **no
-`RevocationCheck` seam**. Until 0.1.2 is published:
+Published to PyPI as `vaid-mint` 0.1.2. This closes the gap disclosed at the Rust
+crate's 0.1.2 release, when the seam and TTL enforcement existed only in Rust and
+the PyPI package was still on 0.1.1: **both reference implementations now ship the
+`RevocationCheck` seam and hard expiry enforcement**, and are at behavioral parity.
 
-- `pip install vaid-mint` gets you **0.1.1** — the revocation/expiry gap disclosed
-  at launch is still there. The behavior change above does **not** yet affect you.
-- Installing **from source** (`pip install -e python/vaid-mint`) gets you 0.1.2,
-  including the behavior change above.
-
-Publishing 0.1.2 to PyPI is tracked in
-[issue #1](https://github.com/solara-associates/vaid/issues/1). This entry is
-deliberately **undated**: it describes what is in the tree, not a release that has
-shipped to a registry.
-
-Behavioral parity with the Rust crate (`vaid-mint` 0.1.2, released on crates.io)
-is restored **at the source level** by this entry.
+The two remain separate implementations versioned independently — a shared version
+number is a coincidence, not a guarantee. Git tags are language-prefixed
+(`python-v0.1.2` here, `rust-v0.1.2` for the crate); see `CONTRIBUTING.md`.
 
 ### Added
 

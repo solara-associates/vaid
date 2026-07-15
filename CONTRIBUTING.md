@@ -38,6 +38,32 @@ uv sync && uv run pytest        # runs the same conformance vectors
 A PR must keep **both** languages green and reproduce the conformance vector
 identically.
 
+## Releasing and version tags
+
+**Each package versions independently.** The Rust crates and the Python packages
+are separate, hand-written implementations — not builds of one another — so their
+version numbers move on their own schedules and may legitimately diverge. A shared
+version number is a coincidence, not a guarantee, even when a change lands in both
+(as `vaid-mint` 0.1.2 did).
+
+**Git tags are therefore language-prefixed:**
+
+```
+rust-vX.Y.Z      # a crates.io release of the Rust crate
+python-vX.Y.Z    # a PyPI release of the Python package
+```
+
+Do **not** cut an unprefixed `vX.Y.Z` tag. An unprefixed tag cannot say which
+package it releases, and in practice it misleads: the original `v0.1.2` tagged the
+Rust 0.1.2 release at a commit where the Python package was still 0.1.1 and had
+none of the 0.1.2 changes. It was renamed to `rust-v0.1.2` for exactly that
+reason.
+
+Each package keeps its own changelog (`crates/vaid-mint/CHANGELOG.md`,
+`python/vaid-mint/CHANGELOG.md`) documenting its own language's behavior. Before
+tagging, confirm the package's `Cargo.toml` / `pyproject.toml`, its in-code version
+(`__version__` for Python), and its changelog's latest entry all agree.
+
 ## Proposing a change
 
 1. **Open an issue** describing the change and whether it affects on-the-wire

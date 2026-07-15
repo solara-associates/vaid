@@ -13,9 +13,7 @@ The Python mirror of the Rust `vaid-mint` crate: the open, self-hostable
 > **Upgrading from 0.1.1?** Expiry enforcement is a ⚠️ **breaking behavioral
 > change** despite the patch version bump: `verify_vaid` now returns `False` for
 > expired VAIDs that previously passed. Read
-> [CHANGELOG.md](CHANGELOG.md#012) before upgrading. Note that 0.1.2 is **not yet
-> on PyPI** — `pip install vaid-mint` still serves 0.1.1, which has neither the
-> seam nor expiry enforcement described below.
+> [CHANGELOG.md](CHANGELOG.md#012) before upgrading.
 
 | Concern | Reference mint (this package) | Hosted / commercial |
 |---|---|---|
