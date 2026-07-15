@@ -6,9 +6,13 @@ The Python mirror of the Rust ``vaid-mint`` crate: mint a root VAID
 always a subset of its parent's (``child ⊆ parent``).
 
 This is the open engine of a HashiCorp-Vault-style split; the managed authority
-(durable revocation, KMS-backed keys, audit-of-record) is the closed product and
-is deliberately NOT here. Proof-of-possession reuses the ``vaid-pop`` primitive
-verbatim. Byte-identity of the signed VAID document with the Rust mint is locked
+(KMS-backed keys, the audit-of-record, and *durable* revocation) is the closed
+product and is deliberately NOT here. Revocation has a pluggable seam here as of
+0.1.2 (:class:`~vaid_mint.revocation.RevocationCheck`, injected via
+:meth:`~vaid_mint.issuer.ReferenceIssuer.with_revocation_check`) — additive, with a
+non-durable in-memory default — and VAID expiry (TTL) is hard-enforced at
+verification. What stays commercial is durable, restart-surviving revocation
+itself. Proof-of-possession reuses the ``vaid-pop`` primitive verbatim. Byte-identity of the signed VAID document with the Rust mint is locked
 by the vendored cross-language vector ``vaid_mint/vectors/mint_v1.json``.
 
 Per Decision B this is self-consistent WITHIN this repo (Rust == Python), NOT
@@ -34,10 +38,11 @@ from vaid_mint.document import (
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
     has_capability,
+    is_expired,
     is_in_scope,
 )
 from vaid_mint.error import AuditError, IdentityError, MintError, UnauthorizedError
-from vaid_mint.issuer import ReferenceIssuer
+from vaid_mint.issuer import DEFAULT_VAID_TTL_HOURS, ReferenceIssuer
 from vaid_mint.mint import (
     MINT_POP_FRESHNESS_SECS,
     MintService,
@@ -45,6 +50,7 @@ from vaid_mint.mint import (
     scope_attenuates,
 )
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
+from vaid_mint.revocation import InMemoryRevocationList, NeverRevoked, RevocationCheck
 
 __all__ = [
     "ReferenceIssuer",
@@ -56,11 +62,16 @@ __all__ = [
     "compute_lineage_hash",
     "build_unsigned_vaid_document",
     "is_in_scope",
+    "is_expired",
     "has_capability",
     "scope_attenuates",
     "caps_attenuate",
     "VAID_SIG_VERSION_V2",
     "MINT_POP_FRESHNESS_SECS",
+    "DEFAULT_VAID_TTL_HOURS",
+    "RevocationCheck",
+    "NeverRevoked",
+    "InMemoryRevocationList",
     "AuditSink",
     "AuditEntry",
     "InMemoryAudit",
@@ -74,4 +85,4 @@ __all__ = [
     "AuditError",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"

@@ -35,6 +35,23 @@ upgrading is not yet possible on the Python side. Behavioral parity between the
 Rust and Python implementations is broken until a follow-up ports these changes to
 the Python package.
 
+> **Update (partially superseded):** the follow-up has landed **in-source**. The
+> Python `vaid-mint` package at version **0.1.2** ports both changes — TTL is
+> hard-enforced at verification and the `RevocationCheck` seam
+> (`with_revocation_check`, `InMemoryRevocationList`, `NeverRevoked`,
+> `DEFAULT_VAID_TTL_HOURS`) is available in Python — so behavioral parity between
+> the two implementations is restored at the source level.
+>
+> **This is not yet on PyPI.** The latest PyPI release remains **0.1.1**, so anyone
+> installing via `pip install vaid-mint` still has the revocation/expiry gap
+> described above until 0.1.2 is published. Install from source to get the seam
+> today.
+>
+> **The same ⚠️ expiry semantic break described above will apply to the Python
+> package when 0.1.2 publishes** — audit any Python flow that verifies long-lived
+> or replayed VAIDs before upgrading. The scope note above is retained as the
+> historical record of what the Rust 0.1.2 release itself covered.
+
 ### Added
 
 - **`revocation::RevocationCheck`** — a pluggable, synchronous revocation seam

@@ -7,7 +7,7 @@ name = "vaid-mint"
 # Independent semver. Additive-minor for new optional fields; MAJOR for any change
 # to the canonical VAID document shape / signing bytes (those break cross-language
 # byte-identity against mint_v1.json).
-version = "0.1.1"
+version = "0.1.2"
 description = "The open, self-hostable reference mint (Python) for the VAID standard: mint a root VAID and mint attenuated child VAIDs (scope/capability-contained delegation)."
 readme = "README.md"
 requires-python = ">=3.10"

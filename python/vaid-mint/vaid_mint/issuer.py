@@ -2,9 +2,26 @@
 
 :class:`ReferenceIssuer` holds an Ed25519 kernel key and signs the full canonical
 VAID document. Like the Rust reference it deliberately omits the closed managed
-authority's machinery: no KMS/secret-store bootstrap (the key is ephemeral or
-caller/seed-supplied), no durable revocation (in-memory only), no lineage service
-(in-memory map for local inspection).
+authority's machinery. Three things a hosted authority adds that this reference
+leaves to the self-hoster:
+
+- **No KMS / secret-store bootstrap.** The kernel key is either generated
+  ephemerally (:meth:`ReferenceIssuer.ephemeral`) or supplied by the caller
+  (:meth:`ReferenceIssuer.from_seed`). A self-hoster persists and protects that
+  key however they choose.
+- **Non-durable revocation, but a pluggable seam.** The built-in revoked set is
+  in-memory and does not survive restart. A self-hoster can now inject a durable
+  backend via the :class:`~vaid_mint.revocation.RevocationCheck` seam
+  (:meth:`ReferenceIssuer.with_revocation_check`) without patching the package;
+  the built-in in-memory set remains the default and any injected check is layered
+  on top of it. See the package README's "Trust model" section.
+- **No lineage lookup service.** The child→parent map is kept in memory for local
+  inspection only.
+
+**Expiry (TTL) is a hard reject at verification.** :meth:`ReferenceIssuer.verify_vaid`
+returns ``False`` for an expired VAID even when its kernel signature is valid;
+:func:`~vaid_mint.document.is_expired` remains available for a caller that needs to
+distinguish "forged" from "expired" beforehand.
 """
 
 from __future__ import annotations
@@ -23,7 +40,16 @@ from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
+    is_expired,
 )
+from vaid_mint.revocation import RevocationCheck
+
+# The default issuance TTL, in hours, when a caller does not supply one. Short by
+# design: with only non-durable revocation in this reference, a short TTL is the
+# primary control that bounds the exposure window of a leaked or compromised VAID
+# (see the README "Trust model"). The constructors still take an explicit
+# ``vaid_ttl_hours``; this constant documents the recommended baseline.
+DEFAULT_VAID_TTL_HOURS = 1
 
 
 def _whole_second_rfc3339(dt: datetime) -> str:
@@ -32,13 +58,19 @@ def _whole_second_rfc3339(dt: datetime) -> str:
 
 class ReferenceIssuer:
     """The open reference issuer. Holds an Ed25519 kernel key, an in-memory
-    child→parent lineage map, and an in-memory revoked set."""
+    child→parent lineage map, an in-memory revoked set (the default revocation
+    backend), and an optional injected
+    :class:`~vaid_mint.revocation.RevocationCheck` layered on top of it."""
 
     def __init__(self, kernel_key: Ed25519PrivateKey, vaid_ttl_hours: int) -> None:
         self._kernel_key = kernel_key
         self._vaid_ttl_hours = vaid_ttl_hours
         self._lineage: dict[str, str] = {}
         self._revoked: set[str] = set()
+        # An optional additional revocation backend, consulted in ``verify_vaid``
+        # alongside (not instead of) the built-in ``_revoked`` set. ``None`` by
+        # default; injected via :meth:`with_revocation_check`.
+        self._revocation_check: RevocationCheck | None = None
 
     # ── constructors mirroring the Rust ones ──
 
@@ -52,14 +84,31 @@ class ReferenceIssuer:
         """Build from a raw 32-byte Ed25519 seed — for deterministic vectors."""
         return cls(Ed25519PrivateKey.from_private_bytes(seed), vaid_ttl_hours)
 
+    def with_revocation_check(self, revocation_check: RevocationCheck) -> "ReferenceIssuer":
+        """Inject an additional :class:`~vaid_mint.revocation.RevocationCheck`
+        backend (e.g. a durable, restart-surviving store). It is consulted in
+        :meth:`verify_vaid` **in addition to** the built-in in-memory revoked set
+        — a VAID is rejected if either reports it revoked — so enabling the seam
+        never silently disables the built-in behavior.
+
+        Returns ``self`` so it chains::
+
+            issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(check)
+        """
+        self._revocation_check = revocation_check
+        return self
+
     def kernel_public_key(self) -> bytes:
         """The kernel public key (raw 32 bytes) a verifier binds VAIDs against."""
         return self._kernel_key.public_key().public_bytes_raw()
 
     def revoke(self, vaid_id: str) -> None:
+        """Revoke a VAID (in-memory). A revoked VAID fails :meth:`verify_vaid`
+        regardless of signature validity. Does not survive restart."""
         self._revoked.add(vaid_id)
 
     def is_revoked(self, vaid_id: str) -> bool:
+        """Is this VAID revoked in this issuer's built-in in-memory set?"""
         return vaid_id in self._revoked
 
     def parent_of(self, vaid_id: str) -> str | None:
@@ -154,12 +203,34 @@ class ReferenceIssuer:
         )
 
     def verify_vaid(self, vaid: dict) -> bool:
-        """Verify a VAID against this issuer: correct scheme, kernel signature
-        valid over the canonical document, and not revoked. A bad signature is
-        ``False``, never an exception."""
+        """Verify a VAID against this issuer: correct signature scheme, kernel
+        signature valid over the canonical document, **not expired**, and not
+        revoked.
+
+        Expiry is a hard reject — an expired VAID returns ``False`` even with a
+        valid kernel signature. :func:`~vaid_mint.document.is_expired` remains
+        available for a caller that needs to distinguish "forged" from "expired"
+        before calling this.
+
+        Revocation is checked against the built-in in-memory revoked set *and*
+        any :class:`~vaid_mint.revocation.RevocationCheck` injected via
+        :meth:`with_revocation_check` — the seam is additive, so a VAID is
+        rejected if *either* reports it revoked.
+
+        A bad signature is ``False``, never an exception.
+        """
         if vaid.get("sig_version") != VAID_SIG_VERSION_V2:
             return False
+        # TTL is enforced as a hard reject, not merely reported: an expired VAID
+        # fails verification even with a valid kernel signature.
+        if is_expired(vaid):
+            return False
+        # Built-in in-memory revoked set, plus any injected revocation backend.
         if self.is_revoked(vaid["vaid_id"]):
+            return False
+        if self._revocation_check is not None and self._revocation_check.is_revoked(
+            vaid["vaid_id"]
+        ):
             return False
         digest = canonical_vaid_signing_bytes(vaid)
         sig = bytes(vaid["kernel_signature"])

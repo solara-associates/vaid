@@ -17,6 +17,7 @@ NOT byte-conformant against the managed authority's (still-moving) VAID format.
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 
 import rfc8785
 
@@ -86,6 +87,21 @@ def build_unsigned_vaid_document(
         "lineage_hash": lineage_hash,
         "capability_set": list(capability_set),
     }
+
+
+def is_expired(vaid: dict) -> bool:
+    """Has the document passed its ``expires_at``? Mirror of ``Vaid::is_expired``
+    (``Utc::now() > self.expires_at``).
+
+    Parses the whole-second RFC 3339 ``"...Z"`` ``expires_at`` this package writes
+    at issuance. Expiry is a hard reject in
+    :meth:`~vaid_mint.issuer.ReferenceIssuer.verify_vaid`; this stays available for
+    a caller that needs to distinguish "forged" from "expired" beforehand.
+    """
+    expires_at = datetime.strptime(vaid["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    return datetime.now(timezone.utc) > expires_at
 
 
 def is_in_scope(vaid: dict, resource: str) -> bool:
