@@ -3,8 +3,11 @@ name = "vaid-mint"
 # The open, self-hostable REFERENCE mint for the VAID standard: mint a root VAID
 # and mint attenuated child VAIDs (delegation with scope/capability containment).
 # This is the open engine of the HashiCorp-Vault split — the durable revocation
-# store, KMS-backed kernel keys, and audit-of-record are the closed managed
-# authority and deliberately live outside this crate. Bump MAJOR on any change to
+# store, KMS-backed kernel keys, and the durable, hash-chained audit-of-record
+# are the closed managed authority and deliberately live outside this crate.
+# (The audit *seam* is here — see src/audit.rs: the `AuditSink` trait plus
+# `InMemoryAudit` and `NoopAudit`. What is closed is the durable ledger, not
+# the ability to audit.) Bump MAJOR on any change to
 # the canonical VAID document shape / signing bytes (breaks self-consistency
 # against the frozen mint vector).
 #

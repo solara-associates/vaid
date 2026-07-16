@@ -172,9 +172,25 @@ The production control plane is a separate commercial product and is not in this
 repository. That product provides the hosted VAID authority that issues and
 revokes identities, the policy engine that decides what each VAID may do, the
 federation layer that routes action across tenants, the enforcement mesh that
-applies those decisions at call time, and the audit-of-record that retains a
-verifiable history. None of that is required to use what is here, and none of it
-is included here. This repository stands on its own as the open standard.
+applies those decisions at call time, and the *durable, hash-chained*
+audit-of-record that retains a verifiable history. None of that is required to
+use what is here. This repository stands on its own as the open standard.
+
+Two of those deserve a precise line rather than a blanket "not included here",
+because the blanket version is falsifiable by reading this repo:
+
+- **Audit** — the *seam* is here and Apache-2.0: the `AuditSink` trait with
+  `InMemoryAudit` and `NoopAudit` (`crates/vaid-mint/src/audit.rs`, mirrored in
+  `python/vaid-mint/vaid_mint/audit.py`). What is closed is the **durable,
+  hash-chained ledger**, not the ability to audit.
+- **Revocation** — likewise: the `RevocationCheck` seam ships here with an
+  in-memory default. What is closed is **durable, restart-surviving**
+  revocation. See the paragraph above.
+
+The hosted authority itself is a **name for the aggregate** of those durable
+pieces — KMS-backed keys, the durable audit-of-record, durable revocation, and
+the policy/mesh/federation control plane. It is described here as an offering,
+not as a component you will find implemented in some other directory.
 
 ## Contributing & community
 

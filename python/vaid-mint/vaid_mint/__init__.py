@@ -6,7 +6,8 @@ The Python mirror of the Rust ``vaid-mint`` crate: mint a root VAID
 always a subset of its parent's (``child ⊆ parent``).
 
 This is the open engine of a HashiCorp-Vault-style split; the managed authority
-(KMS-backed keys, the audit-of-record, and *durable* revocation) is the closed
+(KMS-backed keys, the *durable, hash-chained* audit-of-record, and *durable*
+revocation) is the closed
 product and is deliberately NOT here. Revocation has a pluggable seam here as of
 0.1.2 (:class:`~vaid_mint.revocation.RevocationCheck`, injected via
 :meth:`~vaid_mint.issuer.ReferenceIssuer.with_revocation_check`) — additive, with a

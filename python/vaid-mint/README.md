@@ -112,7 +112,10 @@ assert issuer.verify_vaid(root)
 ## The split
 
 This is the open engine of a HashiCorp-Vault-style split. KMS-backed kernel keys
-and the audit-of-record are the closed managed authority and are **not** here.
+and the **durable, hash-chained** audit-of-record are the closed managed
+authority and are **not** here. The audit *seam* is here — `AuditSink`, with
+`InMemoryAudit` and `NoopAudit` — so what is closed is the durable ledger, not
+the ability to audit.
 **Revocation is the seam worth naming plainly rather than filing under
 "commercial":** as of 0.1.2 this package ships a pluggable `RevocationCheck` seam
 — additive, with a non-durable in-memory default — and VAID expiry (TTL) is

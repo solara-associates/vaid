@@ -25,8 +25,10 @@
 //!   top ([`issuer::ReferenceIssuer::with_revocation_check`]).
 //!
 //! Not included here — a hosted authority layers these on top: a *durable*,
-//! hash-chained revocation store, KMS-backed kernel keys, the audit-of-record,
-//! and a policy/mesh/federation control plane. Revocation *durability* remains
+//! hash-chained revocation store, KMS-backed kernel keys, a *durable,
+//! hash-chained* audit-of-record (the [`audit::AuditSink`] seam and its
+//! in-memory/no-op sinks *are* here — the durable ledger is not), and a
+//! policy/mesh/federation control plane. Revocation *durability* remains
 //! the one gap with production impact today: the seam exists but the shipped
 //! default is in-memory and non-durable. See the README's "Trust model" section.
 //!
