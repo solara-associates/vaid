@@ -12,7 +12,14 @@ description = "Canonical Python proof-of-possession (PoP) request signer for the
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "solara.associates", email = "info@solara.associates" }]
+authors = [
+    # Two entries by design: PEP 621 routes any entry that has an email
+    # entirely into Author-email, leaving the core Author field empty (PyPI
+    # then renders "Author: None"). The name-only entry populates Author;
+    # the second preserves the existing Author-email verbatim.
+    { name = "solara.associates" },
+    { name = "solara.associates", email = "info@solara.associates" },
+]
 keywords = ["vaid", "agent-identity", "ed25519", "proof-of-possession", "cryptography", "signing"]
 classifiers = [
     "Development Status :: 3 - Alpha",
