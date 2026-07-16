@@ -12,7 +12,7 @@ The Python mirror of the Rust `vaid-mint` crate: the open, self-hostable
 
 > **Upgrading from 0.1.1?** Expiry enforcement is a ⚠️ **breaking behavioral
 > change** despite the patch version bump: `verify_vaid` now returns `False` for
-> expired VAIDs that previously passed. Read
+> expired VAIDs that previously passed. See
 > [CHANGELOG.md](https://github.com/solara-associates/vaid/blob/main/python/vaid-mint/CHANGELOG.md#012)
 > before upgrading.
 

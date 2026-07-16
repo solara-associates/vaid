@@ -9,6 +9,27 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.1.3]
+
+### Docs only — no behavior change
+
+Identical in behavior to 0.1.2. This release exists solely to replace the
+README rendered on the package's PyPI page.
+
+- **Corrected a stale upgrade note.** The README bundled in the 0.1.2 sdist
+  said *"0.1.2 is not yet on PyPI — `pip install vaid-mint` still serves
+  0.1.1"*. That was true when written but was overtaken by the 0.1.2 PyPI
+  publish itself, leaving the 0.1.2 page asserting its own non-existence.
+  The note was corrected in git immediately after that publish, but a
+  README is baked into the uploaded artifact, so the correction could not
+  reach PyPI without a new version.
+- **The CHANGELOG link now resolves on PyPI.** It was relative
+  (`CHANGELOG.md#012`), which only works on GitHub; it is now absolute.
+
+No code, API, wire-format, or conformance-vector change. The Rust
+`vaid-mint` crate is unaffected and stays at 0.1.2 — its README never
+carried the note.
+
 ## [0.1.2]
 
 ### ⚠️ Behavior change — expiry is now enforced (read this before upgrading)
