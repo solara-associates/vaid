@@ -3,6 +3,35 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+### ⚠️ Breaking — the `RevocationCheck` seam is replaced (read this before upgrading)
+
+**The 0.1.2 boolean, leaf-only `RevocationCheck` is gone, replaced by a
+three-state, lineage-aware seam** per `docs/spec/revocation.md` R.4. This is a
+deliberate, authorised breaking change — two traits named `RevocationCheck` with
+different safety properties is the outcome being avoided, so there is no shim.
+
+- **`RevocationCheck::is_revoked(&VaidId) -> bool` → `check_lineage(&[VaidId]) ->
+  RevocationStatus`.** The check is now handed the full ordered lineage (root
+  first, leaf last) that the verifier assembled, and returns
+  `RevocationStatus::{NotRevoked, Revoked, Unavailable}`. Custom backends must be
+  updated; the boolean interface will not compile.
+- **Revocation is inherited (R.4.4).** A VAID is revoked if **any** VAID in its
+  lineage is. Revoking a parent now rejects every child attenuated from it — the
+  0.1.2 leaf-only check did not, which was a bypass.
+- **Fail closed on `Unavailable` (R.4.5).** An incomplete lineage (e.g. an empty
+  resolver after a restart) or an unreachable store rejects verification rather
+  than silently passing. No fail-open option ships in this release.
+- **`NeverRevoked` removed.** It was a boolean-era no-op footgun.
+- **`ReferenceIssuer` records every mint** (roots as well as children) so it can
+  act as the verifier-side `LineageResolver` and tell a known root from an
+  unresolvable id (R.4.2). New: `revocation_status`, `resolve_parent`,
+  `clear_lineage`; `is_revoked`/`parent_of` removed. `with_revocation_check` now
+  *replaces* the consulted store rather than layering on a built-in set.
+- **Document bytes are unchanged.** No conformance vector changes; revocation
+  remains outside the conformance surface (R.1).
+
 ## [0.1.2]
 
 ### ⚠️ Behavior change — expiry is now enforced (read this before upgrading)

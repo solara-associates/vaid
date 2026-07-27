@@ -18,35 +18,48 @@ The Python mirror of the Rust `vaid-mint` crate: the open, self-hostable
 
 | Concern | Reference mint (this package) | Hosted / commercial |
 |---|---|---|
-| Revocation | Pluggable (`RevocationCheck`); default is in-memory, non-durable | Durable, hash-chained |
+| Revocation | Pluggable, three-state & lineage-aware (`RevocationCheck`); default in-memory, non-durable | Durable, hash-chained |
 | Expiry (TTL) | Enforced at verification (hard reject) | Enforced |
 | Auth | Pluggable (`AuthorizationGate`) | Pluggable |
 | Audit | Pluggable (`AuditSink`) | Pluggable |
 
-**Revocation now has a pluggable seam, but the shipped default is still
-non-durable.** As of 0.1.2 there is a `RevocationCheck` protocol: a self-hoster can
-inject their own durable, restart-surviving backend via
-`ReferenceIssuer.with_revocation_check` without patching the package. What ships
-*by default*, however, is still the concrete in-memory revoked set — it does not
-survive a restart. If the mint process restarts and you have not wired a durable
-`RevocationCheck`, previously revoked VAIDs are revocable again. The seam closes
-the "no extension point" gap; it does **not** by itself make revocation durable.
-That is your responsibility to wire, or the hosted authority's to provide.
+**Revocation is a three-state, lineage-aware seam (0.2.0); the shipped default is
+non-durable.** Per `docs/spec/revocation.md` R.4 — a breaking replacement of the
+0.1.2 boolean, leaf-only check — the verifier assembles the VAID's ordered ancestry
+and hands it to `RevocationCheck.check_lineage`, which returns a `RevocationStatus`
+of `NOT_REVOKED`, `REVOKED`, or `UNAVAILABLE`. A VAID is revoked if **any** ancestor
+is (revoking a parent revokes its children), and verification **fails closed** on
+`UNAVAILABLE` — an incomplete lineage (e.g. an empty resolver after restart) or an
+unreachable store rejects rather than silently passing. Inject your own durable,
+restart-surviving backend via `ReferenceIssuer.with_revocation_check`; what ships
+*by default* is a non-durable in-memory store, so if the process restarts and you
+have not wired a durable backend, previously revoked VAIDs may become revocable
+again. The seam closes the "no extension point" gap; it does **not** by itself make
+revocation durable. That is your responsibility to wire, or the hosted authority's
+to provide.
 
 ```python
-from vaid_mint import InMemoryRevocationList, ReferenceIssuer
+from vaid_mint import InMemoryRevocationList, ReferenceIssuer, RevocationStatus
 
 class MyDurableRevocations:
-    """Your own restart-surviving store (or a refreshed snapshot of one)."""
-    def is_revoked(self, vaid_id: str) -> bool:
-        return vaid_id in load_deny_list()
+    """Your own restart-surviving store (or a refreshed snapshot of one). It is
+    handed the full ordered lineage, root first, and returns a three-state status —
+    return UNAVAILABLE when the backing store cannot be reached, so verification
+    fails closed rather than passing silently."""
+    def check_lineage(self, lineage: list[str]) -> RevocationStatus:
+        try:
+            deny = load_deny_list()
+        except StoreUnreachable:
+            return RevocationStatus.UNAVAILABLE
+        if any(vaid_id in deny for vaid_id in lineage):
+            return RevocationStatus.REVOKED
+        return RevocationStatus.NOT_REVOKED
 
-# The injected check is consulted IN ADDITION TO the built-in in-memory set —
-# a VAID is rejected if EITHER reports it revoked.
+# The injected check REPLACES the default store consulted at verification.
 issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(MyDurableRevocations())
 
 # Or wire the seam with the shipped in-memory list before a durable backend exists:
-revocations = InMemoryRevocationList()
+revocations = InMemoryRevocationList.initialised_empty()
 issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(revocations)
 revocations.revoke(vaid["vaid_id"])
 assert not issuer.verify_vaid(vaid)

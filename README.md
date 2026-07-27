@@ -37,7 +37,7 @@ The byte-level standard, reference implementations in two languages, a reference
   locked to the same frozen vector. It depends only on `cryptography` and
   `rfc8785`, nothing else.
 
-- **`vaid-mint`** (Rust + Python, `crates/vaid-mint`, `python/vaid-mint`) is the reference mint. It issues VAIDs, supports attenuated delegation (`mint_child`, where a child's authority is always a subset of its parent's), and documents its trust model plainly. Both implementations enforce TTL at verification and expose a pluggable `RevocationCheck` seam — the Rust crate as of 0.1.2, the Python package as of 0.1.2 ([issue #1](https://github.com/solara-associates/vaid/issues/1), closed). Read the README that matches the implementation you're using for what's durable and what isn't.
+- **`vaid-mint`** (Rust + Python, `crates/vaid-mint`, `python/vaid-mint`) is the reference mint. It issues VAIDs, supports attenuated delegation (`mint_child`, where a child's authority is always a subset of its parent's), and documents its trust model plainly. Both implementations enforce TTL at verification and expose a pluggable `RevocationCheck` seam — three-state and lineage-aware as of 0.2.0 (replacing the 0.1.2 boolean, leaf-only check), specified in [`docs/spec/revocation.md`](docs/spec/revocation.md) R.4. Revoking a parent revokes its attenuated children, and verification fails closed when revocation status is unavailable. Read the README that matches the implementation you're using for what's durable and what isn't.
 
 - **`vaid-langchain`** (Python, `python/vaid-langchain`) is a LangChain integration that signs requests using the VAID contract via an `httpx.Auth` adapter.
 
