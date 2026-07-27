@@ -46,6 +46,13 @@ The byte-level standard, reference implementations in two languages, a reference
 That is the entire open scope. There is no server, no database, and no runtime to
 stand up beyond the mint if you choose to self-host it. You add the Rust crates to a Cargo project, or `pip install` the Python packages, and call them.
 
+The code is the byte-level specification. What code cannot carry — where the
+conformance surface stops, and why — is recorded in prose beside it. The first such
+document, [`docs/spec/revocation.md`](docs/spec/revocation.md), specifies the
+`RevocationCheck` seam and states plainly that revocation sits **outside** the
+conformance surface ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)).
+Its R.6 table records what ships today versus what is planned.
+
 ## What it does
 
 A developer can create a VAID identifier, sign a request against it, and verify
