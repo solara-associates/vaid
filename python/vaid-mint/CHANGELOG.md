@@ -35,6 +35,45 @@ authorised breaking change, mirroring the Rust `vaid-mint` 0.2.0.
 - **Document bytes are unchanged.** No conformance vector changes; revocation
   remains outside the conformance surface (R.1).
 
+### Migration — porting a custom `RevocationCheck`
+
+Before (0.1.2) — a boolean, leaf-only check:
+
+```python
+class MyBackend:
+    def is_revoked(self, vaid_id: str) -> bool:
+        return vaid_id in self.deny_list
+```
+
+After (0.2.0) — three-state, handed the full ordered lineage:
+
+```python
+class MyBackend:
+    def check_lineage(self, lineage: list[str]) -> RevocationStatus:
+        try:
+            deny = self.load_deny_list()
+        except StoreUnreachable:
+            return RevocationStatus.UNAVAILABLE
+        if any(vaid_id in deny for vaid_id in lineage):
+            return RevocationStatus.REVOKED
+        return RevocationStatus.NOT_REVOKED
+```
+
+Why the shape changed:
+
+- **A boolean cannot express `UNAVAILABLE`.** When the backing store is
+  unreachable, `is_revoked` had to answer `True` or `False`, and `False` is a
+  silent fail-open. `RevocationStatus` makes "could not determine" a first-class
+  outcome that verification fails closed on.
+- **A leaf-only check is bypassable by minting a child.** `is_revoked(vaid_id)`
+  saw only the presented leaf, so revoking a parent left its attenuated children
+  verifiable. `check_lineage` receives the whole ancestry; a VAID is revoked if any
+  ancestor is.
+
+The default in-memory store's constructor is renamed `initialised_empty` →
+`assume_nothing_revoked` to state its (fail-open-on-restart) posture rather than its
+state. `NeverRevoked` is removed.
+
 ## [0.1.3]
 
 ### Docs only — no behavior change

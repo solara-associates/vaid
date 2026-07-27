@@ -79,8 +79,14 @@ class ReferenceIssuer:
         # a known root from an unknown id — the crux of spec R.4.2.
         self._lineage: dict[str, str | None] = {}
         # The built-in store :meth:`revoke` mutates; the default ``_revocation``.
-        # Initialised-and-empty so a live issuer can vouch "nothing revoked yet".
-        self._store = InMemoryRevocationList.initialised_empty()
+        # assume-nothing-revoked, so a live issuer vouches "nothing revoked yet" and
+        # a fresh, un-revoked VAID verifies out of the box. RESTART BEHAVIOUR: this
+        # store is non-durable and cannot detect its own restart — after a restart it
+        # is reconstructed empty and again vouches NOT_REVOKED, so a VAID revoked
+        # before the restart verifies clean. For restart-safety, inject a durable
+        # RevocationCheck, or hold the store absent until revocation state is
+        # re-loaded. See ``docs/spec/revocation.md`` R.4.6.
+        self._store = InMemoryRevocationList.assume_nothing_revoked()
         # The revocation store consulted in ``verify_vaid``; replaced by
         # :meth:`with_revocation_check`.
         self._revocation: RevocationCheck = self._store

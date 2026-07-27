@@ -101,7 +101,7 @@ pub struct ReferenceIssuer {
     /// [`resolve_parent`]: ReferenceIssuer::resolve_parent
     lineage: Mutex<HashMap<VaidId, Option<VaidId>>>,
     /// The revocation store consulted in `verify_vaid`. Defaults to `default_store`
-    /// (in-memory, initialised-and-empty); replaced by
+    /// (in-memory, [`InMemoryRevocationList::assume_nothing_revoked`]); replaced by
     /// [`ReferenceIssuer::with_revocation_check`].
     revocation: Arc<dyn RevocationCheck>,
     /// The built-in in-memory store that [`ReferenceIssuer::revoke`] mutates. It is
@@ -141,10 +141,15 @@ impl ReferenceIssuer {
     }
 
     fn with_key(kernel_key_pair: Ed25519KeyPair, vaid_ttl_hours: i64) -> Self {
-        // The default store is initialised-and-empty: a live issuer is an authority
-        // that can vouch "nothing revoked yet", so a fresh, un-revoked VAID verifies
-        // (rather than failing closed on Unavailable out of the box).
-        let default_store = Arc::new(InMemoryRevocationList::initialised_empty());
+        // Default revocation posture: assume-nothing-revoked, so a live issuer
+        // vouches "nothing revoked yet" and a fresh, un-revoked VAID verifies out of
+        // the box rather than failing closed on Unavailable. RESTART BEHAVIOUR: this
+        // store is non-durable and cannot detect its own restart — after a restart it
+        // is reconstructed empty and again vouches NotRevoked, so a VAID revoked
+        // before the restart verifies clean. For restart-safety, inject a durable
+        // `RevocationCheck`, or hold the store absent until revocation state is
+        // re-loaded. See `docs/spec/revocation.md` R.4.6.
+        let default_store = Arc::new(InMemoryRevocationList::assume_nothing_revoked());
         Self {
             kernel_key_pair,
             vaid_ttl_hours,
@@ -442,9 +447,9 @@ mod tests {
 
     #[test]
     fn injected_revocation_check_is_consulted() {
-        // An initialised-and-empty injected store: verifies until something is
+        // An assume-nothing-revoked injected store: verifies until something is
         // revoked through it.
-        let store = Arc::new(InMemoryRevocationList::initialised_empty());
+        let store = Arc::new(InMemoryRevocationList::assume_nothing_revoked());
         let issuer = ReferenceIssuer::ephemeral(1)
             .unwrap()
             .with_revocation_check(store.clone());
