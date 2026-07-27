@@ -9,6 +9,32 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.2.0]
+
+### ⚠️ Breaking — the `RevocationCheck` seam is replaced (read this before upgrading)
+
+**The 0.1.2 boolean, leaf-only `RevocationCheck` is gone, replaced by a
+three-state, lineage-aware seam** per `docs/spec/revocation.md` R.4. A deliberate,
+authorised breaking change, mirroring the Rust `vaid-mint` 0.2.0.
+
+- **`RevocationCheck.is_revoked(vaid_id) -> bool` → `check_lineage(list[str]) ->
+  RevocationStatus`.** The check is handed the full ordered lineage (root first,
+  leaf last) and returns `RevocationStatus.{NOT_REVOKED, REVOKED, UNAVAILABLE}`.
+  Custom backends must be updated.
+- **Revocation is inherited (R.4.4).** A VAID is revoked if **any** VAID in its
+  lineage is; revoking a parent now rejects every child attenuated from it. The
+  0.1.2 leaf-only check did not — a bypass.
+- **Fail closed on `UNAVAILABLE` (R.4.5).** An incomplete lineage (e.g. an empty
+  resolver after restart) or an unreachable store rejects rather than passing
+  silently. No fail-open option ships in this release.
+- **`NeverRevoked` removed.** It was a boolean-era no-op footgun.
+- **`ReferenceIssuer` records every mint** (roots as well as children) so it can
+  act as the verifier-side `LineageResolver` (R.4.2). New: `revocation_status`,
+  `resolve_parent`, `clear_lineage`; `is_revoked`/`parent_of` removed.
+  `with_revocation_check` now *replaces* the consulted store.
+- **Document bytes are unchanged.** No conformance vector changes; revocation
+  remains outside the conformance surface (R.1).
+
 ## [0.1.3]
 
 ### Docs only — no behavior change

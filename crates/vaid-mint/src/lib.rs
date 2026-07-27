@@ -19,10 +19,14 @@
 //! - [`authz`] — the [`authz::AuthorizationGate`] seam for root mints, defaulting
 //!   to [`authz::PermitAll`] (a reference choice, not a security recommendation).
 //!
-//! - [`revocation`] — the [`revocation::RevocationCheck`] seam for injecting a
-//!   revocation backend. The reference keeps a non-durable in-memory revoked set
-//!   as its working default; the seam lets a self-hoster layer a durable store on
-//!   top ([`issuer::ReferenceIssuer::with_revocation_check`]).
+//! - [`revocation`] — the three-state, lineage-aware [`revocation::RevocationCheck`]
+//!   seam (spec `docs/spec/revocation.md` R.4). The verifier assembles the ordered
+//!   ancestry ([`revocation::assemble_lineage`]) and hands it to the check, which
+//!   returns [`revocation::RevocationStatus`] (`NotRevoked`/`Revoked`/`Unavailable`)
+//!   — a VAID is revoked if **any** ancestor is (R.4.4), and verification fails
+//!   closed on `Unavailable`. The reference default store is non-durable, in-memory,
+//!   and injectable ([`issuer::ReferenceIssuer::with_revocation_check`]). Revocation
+//!   is **outside the conformance surface**: no vector polices it.
 //!
 //! Not included here — a hosted authority layers these on top: a *durable*,
 //! hash-chained revocation store, KMS-backed kernel keys, a *durable,
@@ -102,6 +106,9 @@ pub use document::{
 pub use authz::{AuthorizationGate, PermitAll};
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
-pub use revocation::{InMemoryRevocationList, NeverRevoked, RevocationCheck};
+pub use revocation::{
+    assemble_lineage, InMemoryRevocationList, LineageAssembly, LineageResolver, ParentResolution,
+    RevocationCheck, RevocationStatus,
+};
 pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
