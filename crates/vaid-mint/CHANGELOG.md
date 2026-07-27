@@ -32,6 +32,47 @@ different safety properties is the outcome being avoided, so there is no shim.
 - **Document bytes are unchanged.** No conformance vector changes; revocation
   remains outside the conformance surface (R.1).
 
+### Migration — porting a custom `RevocationCheck`
+
+Before (0.1.2) — a boolean, leaf-only check:
+
+```rust
+impl RevocationCheck for MyBackend {
+    fn is_revoked(&self, vaid_id: &VaidId) -> bool {
+        self.deny_list.contains(vaid_id)
+    }
+}
+```
+
+After (0.2.0) — three-state, handed the full ordered lineage:
+
+```rust
+impl RevocationCheck for MyBackend {
+    fn check_lineage(&self, lineage: &[VaidId]) -> RevocationStatus {
+        match self.load_deny_list() {
+            Err(_unreachable) => RevocationStatus::Unavailable,
+            Ok(deny) if lineage.iter().any(|id| deny.contains(id)) => RevocationStatus::Revoked,
+            Ok(_) => RevocationStatus::NotRevoked,
+        }
+    }
+}
+```
+
+Why the shape changed:
+
+- **A boolean cannot express `Unavailable`.** When the backing store is
+  unreachable, `is_revoked` had to answer `true` or `false`, and `false` is a
+  silent fail-open. `RevocationStatus` makes "could not determine" a first-class
+  outcome that verification fails closed on.
+- **A leaf-only check is bypassable by minting a child.** `is_revoked(vaid_id)`
+  saw only the presented leaf, so revoking a parent left its attenuated children
+  verifiable. `check_lineage` receives the whole ancestry; a VAID is revoked if any
+  ancestor is.
+
+The default in-memory store's constructor is renamed `initialised_empty` →
+`assume_nothing_revoked` to state its (fail-open-on-restart) posture rather than its
+state. `NeverRevoked` is removed.
+
 ## [0.1.2]
 
 ### ⚠️ Behavior change — expiry is now enforced (read this before upgrading)

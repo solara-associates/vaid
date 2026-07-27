@@ -214,3 +214,19 @@ Durable backing stores are a host-application responsibility in all versions. Th
 reference implementation ships in-memory stores for development. R.4.6 governs how
 those stores must behave when their state is absent, not whether the reference
 implementation must become durable.
+
+**Note on the reference default (0.2 onward).** The reference issuer defaults its
+revocation store to a *vouching* posture (the constructor is named
+`assume_nothing_revoked`, not for its empty state but for what it does): it answers
+`NotRevoked` over an empty set so a fresh issuer verifies out of the box. Being
+non-durable, it cannot detect its own restart — after a restart it is reconstructed
+empty and again vouches `NotRevoked`, so a VAID revoked before the restart verifies
+clean. This is a deliberate trade of restart-detection for out-of-the-box usability
+in development, and it is legitimate under R.4.6 (which requires only that an
+*absent* store report `Unavailable`, and that absent be distinguishable from
+vouching — both of which hold), **not** under R.4.5 as a configuration: it is not a
+fail-open verifier setting, it is the reference's development default, and it is
+named to be unmisreadable. Two alternatives make a deployment restart-safe: (1)
+inject a durable `RevocationCheck`; or (2) start the store in absent state until
+revocation state has been loaded into it — an absent store reports `Unavailable`,
+so verification fails closed until the load completes.

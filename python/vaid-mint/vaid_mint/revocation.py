@@ -42,7 +42,7 @@ empty after a restart. A child verified against an empty map must resolve to
 collapse in two places: :meth:`LineageResolver.resolve_parent` distinguishes a
 **known root** from an **unknown** id (:class:`ParentResolution`), and
 :class:`InMemoryRevocationList` represents **absent** state (``UNAVAILABLE``)
-distinctly from **initialised-and-empty** (``NOT_REVOKED``).
+distinctly from a **vouching** store (``NOT_REVOKED``).
 """
 
 from __future__ import annotations
@@ -168,9 +168,9 @@ class InMemoryRevocationList:
       for anything, so :meth:`check_lineage` returns
       :class:`RevocationStatus.UNAVAILABLE`. This is what a freshly reconstructed
       store looks like after a restart.
-    - **initialised-and-empty** (:meth:`initialised_empty`, or after any
-      :meth:`revoke`) — the store has authoritative contents, possibly empty, so an
-      unrevoked lineage returns :class:`RevocationStatus.NOT_REVOKED`.
+    - **vouching** (:meth:`assume_nothing_revoked`, or after any :meth:`revoke`) —
+      the store vouches for its contents, possibly empty, so an unrevoked lineage
+      returns :class:`RevocationStatus.NOT_REVOKED`.
 
     A durable backend implements :class:`RevocationCheck` itself and returns
     ``UNAVAILABLE`` when *its* store is unreachable; this in-memory type is for
@@ -179,13 +179,23 @@ class InMemoryRevocationList:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # ``None`` = absent (cannot vouch → UNAVAILABLE); a set = available.
+        # ``None`` = absent (cannot vouch → UNAVAILABLE); a set = vouching.
         self._revoked: set[str] | None = None
 
     @classmethod
-    def initialised_empty(cls) -> "InMemoryRevocationList":
-        """A store explicitly initialised as **available and empty** — an authority
-        asserting "I have loaded my revocation state; nothing is revoked yet." """
+    def assume_nothing_revoked(cls) -> "InMemoryRevocationList":
+        """A store that **vouches "nothing is revoked"** over an empty set.
+
+        The name states the posture, not the state, because the state ("empty") is
+        the dangerous part read alone. This store answers ``NOT_REVOKED`` for every
+        VAID it is not told about — and, being non-durable, it **cannot detect its
+        own restart**: after a process restart it is reconstructed empty and again
+        vouches ``NOT_REVOKED``, so a VAID revoked before the restart verifies clean.
+        That is a fail-*open* posture reached by assumption. Fine for local
+        development and tests; for anything that must survive a restart, inject a
+        durable :class:`RevocationCheck`, or hold the store in absent state (the
+        default constructor) until you have re-loaded revocation state into it.
+        """
         inst = cls()
         inst._revoked = set()
         return inst

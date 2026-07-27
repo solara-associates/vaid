@@ -45,10 +45,10 @@ def issue_child(issuer: ReferenceIssuer, parent: dict, agent_class: str = "child
 # ── the store's three states (R.4.3, R.4.6) ──
 
 
-def test_absent_store_is_unavailable_initialised_empty_is_not_revoked():
+def test_absent_store_is_unavailable_vouching_store_is_not_revoked():
     absent = InMemoryRevocationList()  # never populated
     assert absent.check_lineage(["x"]) is RevocationStatus.UNAVAILABLE
-    empty = InMemoryRevocationList.initialised_empty()
+    empty = InMemoryRevocationList.assume_nothing_revoked()
     assert empty.check_lineage(["x"]) is RevocationStatus.NOT_REVOKED
 
 
@@ -62,7 +62,7 @@ def test_revoking_makes_a_store_available_and_reports_any_hop():
 
 
 def test_mark_unavailable_flips_back_to_unavailable():
-    store = InMemoryRevocationList.initialised_empty()
+    store = InMemoryRevocationList.assume_nothing_revoked()
     assert store.check_lineage(["x"]) is RevocationStatus.NOT_REVOKED
     store.mark_unavailable()
     assert store.check_lineage(["x"]) is RevocationStatus.UNAVAILABLE

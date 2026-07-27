@@ -53,8 +53,8 @@
 //!   turns *unknown* into [`LineageAssembly::Incomplete`], which the verifier maps
 //!   to `Unavailable`, never to a rootless lineage.
 //! - [`InMemoryRevocationList`] represents **absent** state (`Unavailable`)
-//!   distinctly from **initialised-and-empty** (`NotRevoked`). A store that has
-//!   not been populated cannot vouch for any VAID and says so.
+//!   distinctly from a **vouching** store (`NotRevoked`). A store that has not been
+//!   populated cannot vouch for any VAID and says so.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -170,8 +170,8 @@ pub fn assemble_lineage(leaf: &Vaid, resolver: &dyn LineageResolver) -> LineageA
 ///   populated and cannot vouch for anything, so [`check_lineage`] returns
 ///   [`RevocationStatus::Unavailable`]. This is what a freshly reconstructed store
 ///   looks like after a restart.
-/// - **initialised-and-empty** ([`initialised_empty`](Self::initialised_empty), or
-///   after any [`revoke`](Self::revoke)) — the store has authoritative contents,
+/// - **assume-nothing-revoked** ([`assume_nothing_revoked`](Self::assume_nothing_revoked),
+///   or after any [`revoke`](Self::revoke)) — the store vouches for its contents,
 ///   which may be empty, so an unrevoked lineage returns
 ///   [`RevocationStatus::NotRevoked`].
 ///
@@ -179,7 +179,7 @@ pub fn assemble_lineage(leaf: &Vaid, resolver: &dyn LineageResolver) -> LineageA
 /// `Unavailable` when *its* store is unreachable; this in-memory type is for tests
 /// and for wiring the seam before such a backend exists.
 pub struct InMemoryRevocationList {
-    /// `None` = absent (cannot vouch → `Unavailable`); `Some(set)` = available.
+    /// `None` = absent (cannot vouch → `Unavailable`); `Some(set)` = vouching.
     state: Mutex<Option<HashSet<VaidId>>>,
 }
 
@@ -189,9 +189,18 @@ impl InMemoryRevocationList {
         Self { state: Mutex::new(None) }
     }
 
-    /// A store explicitly initialised as **available and empty** — an authority
-    /// asserting "I have loaded my revocation state; nothing is revoked yet."
-    pub fn initialised_empty() -> Self {
+    /// A store that **vouches "nothing is revoked"** over an empty set.
+    ///
+    /// The name states the posture, not the state, because the state ("empty") is
+    /// the dangerous part read alone. This store answers `NotRevoked` for every
+    /// VAID it is not told about — and, being non-durable, it **cannot detect its
+    /// own restart**: after a process restart it is reconstructed empty and again
+    /// vouches `NotRevoked`, so a VAID revoked before the restart verifies clean.
+    /// That is a fail-*open* posture reached by assumption. It is fine for local
+    /// development and tests; for anything that must survive a restart, inject a
+    /// durable [`RevocationCheck`], or hold the store in [`new`](Self::new)/absent
+    /// state until you have re-loaded revocation state into it.
+    pub fn assume_nothing_revoked() -> Self {
         Self { state: Mutex::new(Some(HashSet::new())) }
     }
 
@@ -214,8 +223,8 @@ impl InMemoryRevocationList {
         *self.state.lock().expect("revocation lock not poisoned") = None;
     }
 
-    /// True when the store has authoritative contents (initialised), false when its
-    /// state is absent.
+    /// True when the store is vouching for its contents, false when its state is
+    /// absent.
     pub fn is_available(&self) -> bool {
         self.state.lock().expect("revocation lock not poisoned").is_some()
     }
@@ -253,10 +262,10 @@ mod tests {
     // three-state behaviour directly.
 
     #[test]
-    fn absent_store_is_unavailable_initialised_empty_is_not_revoked() {
+    fn absent_store_is_unavailable_vouching_store_is_not_revoked() {
         let absent = InMemoryRevocationList::new();
         assert_eq!(absent.check_lineage(&[VaidId::new()]), RevocationStatus::Unavailable);
-        let empty = InMemoryRevocationList::initialised_empty();
+        let empty = InMemoryRevocationList::assume_nothing_revoked();
         assert_eq!(empty.check_lineage(&[VaidId::new()]), RevocationStatus::NotRevoked);
     }
 
@@ -274,7 +283,7 @@ mod tests {
 
     #[test]
     fn mark_unavailable_flips_back_to_unavailable() {
-        let list = InMemoryRevocationList::initialised_empty();
+        let list = InMemoryRevocationList::assume_nothing_revoked();
         assert_eq!(list.check_lineage(&[VaidId::new()]), RevocationStatus::NotRevoked);
         list.mark_unavailable();
         assert_eq!(list.check_lineage(&[VaidId::new()]), RevocationStatus::Unavailable);
