@@ -52,6 +52,7 @@ from vaid_mint.mint import (
     scope_attenuates,
 )
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
+from vaid_mint.verify import verify_lineage_hash, verify_vaid_document
 from vaid_mint.revocation import (
     InMemoryRevocationList,
     LineageResolver,
@@ -84,6 +85,8 @@ __all__ = [
     "LineageResolver",
     "ParentResolution",
     "assemble_lineage",
+    "verify_vaid_document",
+    "verify_lineage_hash",
     "AuditSink",
     "AuditEntry",
     "InMemoryAudit",

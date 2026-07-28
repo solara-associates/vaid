@@ -5,6 +5,17 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
 
 ## [0.2.0]
 
+### Added — public-key-only document verification (additive, non-breaking)
+
+- **`verify_vaid_document(kernel_public_key: &[u8], vaid: &Vaid) -> bool`** and
+  **`verify_lineage_hash(vaid: &Vaid) -> bool`** (module `verify`). A third party
+  holding only an issuer's kernel **public** key can now confirm a VAID document is
+  authentic — no `ReferenceIssuer`, no private key. Previously the only VAID-document
+  verifier was `ReferenceIssuer::verify_vaid`, whose every constructor needs the
+  private key. Scope is authenticity + `lineage_hash` consistency; it does **not**
+  check expiry and does **not** consult revocation (a resolver-less verifier must not
+  be gated on a lookup it cannot perform).
+
 ### ⚠️ Breaking — the `RevocationCheck` seam is replaced (read this before upgrading)
 
 **The 0.1.2 boolean, leaf-only `RevocationCheck` is gone, replaced by a

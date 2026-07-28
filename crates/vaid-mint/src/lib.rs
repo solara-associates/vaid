@@ -98,6 +98,7 @@ pub mod issuer;
 pub mod mint;
 pub mod mint_types;
 pub mod revocation;
+pub mod verify;
 
 pub use document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
@@ -112,3 +113,4 @@ pub use revocation::{
 };
 pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
+pub use verify::{verify_lineage_hash, verify_vaid_document};
