@@ -35,10 +35,11 @@ Without the verification check, a stale manifest would propagate cleanly to eigh
 
 **Claims register:** `docs/claims-register.json` holds evidence-backed prose claims that are *not* a simple status — e.g. "governance demonstrated across ADK, LangChain and OpenAI." Per claim: the claim, its evidence, and `date_last_verified`, so the claim visibly ages until re-verified.
 
-## Two boundaries, stated rather than discovered
+## Three boundaries, stated rather than discovered
 
 1. **`status_text` is hand-written prose.** The manifest is therefore not *purely* generated — one field per capability is authored. That is a far smaller surface than status woven into eight pages, and it is a **review item at release**, not a generated field. Naming it here so it is not found later and mistaken for a gap in the design.
 2. **One finding class the manifest cannot catch.** Of the thirteen findings, twelve reduce to a capability status (the six verification overclaims → roadmap/planned; the understatement → shipped) or to a claims-register entry (the framework-governance claim). The thirteenth — the `/compare` "checkable by anyone" → "…holding the signer's public key" nuance — is a **trust-anchoring nuance in prose**, not a status. It stays a **human review item**; the manifest does not and is not meant to catch it.
+3. **The verification check proves a version is *published*, not that the capability *works*.** `vaid-mint 0.1.2` existing on crates.io is not evidence that the reference mint does what a page claims about it — only that a package by that name and version was released. The check confirms *existence and publication*, and that a roadmap capability's blocker has not silently merged; it does not run the code or assert behaviour. This gap is acceptable and likely permanent (behavioural proof is what the conformance vectors, unit tests, and the claims register's evidence are for). It is recorded here so that a green `capabilities` check is not read as stronger than it is: it means "the status is internally honest and the artifacts exist," not "the capability is proven to work."
 
 ## Consequences
 
