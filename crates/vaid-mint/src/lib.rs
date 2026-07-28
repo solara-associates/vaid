@@ -113,4 +113,4 @@ pub use revocation::{
 };
 pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
-pub use verify::{verify_lineage_hash, verify_vaid_document};
+pub use verify::{verify_lineage_hash, verify_vaid_authenticity};

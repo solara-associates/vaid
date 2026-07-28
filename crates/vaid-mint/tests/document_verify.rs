@@ -10,7 +10,7 @@ use serde_json::json;
 
 use vaid_mint::document::{AgentClass, TenantId, Vaid};
 use vaid_mint::issuer::{ReferenceIssuer, VaidIssuer};
-use vaid_mint::{verify_lineage_hash, verify_vaid_document};
+use vaid_mint::{verify_lineage_hash, verify_vaid_authenticity};
 
 fn hex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -41,7 +41,7 @@ fn third_party_verifies_with_public_key_only() {
     let (public_key, vaid) = public_key_and_doc();
     // No issuer instance in scope — only the public key bytes and the document.
     assert!(
-        verify_vaid_document(&public_key, &vaid),
+        verify_vaid_authenticity(&public_key, &vaid),
         "a genuine VAID must verify against the issuer's public key alone"
     );
 }
@@ -53,14 +53,14 @@ fn tampered_document_fails() {
     let mut val = serde_json::to_value(&vaid).unwrap();
     val["scope_boundary"] = json!(["data.x", "data.everything"]);
     let forged: Vaid = serde_json::from_value(val).unwrap();
-    assert!(!verify_vaid_document(&public_key, &forged), "a rewritten field must fail");
+    assert!(!verify_vaid_authenticity(&public_key, &forged), "a rewritten field must fail");
 }
 
 #[test]
 fn a_different_key_does_not_verify() {
     let (_public_key, vaid) = public_key_and_doc();
     let other = ReferenceIssuer::ephemeral(1).unwrap().kernel_public_key().to_vec();
-    assert!(!verify_vaid_document(&other, &vaid), "another issuer's key must not verify it");
+    assert!(!verify_vaid_authenticity(&other, &vaid), "another issuer's key must not verify it");
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn verifies_the_frozen_mint_vector_with_public_key_only() {
 
     let public_key = hex(v["ed25519"]["kernel_public_key_hex"].as_str().unwrap());
     assert!(
-        verify_vaid_document(&public_key, &vaid),
+        verify_vaid_authenticity(&public_key, &vaid),
         "the frozen mint vector must verify under its kernel public key alone"
     );
     // And a one-byte flip of the signature must fail.
@@ -104,5 +104,5 @@ fn verifies_the_frozen_mint_vector_with_public_key_only() {
     let mut doc2 = v["input"].clone();
     doc2["kernel_signature"] = json!(bad_sig);
     let tampered: Vaid = serde_json::from_value(doc2).unwrap();
-    assert!(!verify_vaid_document(&public_key, &tampered));
+    assert!(!verify_vaid_authenticity(&public_key, &tampered));
 }

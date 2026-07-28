@@ -7,7 +7,7 @@ holding a ``ReferenceIssuer``, and every issuer constructor needs the kernel
 this module exposes that: a third party holding just the issuer's kernel public key
 can confirm a VAID document is authentic — no issuer instance, no private key.
 
-Scope: **authenticity**, not standing. :func:`verify_vaid_document` checks the
+Scope: **authenticity**, not standing. :func:`verify_vaid_authenticity` checks the
 signature-scheme version, the kernel Ed25519 signature over the canonical document,
 and the consistency of ``lineage_hash``. It deliberately does **not** check expiry
 (a temporal concern — use :func:`~vaid_mint.document.is_expired`) and does **not**
@@ -39,10 +39,10 @@ def verify_lineage_hash(vaid: dict) -> bool:
     return compute_lineage_hash(vaid.get("parent_vaid"), agent_id) == vaid.get("lineage_hash")
 
 
-def verify_vaid_document(kernel_public_key: bytes, vaid: dict) -> bool:
+def verify_vaid_authenticity(kernel_public_key: bytes, vaid: dict) -> bool:
     """Verify a VAID document's **authenticity** against an issuer's kernel
     **public** key (raw 32 bytes) — no issuer instance, no private key. Mirror of the
-    Rust ``vaid_mint::verify::verify_vaid_document``.
+    Rust ``vaid_mint::verify::verify_vaid_authenticity``.
 
     This answers *authenticity* — "genuinely issued under this key, and internally
     consistent" — **not** *standing* ("valid and unrevoked right now"). A ``True``
