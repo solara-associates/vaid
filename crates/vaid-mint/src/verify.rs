@@ -29,14 +29,28 @@ use crate::document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, Vaid, VAID_SIG_VERSION_V2,
 };
 
-/// Verify a VAID document's authenticity against an issuer's kernel **public** key
-/// (raw 32-byte Ed25519). No issuer instance, no private key.
+/// Verify a VAID document's **authenticity** against an issuer's kernel **public**
+/// key (raw 32-byte Ed25519). No issuer instance, no private key.
 ///
-/// Returns `true` iff the signature-scheme version is current, `lineage_hash` is
-/// internally consistent ([`verify_lineage_hash`]), and the kernel signature is
-/// valid over the canonical document under `kernel_public_key`. A malformed key, a
-/// bad signature, or any tampered signed field is `false`, never an error. Does not
-/// check expiry or revocation — see the module docs.
+/// This answers *authenticity* — "genuinely issued under this key, and internally
+/// consistent" — **not** *standing* ("valid and unrevoked right now"). A `true`
+/// result does not mean the VAID is currently usable; it means it is real.
+///
+/// **Checks (all must hold for `true`):**
+/// - the signature-scheme version is current;
+/// - `lineage_hash` is internally consistent ([`verify_lineage_hash`]);
+/// - the kernel Ed25519 signature is valid over the canonical document under
+///   `kernel_public_key`.
+///
+/// **Does NOT check — the caller must handle these separately:**
+/// - **expiry** — call [`crate::document::Vaid::is_expired`]; an expired-but-signed
+///   VAID returns `true` here;
+/// - **revocation** — evaluate a [`crate::revocation::RevocationCheck`] (or, in the
+///   reference, [`crate::issuer::ReferenceIssuer::revocation_status`]) on a separate
+///   path. Revocation is deliberately *not* consulted here — see the module docs.
+///
+/// A malformed key, a bad signature, or any tampered signed field is `false`, never
+/// an error.
 pub fn verify_vaid_document(kernel_public_key: &[u8], vaid: &Vaid) -> bool {
     if vaid.sig_version() != VAID_SIG_VERSION_V2 {
         return false;
