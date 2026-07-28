@@ -174,10 +174,12 @@ jobs:
         run: python -m pytest python/vaid-pop/tests/test_completion_conformance.py
 
   capabilities:
-    name: Capabilities manifest verified against reality
+    name: Capabilities manifest & claims-register verified
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      # node is preinstalled on ubuntu-latest; the check uses only built-ins + fetch.
+      # node is preinstalled on ubuntu-latest; the checks use only built-ins + fetch.
       - name: Verify docs/capabilities.json matches reality (registries + blocker PR state)
         run: node scripts/verify-capabilities.mjs
+      - name: Verify docs/claims-register.json freshness (age budget + backing)
+        run: node scripts/verify-claims.mjs

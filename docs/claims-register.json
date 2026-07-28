@@ -1,5 +1,5 @@
 {
-  "_comment": "Evidence-backed prose claims that are NOT reducible to a single capability status (those live in capabilities.json). Each claim carries its evidence and the date it was last verified, so the claim visibly ages until re-verified. There is deliberately no automated verifier for these — they are a human review item at release. See docs/adr/0002-capabilities-manifest.md.",
+  "_comment": "Evidence-backed prose claims that are NOT reducible to a single capability status (those live in capabilities.json). Each claim carries its evidence, the date it was last verified, and — when a date is set — the verifier and the verified_artifact backing it. FRESHNESS is enforced automatically by scripts/verify-claims.mjs in CI: a null date, a date with no verifier/verified_artifact, or a date older than the budget (default WARN 60d / FAIL 90d, per-claim max_age_days override) fails the build. That check proves freshness, NOT truth — truth (whether the claim actually holds) remains a human review item at release, backed by each claim's evidence. See docs/adr/0002-capabilities-manifest.md.",
   "version": 1,
   "claims": [
     {
