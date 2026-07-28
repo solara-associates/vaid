@@ -1,6 +1,6 @@
 //! Standalone, public-key-only verification of a VAID document.
 //!
-//! [`crate::issuer::ReferenceIssuer::verify_vaid`] can only be called by a party
+//! [`crate::issuer::VaidIssuer::verify_vaid`] can only be called by a party
 //! holding a [`crate::issuer::ReferenceIssuer`], and every issuer constructor needs
 //! the kernel **private** key. An Ed25519 signature needs only the **public** key to
 //! verify, so this module exposes what the issuer method trapped inside itself: a
