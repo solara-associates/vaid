@@ -1,0 +1,18 @@
+{
+  "_comment": "Evidence-backed prose claims that are NOT reducible to a single capability status (those live in capabilities.json). Each claim carries its evidence and the date it was last verified, so the claim visibly ages until re-verified. There is deliberately no automated verifier for these — they are a human review item at release. See docs/adr/0002-capabilities-manifest.md.",
+  "version": 1,
+  "claims": [
+    {
+      "id": "framework-governance-demonstrated",
+      "claim": "Governance — the same identity, policy and audit — has been demonstrated across ADK, LangChain and OpenAI adapters: one governance layer, not one per framework.",
+      "evidence": [
+        "forge-agents/harness/phase1e_adk_conformance.py (live: governance survives the framework swap to ADK)",
+        "forge-agents/harness/phase1e_openai_conformance.py (live: same, framework=openai)",
+        "synthera/integrations/synthera-openai (governed delegation seam; tests/test_delegation_guard.py)",
+        "vaid python/vaid-langchain (published to PyPI, conformance-tested)"
+      ],
+      "date_last_verified": null,
+      "verified_note": "The adapter code exists and is unit-tested. A dated PASSING run of the phase1e LIVE conformance harnesses (against the europe substrate + europe operator KMS key) is pending — see the Item-2 VPC job. Until that artifact is stored and linked here, date_last_verified stays null and the claim must be read as 'implemented, live-run artifact pending', not 'freshly re-verified'."
+    }
+  ]
+}
