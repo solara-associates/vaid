@@ -1,0 +1,20 @@
+{
+  "_comment": "Evidence-backed prose claims that are NOT reducible to a single capability status (those live in capabilities.json). Each claim carries its evidence, the date it was last verified, and — when a date is set — the verifier and the verified_artifact backing it. FRESHNESS is enforced automatically by scripts/verify-claims.mjs in CI: a null date, a date with no verifier/verified_artifact, or a date older than the budget (default WARN 60d / FAIL 90d, per-claim max_age_days override) fails the build. That check proves freshness, NOT truth — truth (whether the claim actually holds) remains a human review item at release, backed by each claim's evidence. See docs/adr/0002-capabilities-manifest.md.",
+  "version": 1,
+  "claims": [
+    {
+      "id": "framework-governance-demonstrated",
+      "claim": "Governance — the same identity, policy and audit — has been demonstrated across ADK, LangChain and OpenAI adapters: one governance layer, not one per framework.",
+      "evidence": [
+        "forge-agents/harness/phase1e_adk_conformance.py (live: governance survives the framework swap to ADK)",
+        "forge-agents/harness/phase1e_openai_conformance.py (live: same, framework=openai)",
+        "synthera/integrations/synthera-openai (governed delegation seam; tests/test_delegation_guard.py)",
+        "vaid python/vaid-langchain (published to PyPI, conformance-tested)"
+      ],
+      "date_last_verified": "2026-07-28",
+      "verifier": "phase1e-conformance Cloud Run job, execution phase1e-conformance-q7pfr (synthera-substrate-prod / europe-west1); image tag :6267345, forge-agents SHA 62673455d33f6834a0063ca879f67994db9a8126",
+      "verified_artifact": "forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md",
+      "verified_note": "Verified by a dated PASSING run of the phase1e LIVE conformance harnesses against the europe substrate + europe operator KMS key (single Cloud Run job execution, fail-closed): ADK 7/7 PASS, OpenAI 9/9 PASS across BOTH delegation surfaces (handoff + agent_tool). Wire evidence shows real substrate mints (HTTP 200), distinct attenuated child VAIDs, and over-envelope children denied at the substrate mint wall (least-privilege attenuation, ADR-0027 Phase 2) with the sub-agent never running. This is a stronger footing than when the homepage first made the claim. LangChain here rests on published+conformance-tested vaid-langchain, not this live run."
+    }
+  ]
+}
