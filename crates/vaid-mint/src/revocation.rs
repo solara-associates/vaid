@@ -167,8 +167,8 @@ pub fn assemble_lineage(leaf: &Vaid, resolver: &dyn LineageResolver) -> LineageA
 ///
 /// - **absent** (`new` / [`unavailable`](Self::unavailable) /
 ///   [`mark_unavailable`](Self::mark_unavailable)) — the store has not been
-///   populated and cannot vouch for anything, so [`check_lineage`] returns
-///   [`RevocationStatus::Unavailable`]. This is what a freshly reconstructed store
+///   populated and cannot vouch for anything, so [`RevocationCheck::check_lineage`]
+///   returns [`RevocationStatus::Unavailable`]. This is what a freshly reconstructed store
 ///   looks like after a restart.
 /// - **assume-nothing-revoked** ([`assume_nothing_revoked`](Self::assume_nothing_revoked),
 ///   or after any [`revoke`](Self::revoke)) — the store vouches for its contents,

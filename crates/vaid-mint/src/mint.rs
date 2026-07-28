@@ -222,8 +222,8 @@ impl MintService {
     /// 1. **parent present** — a verified parent travelled in context; absent → deny;
     /// 2. `C.tenant == P.tenant` — same tenant, from the VERIFIED parent, never the body;
     /// 3. `C.parent_vaid == Some(P.vaid_id)` — lineage bound to the authenticated parent;
-    /// 4. `C.scope ⊆ P.scope` — [`scope_attenuates`];
-    /// 5. `C.caps ⊆ P.caps` — [`caps_attenuate`];
+    /// 4. `C.scope ⊆ P.scope` — `scope_attenuates`;
+    /// 5. `C.caps ⊆ P.caps` — `caps_attenuate`;
     /// 6. child **BYO-key PoP** holds — `mint_child` is always BYO-key.
     ///
     /// Attenuation (2–5) runs BEFORE the PoP so a rejected delegation never
