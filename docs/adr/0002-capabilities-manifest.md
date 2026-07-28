@@ -58,6 +58,8 @@ The register originally stated, in its own header, that there was **deliberately
 
 ## Consequences
 
-- A capability change is one manifest edit; the site (and any consumer) re-vendors and re-renders. Copy edits, not rewrites — and PR #2 merging flips `vaid-document-verification`/`revocation-lineage-aware` to `shipped` by updating this file, with the verification check enforcing the flip (a merged PR #2 with those still `roadmap` fails CI).
+- A capability change is one manifest edit; the site (and any consumer) re-vendors and re-renders — copy edits, not rewrites.
+- **A `shipped` flip that depends on a published artifact lands *after* the registry publish, as its own PR — not in the code-merge PR.** Merging PR #2 lands the revocation / public-key-verification *code*, but `vaid-document-verification` / `revocation-lineage-aware` flip to `shipped` only once **vaid-mint 0.2.0 is on crates.io + PyPI**, because `shipped` means *published* and the verification check requires the versions to exist. (An earlier draft of this ADR said "PR #2 merging flips them to `shipped`" — that was wrong: merging publishes nothing. The release order is merge → tag → publish → manifest-flip PR. See CONTRIBUTING's release gate.)
+- **Evidence the design holds (2026-07-28):** on its *first real use*, `verify-capabilities.mjs` caught a `shipped`-but-unpublished assertion **before it reached a page**. A simulated post-merge flip of those two capabilities to `shipped vaid-mint@0.2.0` failed with four errors — *"claims shipped, but vaid-mint@0.2.0 is NOT published on crates.io / pypi"* — because 0.2.0 was not yet released. The check did exactly what it exists to do: stop the manifest asserting a status the registries do not back.
 - Prose can no longer silently assert a status the code does not have.
 - Cost: the two boundaries above (hand-written `status_text`; the trust-anchoring nuance needing human review).
