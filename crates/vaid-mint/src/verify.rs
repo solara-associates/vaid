@@ -9,7 +9,7 @@
 //!
 //! ## Scope: authenticity, not standing
 //!
-//! [`verify_vaid_document`] answers "was this document genuinely issued under this
+//! [`verify_vaid_authenticity`] answers "was this document genuinely issued under this
 //! key, and is it internally consistent" — the signature-scheme version, the kernel
 //! Ed25519 signature over the canonical document, and the consistency of
 //! `lineage_hash`. It deliberately does **not**:
@@ -51,7 +51,7 @@ use crate::document::{
 ///
 /// A malformed key, a bad signature, or any tampered signed field is `false`, never
 /// an error.
-pub fn verify_vaid_document(kernel_public_key: &[u8], vaid: &Vaid) -> bool {
+pub fn verify_vaid_authenticity(kernel_public_key: &[u8], vaid: &Vaid) -> bool {
     if vaid.sig_version() != VAID_SIG_VERSION_V2 {
         return false;
     }

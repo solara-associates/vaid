@@ -13,7 +13,7 @@ language's behavior.
 
 ### Added — public-key-only document verification (additive, non-breaking)
 
-- **`verify_vaid_document(kernel_public_key: bytes, vaid: dict) -> bool`** and
+- **`verify_vaid_authenticity(kernel_public_key: bytes, vaid: dict) -> bool`** and
   **`verify_lineage_hash(vaid: dict) -> bool`** (module `verify`), mirroring the Rust
   `vaid_mint::verify`. A third party holding only an issuer's kernel **public** key can
   confirm a VAID document is authentic — no `ReferenceIssuer`, no private key. Scope is

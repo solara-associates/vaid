@@ -237,7 +237,7 @@ Verifying a VAID answers two different questions, and they must not be collapsed
 
 - **Authenticity** — was this document genuinely issued under a given kernel key, and
   is it internally consistent? This needs only the issuer's **public** key. It is
-  answered by `verify_vaid_document` (checks the signature-scheme version, the kernel
+  answered by `verify_vaid_authenticity` (checks the signature-scheme version, the kernel
   signature over the canonical document, and `lineage_hash` consistency), and it is
   available to any third party — cross-organisation, offline, or after the fact —
   because a signature needs only the public key to check.
@@ -245,7 +245,7 @@ Verifying a VAID answers two different questions, and they must not be collapsed
   **expiry** (a temporal check) and **revocation** (this section). Standing is
   evaluated on top of authenticity, by the party that holds the relevant state.
 
-`verify_vaid_document` deliberately answers authenticity **only**. It does not check
+`verify_vaid_authenticity` deliberately answers authenticity **only**. It does not check
 expiry, and — the load-bearing point for this specification — it does **not** consult
 revocation. Gating authenticity on revocation would reintroduce the R.4.2 problem in
 a new place: a resolver-less verifier cannot perform the lineage/revocation lookup, so

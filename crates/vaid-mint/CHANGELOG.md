@@ -7,7 +7,7 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
 
 ### Added — public-key-only document verification (additive, non-breaking)
 
-- **`verify_vaid_document(kernel_public_key: &[u8], vaid: &Vaid) -> bool`** and
+- **`verify_vaid_authenticity(kernel_public_key: &[u8], vaid: &Vaid) -> bool`** and
   **`verify_lineage_hash(vaid: &Vaid) -> bool`** (module `verify`). A third party
   holding only an issuer's kernel **public** key can now confirm a VAID document is
   authentic — no `ReferenceIssuer`, no private key. Previously the only VAID-document
