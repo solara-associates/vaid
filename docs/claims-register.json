@@ -11,8 +11,10 @@
         "synthera/integrations/synthera-openai (governed delegation seam; tests/test_delegation_guard.py)",
         "vaid python/vaid-langchain (published to PyPI, conformance-tested)"
       ],
-      "date_last_verified": null,
-      "verified_note": "The adapter code exists and is unit-tested. A dated PASSING run of the phase1e LIVE conformance harnesses (against the europe substrate + europe operator KMS key) is pending — see the Item-2 VPC job. Until that artifact is stored and linked here, date_last_verified stays null and the claim must be read as 'implemented, live-run artifact pending', not 'freshly re-verified'."
+      "date_last_verified": "2026-07-28",
+      "verifier": "phase1e-conformance Cloud Run job, execution phase1e-conformance-q7pfr (synthera-substrate-prod / europe-west1); image tag :6267345, forge-agents SHA 62673455d33f6834a0063ca879f67994db9a8126",
+      "verified_artifact": "forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md",
+      "verified_note": "Verified by a dated PASSING run of the phase1e LIVE conformance harnesses against the europe substrate + europe operator KMS key (single Cloud Run job execution, fail-closed): ADK 7/7 PASS, OpenAI 9/9 PASS across BOTH delegation surfaces (handoff + agent_tool). Wire evidence shows real substrate mints (HTTP 200), distinct attenuated child VAIDs, and over-envelope children denied at the substrate mint wall (least-privilege attenuation, ADR-0027 Phase 2) with the sub-agent never running. This is a stronger footing than when the homepage first made the claim. LangChain here rests on published+conformance-tested vaid-langchain, not this live run."
     }
   ]
 }
