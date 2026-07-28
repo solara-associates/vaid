@@ -25,11 +25,13 @@ from vaid_pop.signer import (
     build_request_auth_payload,
     canonical_request_signing_bytes,
     utc_whole_second_rfc3339,
+    verify_signed_payload,
 )
 
 __all__ = [
     "RequestSigner",
     "canonical_request_signing_bytes",
+    "verify_signed_payload",
     "build_request_auth_payload",
     "utc_whole_second_rfc3339",
     "AssuranceTier",
@@ -40,4 +42,4 @@ __all__ = [
     "HEADER_SIGNATURE",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

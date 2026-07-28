@@ -7,7 +7,7 @@ name = "vaid-pop"
 # Independent semver. Additive-minor for new optional fields; major for any
 # canonicalization / field-name change (those break cross-language byte-identity
 # against operator_pop_v1.json).
-version = "0.1.0"
+version = "0.2.0"
 description = "Canonical Python proof-of-possession (PoP) request signer for the VAID standard."
 readme = "README.md"
 requires-python = ">=3.10"
