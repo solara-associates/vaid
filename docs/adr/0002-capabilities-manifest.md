@@ -33,13 +33,28 @@ Without the verification check, a stale manifest would propagate cleanly to eigh
 
 **Release gate:** the vaid release process carries one checklist line — *"Does this release change `capabilities.json`? If a capability's status or version moved, update the manifest in the same PR."* Status is updated **when it ships**, not reconciled afterward.
 
-**Claims register:** `docs/claims-register.json` holds evidence-backed prose claims that are *not* a simple status — e.g. "governance demonstrated across ADK, LangChain and OpenAI." Per claim: the claim, its evidence, and `date_last_verified`, so the claim visibly ages until re-verified.
+**Claims register:** `docs/claims-register.json` holds evidence-backed prose claims that are *not* a simple status — e.g. "governance demonstrated across ADK, LangChain and OpenAI." Per claim: the claim, its evidence, `date_last_verified`, and — when a date is set — a `verifier` (who/what verified it) and a `verified_artifact` (the dated evidence it points at). An optional per-claim `max_age_days` overrides the default freshness budget.
 
 ## Three boundaries, stated rather than discovered
 
 1. **`status_text` is hand-written prose.** The manifest is therefore not *purely* generated — one field per capability is authored. That is a far smaller surface than status woven into eight pages, and it is a **review item at release**, not a generated field. Naming it here so it is not found later and mistaken for a gap in the design.
 2. **One finding class the manifest cannot catch.** Of the thirteen findings, twelve reduce to a capability status (the six verification overclaims → roadmap/planned; the understatement → shipped) or to a claims-register entry (the framework-governance claim). The thirteenth — the `/compare` "checkable by anyone" → "…holding the signer's public key" nuance — is a **trust-anchoring nuance in prose**, not a status. It stays a **human review item**; the manifest does not and is not meant to catch it.
 3. **The verification check proves a version is *published*, not that the capability *works*.** `vaid-mint 0.1.2` existing on crates.io is not evidence that the reference mint does what a page claims about it — only that a package by that name and version was released. The check confirms *existence and publication*, and that a roadmap capability's blocker has not silently merged; it does not run the code or assert behaviour. This gap is acceptable and likely permanent (behavioural proof is what the conformance vectors, unit tests, and the claims register's evidence are for). It is recorded here so that a green `capabilities` check is not read as stronger than it is: it means "the status is internally honest and the artifacts exist," not "the capability is proven to work."
+
+## Claims-register freshness — automated for freshness, not for truth
+
+The register originally stated, in its own header, that there was **deliberately no automated verifier** for these claims — they were a human review item at release. A `date_last_verified` with nothing enforcing it, however, is decoration: a claim can be published in prose, its date can quietly rot, and nothing flags it. That is the same hole — a stale assertion nobody reconciles — one level up from what the manifest exists to close.
+
+**This ADR reverses that stance for one axis only: freshness.** `scripts/verify-claims.mjs` runs in the same `capabilities` CI job and enforces:
+
+- `date_last_verified` **null/missing → FAIL.** A null that passes silently is exactly the hole above; an unverified claim in the register is unsupported.
+- a set date with an empty `verifier` **or** `verified_artifact` **→ FAIL.** A date with no backing is worse than a null one — it looks verified and is not.
+- **age ≥ 90 days → FAIL; age ≥ 60 days → WARN** (WARN is two-thirds of the FAIL budget, so a per-claim `max_age_days` scales both). WARN gives runway to re-verify before CI goes red.
+- like the other checks, it **fails loud and fails closed**: an unreadable register, a malformed date, or a malformed override is a hard failure.
+
+**The distinction, stated plainly:** this check proves a claim is *fresh*, not that it is *true*. It confirms that someone/something verified the claim, recorded who and with what artifact, and did so recently enough — it does **not** re-run a conformance harness or re-establish the claim. Truth remains a human review item at release, backed by the claim's own evidence (e.g. the phase1e conformance artifact). A green `capabilities` job now means "statuses are internally honest and their artifacts exist, **and** every register claim's verification is fresh and backed" — still not "the capabilities and claims are proven to work."
+
+*Not yet built (cross-repo):* the freshness check confirms `verified_artifact` is a non-empty string, not that the path resolves. Most artifacts (e.g. the phase1e run) live in **other repos** (`forge-agents`), so existence cannot be checked from a vaid-only checkout. Asserting resolution needs either a pinned cross-repo checkout in CI or a committed digest/URL the check can fetch; recorded as a follow-on, deliberately out of scope here.
 
 ## Consequences
 
