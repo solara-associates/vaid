@@ -64,6 +64,17 @@ Each package keeps its own changelog (`crates/vaid-mint/CHANGELOG.md`,
 tagging, confirm the package's `Cargo.toml` / `pyproject.toml`, its in-code version
 (`__version__` for Python), and its changelog's latest entry all agree.
 
+**Capabilities manifest (release gate).** Before you tag, answer: *does this release
+change `docs/capabilities.json`?* If a capability's status, version, or `landed_in`
+moved — e.g. a PR shipped public-key document verification — update the manifest **in
+the same PR**, so status is recorded when it ships rather than reconciled by hand
+later. The `capabilities` CI job (`scripts/verify-capabilities.mjs`) enforces it: a
+`shipped` version must be published on its registry, and a `roadmap`/`planned`
+capability blocked on a merged PR fails — its status should have flipped. See
+[ADR-0002](docs/adr/0002-capabilities-manifest.md). Prose (docs, the site) renders
+status from this file; do not re-assert status in prose. `status_text` is the one
+hand-written field — review it here too.
+
 ## Proposing a change
 
 1. **Open an issue** describing the change and whether it affects on-the-wire
