@@ -40,14 +40,30 @@ def verify_lineage_hash(vaid: dict) -> bool:
 
 
 def verify_vaid_document(kernel_public_key: bytes, vaid: dict) -> bool:
-    """Verify a VAID document's authenticity against an issuer's kernel **public**
-    key (raw 32 bytes) — no issuer instance, no private key. Mirror of the Rust
-    ``vaid_mint::verify::verify_vaid_document``.
+    """Verify a VAID document's **authenticity** against an issuer's kernel
+    **public** key (raw 32 bytes) — no issuer instance, no private key. Mirror of the
+    Rust ``vaid_mint::verify::verify_vaid_document``.
 
-    Returns ``True`` iff the signature-scheme version is current, ``lineage_hash`` is
-    internally consistent, and the kernel signature is valid over the canonical
-    document. A malformed key, a bad signature, or any tampered signed field is
-    ``False``, never an exception. Does not check expiry or revocation.
+    This answers *authenticity* — "genuinely issued under this key, and internally
+    consistent" — **not** *standing* ("valid and unrevoked right now"). A ``True``
+    result does not mean the VAID is currently usable; it means it is real.
+
+    Checks (all must hold for ``True``):
+
+    - the signature-scheme version is current;
+    - ``lineage_hash`` is internally consistent (:func:`verify_lineage_hash`);
+    - the kernel Ed25519 signature is valid over the canonical document.
+
+    Does NOT check — the caller must handle these separately:
+
+    - **expiry** — call :func:`~vaid_mint.document.is_expired`; an expired-but-signed
+      VAID returns ``True`` here;
+    - **revocation** — evaluate a :class:`~vaid_mint.revocation.RevocationCheck` (or,
+      in the reference, :meth:`~vaid_mint.issuer.ReferenceIssuer.revocation_status`)
+      on a separate path. Revocation is deliberately *not* consulted here.
+
+    A malformed key, a bad signature, or any tampered signed field is ``False``,
+    never an exception.
     """
     if vaid.get("sig_version") != VAID_SIG_VERSION_V2:
         return False
