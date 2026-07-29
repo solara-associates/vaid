@@ -9,6 +9,82 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.2.0]
+
+### Added — public-key-only document verification (additive, non-breaking)
+
+- **`verify_vaid_authenticity(kernel_public_key: bytes, vaid: dict) -> bool`** and
+  **`verify_lineage_hash(vaid: dict) -> bool`** (module `verify`), mirroring the Rust
+  `vaid_mint::verify`. A third party holding only an issuer's kernel **public** key can
+  confirm a VAID document is authentic — no `ReferenceIssuer`, no private key. Scope is
+  authenticity + `lineage_hash` consistency; it does **not** check expiry and does
+  **not** consult revocation. (Separately, the Python `vaid-pop` package gains
+  `verify_signed_payload`, the request-PoP verifier it previously lacked — Rust already
+  had it.)
+
+### ⚠️ Breaking — the `RevocationCheck` seam is replaced (read this before upgrading)
+
+**The 0.1.2 boolean, leaf-only `RevocationCheck` is gone, replaced by a
+three-state, lineage-aware seam** per `docs/spec/revocation.md` R.4. A deliberate,
+authorised breaking change, mirroring the Rust `vaid-mint` 0.2.0.
+
+- **`RevocationCheck.is_revoked(vaid_id) -> bool` → `check_lineage(list[str]) ->
+  RevocationStatus`.** The check is handed the full ordered lineage (root first,
+  leaf last) and returns `RevocationStatus.{NOT_REVOKED, REVOKED, UNAVAILABLE}`.
+  Custom backends must be updated.
+- **Revocation is inherited (R.4.4).** A VAID is revoked if **any** VAID in its
+  lineage is; revoking a parent now rejects every child attenuated from it. The
+  0.1.2 leaf-only check did not — a bypass.
+- **Fail closed on `UNAVAILABLE` (R.4.5).** An incomplete lineage (e.g. an empty
+  resolver after restart) or an unreachable store rejects rather than passing
+  silently. No fail-open option ships in this release.
+- **`NeverRevoked` removed.** It was a boolean-era no-op footgun.
+- **`ReferenceIssuer` records every mint** (roots as well as children) so it can
+  act as the verifier-side `LineageResolver` (R.4.2). New: `revocation_status`,
+  `resolve_parent`, `clear_lineage`; `is_revoked`/`parent_of` removed.
+  `with_revocation_check` now *replaces* the consulted store.
+- **Document bytes are unchanged.** No conformance vector changes; revocation
+  remains outside the conformance surface (R.1).
+
+### Migration — porting a custom `RevocationCheck`
+
+Before (0.1.2) — a boolean, leaf-only check:
+
+```python
+class MyBackend:
+    def is_revoked(self, vaid_id: str) -> bool:
+        return vaid_id in self.deny_list
+```
+
+After (0.2.0) — three-state, handed the full ordered lineage:
+
+```python
+class MyBackend:
+    def check_lineage(self, lineage: list[str]) -> RevocationStatus:
+        try:
+            deny = self.load_deny_list()
+        except StoreUnreachable:
+            return RevocationStatus.UNAVAILABLE
+        if any(vaid_id in deny for vaid_id in lineage):
+            return RevocationStatus.REVOKED
+        return RevocationStatus.NOT_REVOKED
+```
+
+Why the shape changed:
+
+- **A boolean cannot express `UNAVAILABLE`.** When the backing store is
+  unreachable, `is_revoked` had to answer `True` or `False`, and `False` is a
+  silent fail-open. `RevocationStatus` makes "could not determine" a first-class
+  outcome that verification fails closed on.
+- **A leaf-only check is bypassable by minting a child.** `is_revoked(vaid_id)`
+  saw only the presented leaf, so revoking a parent left its attenuated children
+  verifiable. `check_lineage` receives the whole ancestry; a VAID is revoked if any
+  ancestor is.
+
+The default in-memory store's constructor is renamed `initialised_empty` →
+`assume_nothing_revoked` to state its (fail-open-on-restart) posture rather than its
+state. `NeverRevoked` is removed.
+
 ## [0.1.3]
 
 ### Docs only — no behavior change

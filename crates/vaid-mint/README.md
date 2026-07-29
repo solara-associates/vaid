@@ -39,23 +39,27 @@ wire, or the hosted authority's to provide.
   revocation. Treat TTL as your primary control today.
 - **Inject a durable `RevocationCheck`** (e.g. backed by a shared store or
   a periodically-refreshed snapshot of one) if you need revocation to
-  survive restarts. The injected check is consulted *in addition to* the
-  built-in in-memory set, so enabling it never disables existing behavior.
+  survive restarts. It replaces the default in-memory store consulted at
+  verification, and should return `RevocationStatus::Unavailable` when its
+  backing store is unreachable — verification then fails closed.
 - **Or front the mint with a revocation-aware proxy or allowlist** — e.g.
   a sidecar or gateway that checks a durable deny-list before forwarding
   to `verify_vaid`.
 - **Do not rely on the default configuration alone** for revocation
   guarantees that must survive a process restart.
 
-The `RevocationCheck` seam mirrors the *injection style* of
-`AuthorizationGate` and `AuditSink`, with one deliberate difference: its
-default is **not** an honest no-op. For revocation, a no-op default would
-mean nothing is ever checked — a silent functional regression, not a
-neutral "not wired yet" state — so the reference keeps its working
-in-memory set as the default. A `NeverRevoked` no-op is available as an
-explicit opt-in. The hosted product additionally offers a durable,
-hash-chained revocation store; the open crate now gives you the seam to
-plug your own into.
+As of **0.2.0** the seam is three-state and lineage-aware, per
+`docs/spec/revocation.md` R.4 — a breaking replacement of the 0.1.2 boolean,
+leaf-only check. The verifier assembles the VAID's ordered ancestry
+(`assemble_lineage`) and hands it to `RevocationCheck::check_lineage`, which
+returns `RevocationStatus` (`NotRevoked` / `Revoked` / `Unavailable`): a VAID
+is revoked if **any** ancestor is (so revoking a parent revokes its children),
+and verification **fails closed** on `Unavailable` — an incomplete lineage
+(e.g. an empty resolver after restart) or an unreachable store rejects rather
+than silently passing. The default `InMemoryRevocationList` is non-durable and
+distinguishes *absent* state (`Unavailable`) from *initialised-and-empty*
+(`NotRevoked`). The hosted product additionally offers a durable, hash-chained
+revocation store; the open crate gives you the seam to plug your own into.
 
 ### Unguarded defaults: authorization and delegation
 

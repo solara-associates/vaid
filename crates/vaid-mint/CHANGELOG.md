@@ -3,6 +3,87 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+### Added — public-key-only document verification (additive, non-breaking)
+
+- **`verify_vaid_authenticity(kernel_public_key: &[u8], vaid: &Vaid) -> bool`** and
+  **`verify_lineage_hash(vaid: &Vaid) -> bool`** (module `verify`). A third party
+  holding only an issuer's kernel **public** key can now confirm a VAID document is
+  authentic — no `ReferenceIssuer`, no private key. Previously the only VAID-document
+  verifier was `ReferenceIssuer::verify_vaid`, whose every constructor needs the
+  private key. Scope is authenticity + `lineage_hash` consistency; it does **not**
+  check expiry and does **not** consult revocation (a resolver-less verifier must not
+  be gated on a lookup it cannot perform).
+
+### ⚠️ Breaking — the `RevocationCheck` seam is replaced (read this before upgrading)
+
+**The 0.1.2 boolean, leaf-only `RevocationCheck` is gone, replaced by a
+three-state, lineage-aware seam** per `docs/spec/revocation.md` R.4. This is a
+deliberate, authorised breaking change — two traits named `RevocationCheck` with
+different safety properties is the outcome being avoided, so there is no shim.
+
+- **`RevocationCheck::is_revoked(&VaidId) -> bool` → `check_lineage(&[VaidId]) ->
+  RevocationStatus`.** The check is now handed the full ordered lineage (root
+  first, leaf last) that the verifier assembled, and returns
+  `RevocationStatus::{NotRevoked, Revoked, Unavailable}`. Custom backends must be
+  updated; the boolean interface will not compile.
+- **Revocation is inherited (R.4.4).** A VAID is revoked if **any** VAID in its
+  lineage is. Revoking a parent now rejects every child attenuated from it — the
+  0.1.2 leaf-only check did not, which was a bypass.
+- **Fail closed on `Unavailable` (R.4.5).** An incomplete lineage (e.g. an empty
+  resolver after a restart) or an unreachable store rejects verification rather
+  than silently passing. No fail-open option ships in this release.
+- **`NeverRevoked` removed.** It was a boolean-era no-op footgun.
+- **`ReferenceIssuer` records every mint** (roots as well as children) so it can
+  act as the verifier-side `LineageResolver` and tell a known root from an
+  unresolvable id (R.4.2). New: `revocation_status`, `resolve_parent`,
+  `clear_lineage`; `is_revoked`/`parent_of` removed. `with_revocation_check` now
+  *replaces* the consulted store rather than layering on a built-in set.
+- **Document bytes are unchanged.** No conformance vector changes; revocation
+  remains outside the conformance surface (R.1).
+
+### Migration — porting a custom `RevocationCheck`
+
+Before (0.1.2) — a boolean, leaf-only check:
+
+```rust
+impl RevocationCheck for MyBackend {
+    fn is_revoked(&self, vaid_id: &VaidId) -> bool {
+        self.deny_list.contains(vaid_id)
+    }
+}
+```
+
+After (0.2.0) — three-state, handed the full ordered lineage:
+
+```rust
+impl RevocationCheck for MyBackend {
+    fn check_lineage(&self, lineage: &[VaidId]) -> RevocationStatus {
+        match self.load_deny_list() {
+            Err(_unreachable) => RevocationStatus::Unavailable,
+            Ok(deny) if lineage.iter().any(|id| deny.contains(id)) => RevocationStatus::Revoked,
+            Ok(_) => RevocationStatus::NotRevoked,
+        }
+    }
+}
+```
+
+Why the shape changed:
+
+- **A boolean cannot express `Unavailable`.** When the backing store is
+  unreachable, `is_revoked` had to answer `true` or `false`, and `false` is a
+  silent fail-open. `RevocationStatus` makes "could not determine" a first-class
+  outcome that verification fails closed on.
+- **A leaf-only check is bypassable by minting a child.** `is_revoked(vaid_id)`
+  saw only the presented leaf, so revoking a parent left its attenuated children
+  verifiable. `check_lineage` receives the whole ancestry; a VAID is revoked if any
+  ancestor is.
+
+The default in-memory store's constructor is renamed `initialised_empty` →
+`assume_nothing_revoked` to state its (fail-open-on-restart) posture rather than its
+state. `NeverRevoked` is removed.
+
 ## [0.1.2]
 
 ### ⚠️ Behavior change — expiry is now enforced (read this before upgrading)

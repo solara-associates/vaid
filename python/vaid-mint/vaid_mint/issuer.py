@@ -9,14 +9,17 @@ leaves to the self-hoster:
   ephemerally (:meth:`ReferenceIssuer.ephemeral`) or supplied by the caller
   (:meth:`ReferenceIssuer.from_seed`). A self-hoster persists and protects that
   key however they choose.
-- **Non-durable revocation, but a pluggable seam.** The built-in revoked set is
-  in-memory and does not survive restart. A self-hoster can now inject a durable
-  backend via the :class:`~vaid_mint.revocation.RevocationCheck` seam
-  (:meth:`ReferenceIssuer.with_revocation_check`) without patching the package;
-  the built-in in-memory set remains the default and any injected check is layered
-  on top of it. See the package README's "Trust model" section.
-- **No lineage lookup service.** The child→parent map is kept in memory for local
-  inspection only.
+- **Non-durable revocation, but a pluggable seam.** The default in-memory
+  revocation store does not survive restart. A self-hoster injects a durable
+  backend via the three-state :class:`~vaid_mint.revocation.RevocationCheck` seam
+  (:meth:`ReferenceIssuer.with_revocation_check`) without patching the package. See
+  ``docs/spec/revocation.md`` R.4 and the package README's "Trust model" section.
+- **The issuer is the lineage resolver.** It records **every** mint in an in-memory
+  map — roots with no parent, children with their parent — so it can tell a known
+  root from an id it has never seen (:class:`~vaid_mint.revocation.LineageResolver`,
+  spec R.4.2). The map is not durable and is not a network service; after a restart
+  it is empty, and a child presented against it resolves to ``UNAVAILABLE`` rather
+  than being mistaken for a root.
 
 **Expiry (TTL) is a hard reject at verification.** :meth:`ReferenceIssuer.verify_vaid`
 returns ``False`` for an expired VAID even when its kernel signature is valid;
@@ -42,7 +45,13 @@ from vaid_mint.document import (
     compute_lineage_hash,
     is_expired,
 )
-from vaid_mint.revocation import RevocationCheck
+from vaid_mint.revocation import (
+    InMemoryRevocationList,
+    ParentResolution,
+    RevocationCheck,
+    RevocationStatus,
+    assemble_lineage,
+)
 
 # The default issuance TTL, in hours, when a caller does not supply one. Short by
 # design: with only non-durable revocation in this reference, a short TTL is the
@@ -57,20 +66,30 @@ def _whole_second_rfc3339(dt: datetime) -> str:
 
 
 class ReferenceIssuer:
-    """The open reference issuer. Holds an Ed25519 kernel key, an in-memory
-    child→parent lineage map, an in-memory revoked set (the default revocation
-    backend), and an optional injected
-    :class:`~vaid_mint.revocation.RevocationCheck` layered on top of it."""
+    """The open reference issuer. Holds an Ed25519 kernel key, an in-memory lineage
+    map recording every mint (so it can act as the verifier-side
+    :class:`~vaid_mint.revocation.LineageResolver`), and the three-state
+    :class:`~vaid_mint.revocation.RevocationCheck` consulted at verification."""
 
     def __init__(self, kernel_key: Ed25519PrivateKey, vaid_ttl_hours: int) -> None:
         self._kernel_key = kernel_key
         self._vaid_ttl_hours = vaid_ttl_hours
-        self._lineage: dict[str, str] = {}
-        self._revoked: set[str] = set()
-        # An optional additional revocation backend, consulted in ``verify_vaid``
-        # alongside (not instead of) the built-in ``_revoked`` set. ``None`` by
-        # default; injected via :meth:`with_revocation_check`.
-        self._revocation_check: RevocationCheck | None = None
+        # Every minted VAID: parent id for a child, ``None`` for a root. Recording
+        # roots (not just children) is what lets :meth:`resolve_parent` distinguish
+        # a known root from an unknown id — the crux of spec R.4.2.
+        self._lineage: dict[str, str | None] = {}
+        # The built-in store :meth:`revoke` mutates; the default ``_revocation``.
+        # assume-nothing-revoked, so a live issuer vouches "nothing revoked yet" and
+        # a fresh, un-revoked VAID verifies out of the box. RESTART BEHAVIOUR: this
+        # store is non-durable and cannot detect its own restart — after a restart it
+        # is reconstructed empty and again vouches NOT_REVOKED, so a VAID revoked
+        # before the restart verifies clean. For restart-safety, inject a durable
+        # RevocationCheck, or hold the store absent until revocation state is
+        # re-loaded. See ``docs/spec/revocation.md`` R.4.6.
+        self._store = InMemoryRevocationList.assume_nothing_revoked()
+        # The revocation store consulted in ``verify_vaid``; replaced by
+        # :meth:`with_revocation_check`.
+        self._revocation: RevocationCheck = self._store
 
     # ── constructors mirroring the Rust ones ──
 
@@ -85,17 +104,17 @@ class ReferenceIssuer:
         return cls(Ed25519PrivateKey.from_private_bytes(seed), vaid_ttl_hours)
 
     def with_revocation_check(self, revocation_check: RevocationCheck) -> "ReferenceIssuer":
-        """Inject an additional :class:`~vaid_mint.revocation.RevocationCheck`
-        backend (e.g. a durable, restart-surviving store). It is consulted in
-        :meth:`verify_vaid` **in addition to** the built-in in-memory revoked set
-        — a VAID is rejected if either reports it revoked — so enabling the seam
-        never silently disables the built-in behavior.
+        """Replace the revocation store consulted at verification with an injected
+        :class:`~vaid_mint.revocation.RevocationCheck` — e.g. a durable,
+        restart-surviving backend that returns ``UNAVAILABLE`` when its store is
+        unreachable. The built-in :meth:`revoke` store stays but is no longer
+        consulted; revoke through the injected backend instead.
 
         Returns ``self`` so it chains::
 
             issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(check)
         """
-        self._revocation_check = revocation_check
+        self._revocation = revocation_check
         return self
 
     def kernel_public_key(self) -> bytes:
@@ -103,16 +122,43 @@ class ReferenceIssuer:
         return self._kernel_key.public_key().public_bytes_raw()
 
     def revoke(self, vaid_id: str) -> None:
-        """Revoke a VAID (in-memory). A revoked VAID fails :meth:`verify_vaid`
-        regardless of signature validity. Does not survive restart."""
-        self._revoked.add(vaid_id)
+        """Revoke a VAID in the built-in in-memory store. A revoked VAID — and every
+        VAID attenuated from it (R.4.4) — fails :meth:`verify_vaid`. Does not survive
+        restart. No effect on verification if a custom
+        :class:`~vaid_mint.revocation.RevocationCheck` was injected via
+        :meth:`with_revocation_check`; revoke through that backend instead."""
+        self._store.revoke(vaid_id)
 
-    def is_revoked(self, vaid_id: str) -> bool:
-        """Is this VAID revoked in this issuer's built-in in-memory set?"""
-        return vaid_id in self._revoked
+    def clear_lineage(self) -> None:
+        """Clear the in-memory lineage map, modelling the loss of resolver state
+        across a process restart. Afterwards any VAID carrying a ``parent_vaid``
+        resolves to ``UNAVAILABLE`` — its ancestry can no longer be completed
+        (R.4.2) — while a genuinely rootless VAID still verifies. An ops/test
+        primitive."""
+        self._lineage.clear()
 
-    def parent_of(self, vaid_id: str) -> str | None:
-        return self._lineage.get(vaid_id)
+    def resolve_parent(self, vaid_id: str) -> ParentResolution:
+        """Resolve one hop from the in-memory lineage map (spec R.4.2). A recorded
+        VAID mapped to ``None`` is a **known root**; mapped to a parent id it is a
+        **child**; an unrecorded id is **unknown** — the distinction that makes an
+        empty (post-restart) map yield ``UNAVAILABLE`` for a child rather than
+        mistaking it for a root."""
+        if vaid_id not in self._lineage:
+            return ParentResolution.unknown()
+        parent = self._lineage[vaid_id]
+        return ParentResolution.root() if parent is None else ParentResolution.of_parent(parent)
+
+    def revocation_status(self, vaid: dict) -> RevocationStatus:
+        """The revocation status of ``vaid`` under this issuer (spec R.4): assemble
+        its ordered lineage from this issuer's resolver, then consult the revocation
+        store with it. An incomplete lineage is ``UNAVAILABLE`` and the store is not
+        consulted (R.4.2). :meth:`verify_vaid` gates on this; it is exposed so a
+        caller can distinguish ``UNAVAILABLE`` from ``NOT_REVOKED`` (R.4.3) rather
+        than seeing only a rejected/accepted boolean."""
+        lineage = assemble_lineage(vaid, self)
+        if lineage is None:
+            return RevocationStatus.UNAVAILABLE
+        return self._revocation.check_lineage(lineage)
 
     # ── issuance ──
 
@@ -152,8 +198,10 @@ class ReferenceIssuer:
         signed = dict(unsigned)
         signed["kernel_signature"] = list(signature)
 
-        if parent_vaid is not None:
-            self._lineage[vaid_id] = parent_vaid
+        # Record EVERY mint — roots as ``None``, children as their parent — so the
+        # resolver can distinguish a known root from an id it has never seen. This
+        # is the bookkeeping spec R.4.2 depends on; it changes no document bytes.
+        self._lineage[vaid_id] = parent_vaid
         return signed
 
     def issue_vaid_with_key(
@@ -212,10 +260,11 @@ class ReferenceIssuer:
         available for a caller that needs to distinguish "forged" from "expired"
         before calling this.
 
-        Revocation is checked against the built-in in-memory revoked set *and*
-        any :class:`~vaid_mint.revocation.RevocationCheck` injected via
-        :meth:`with_revocation_check` — the seam is additive, so a VAID is
-        rejected if *either* reports it revoked.
+        Revocation is checked over the VAID's full ordered lineage via
+        :meth:`revocation_status` (spec R.4): a VAID is rejected if any ancestor is
+        revoked (R.4.4), and verification **fails closed** when the status is
+        ``UNAVAILABLE`` — an incomplete lineage or an unreachable store
+        (R.4.2/R.4.5).
 
         A bad signature is ``False``, never an exception.
         """
@@ -225,12 +274,10 @@ class ReferenceIssuer:
         # fails verification even with a valid kernel signature.
         if is_expired(vaid):
             return False
-        # Built-in in-memory revoked set, plus any injected revocation backend.
-        if self.is_revoked(vaid["vaid_id"]):
-            return False
-        if self._revocation_check is not None and self._revocation_check.is_revoked(
-            vaid["vaid_id"]
-        ):
+        # Revocation over the FULL ordered lineage (R.4.4), failing closed on
+        # UNAVAILABLE: an incomplete lineage or an unreachable store rejects the
+        # VAID — it never silently passes (R.4.2, R.4.5).
+        if self.revocation_status(vaid) is not RevocationStatus.NOT_REVOKED:
             return False
         digest = canonical_vaid_signing_bytes(vaid)
         sig = bytes(vaid["kernel_signature"])

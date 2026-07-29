@@ -287,7 +287,19 @@ def test_minted_child_verifies_and_is_contained_by_parent():
     audit = InMemoryAudit()
     issuer = ReferenceIssuer.ephemeral(1)
     svc = MintService(issuer, audit)
-    parent = parent_doc("aifactory", ["data.aifactory"], ["read", "write"])
+    # Mint a REAL parent root through the issuer, so its lineage is recorded and the
+    # child's ancestry is resolvable at verification (R.4.2). A synthetic parent
+    # never minted here would — correctly — leave the child's lineage incomplete and
+    # fail closed.
+    parent = svc.mint_root(
+        VaidSeed(
+            agent_class="parent",
+            version="1.0.0",
+            tenant_id="aifactory",
+            scope_boundary=["data.aifactory"],
+            capability_set=["read", "write"],
+        )
+    )
     seed, pop = signed_child(parent, ["data.aifactory.reports"], ["read"], "e2e")
     child = svc.mint_child(seed, parent, pop)
 

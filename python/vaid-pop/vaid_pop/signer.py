@@ -26,7 +26,11 @@ import secrets
 from datetime import datetime, timezone
 
 import rfc8785
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 # VAID PoP wire headers — the fixed `x-synthera-*` header namespace a conforming
 # verifier reads (the wire contract; the prefix is not a package dependency).
@@ -45,6 +49,26 @@ def canonical_request_signing_bytes(payload: dict) -> bytes:
     `clientNonce`) — JCS sorts keys, so order is irrelevant, but names are not.
     """
     return hashlib.sha256(rfc8785.dumps(payload)).digest()
+
+
+def verify_signed_payload(payload: dict, public_key_der: bytes, signature: bytes) -> bool:
+    """Verify an Ed25519 proof-of-possession signature over a request ``payload``
+    against the supplied public key — the Python mirror of the Rust
+    ``vaid_pop::verify_signed_payload``.
+
+    Returns ``True`` iff ``signature`` is a valid Ed25519 signature, under
+    ``public_key_der`` (raw 32-byte key), over :func:`canonical_request_signing_bytes`
+    of ``payload``. A bad or forged signature, a malformed key, or a wrong-length
+    signature is ``False``, never an exception — verification is a result, not a
+    fault. ``payload`` MUST use the camelCase ``RequestAuthPayload`` field names.
+    """
+    digest = canonical_request_signing_bytes(payload)
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(bytes(public_key_der))
+        public_key.verify(bytes(signature), digest)
+        return True
+    except (InvalidSignature, ValueError, TypeError):
+        return False
 
 
 def build_request_auth_payload(
