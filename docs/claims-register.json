@@ -1,10 +1,10 @@
 {
-  "_comment": "Evidence-backed prose claims that are NOT reducible to a single capability status (those live in capabilities.json). Each claim carries its evidence, the date it was last verified, and — when a date is set — the verifier and the verified_artifact backing it. FRESHNESS is enforced automatically by scripts/verify-claims.mjs in CI: a null date, a date with no verifier/verified_artifact, or a date older than the budget (default WARN 60d / FAIL 90d, per-claim max_age_days override) fails the build. That check proves freshness, NOT truth — truth (whether the claim actually holds) remains a human review item at release, backed by each claim's evidence. NOTE: this register also holds SYNTHERA foundation/product claims (federation, policy engine), whose evidence lives in other repos (_meta-solara/synthera); the freshness check verifies date+backing, not cross-repo path resolution. See docs/adr/0002-capabilities-manifest.md.",
+  "_comment": "Evidence-backed prose claims about the VAID OPEN STANDARD that are NOT reducible to a single capability status (those live in capabilities.json). Each claim carries its evidence, the date it was last verified, and — when a date is set — the verifier and the verified_artifact backing it. FRESHNESS is enforced automatically by scripts/verify-claims.mjs in CI: a null date, a date with no verifier/verified_artifact, or a date older than the budget (default WARN 60d / FAIL 90d, per-claim max_age_days override) fails the build. That check proves freshness, NOT truth — truth (whether the claim actually holds) remains a human review item at release, backed by each claim's evidence. SCOPE: this register attests to the open standard only; SYNTHERA commercial/product-posture claims (federation, policy enforcement, audit) live in the synthera repo's own claims register, so product-posture drift reds synthera CI, not the standard's. See docs/adr/0002-capabilities-manifest.md.",
   "version": 1,
   "claims": [
     {
       "id": "framework-governance-demonstrated",
-      "claim": "Governance — the same VAID identity and attenuated delegation — has been demonstrated across ADK, LangChain and OpenAI adapters: one governance layer, not one per framework. (Policy evaluation and audit-of-record on live paths are tracked separately — see policy-audit-live-on-every-path.)",
+      "claim": "Governance — the same VAID identity and attenuated delegation — has been demonstrated across ADK, LangChain and OpenAI adapters: one governance layer, not one per framework. (Live policy enforcement and audit posture are a SYNTHERA product concern, tracked in the synthera repo's claims register, not here.)",
       "evidence": [
         "forge-agents/harness/phase1e_adk_conformance.py (live: governance survives the framework swap to ADK)",
         "forge-agents/harness/phase1e_openai_conformance.py (live: same, framework=openai)",
@@ -13,49 +13,7 @@
       "date_last_verified": "2026-07-28",
       "verifier": "phase1e-conformance Cloud Run job, execution phase1e-conformance-q7pfr (synthera-substrate-prod / europe-west1); image tag :6267345, forge-agents SHA 62673455d33f6834a0063ca879f67994db9a8126",
       "verified_artifact": "forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md",
-      "verified_note": "Verified by a dated PASSING run of the phase1e LIVE conformance harnesses: ADK 7/7, OpenAI 9/9 across both delegation surfaces. Wire evidence shows real substrate mints, distinct attenuated child VAIDs, and over-envelope children denied at the substrate mint wall (least-privilege attenuation, ADR-0027 Phase 2). CORRECTION (2026-07-29): the claim previously read 'the same identity, policy and audit' — but the run proves identity + attenuated delegation, NOT policy evaluation or audit writes. Scoped to what the artifact backs; the policy/audit-live claim is now separate (and null) until a probe backs it. LangChain rests on published+conformance-tested vaid-langchain, not this live run."
-    },
-    {
-      "id": "foundation-runs-live",
-      "claim": "The SYNTHERA foundation runs live on Cloud Run and served a dated live conformance run against the deployed substrate.",
-      "evidence": [
-        "synthera-substrate-prod Cloud Run service (europe-west1)",
-        "forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md (live run against the deployed substrate)"
-      ],
-      "date_last_verified": "2026-07-28",
-      "verifier": "phase1e-conformance-q7pfr live run against the deployed substrate",
-      "verified_artifact": "forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md",
-      "verified_note": "Asserts deployment + reachability of the substrate (a live run reached it and passed). Does NOT assert that every product layer — policy, audit, federation — is exercised on that path; those are separate claims."
-    },
-    {
-      "id": "federation-router-in-process",
-      "claim": "An in-process MCP federation router exists (registrations visible only in-process); cross-process/HTTP transport between independent systems is not shipped, and the router reports its own readiness as Degraded until a durable transport ships.",
-      "evidence": [
-        "_meta-solara/synthera/crates/synthera-mesh/src/federation.rs (McpFederationRouter::in_process() -> Degraded probe; durable() -> Ready; HTTP dispatch returns 'federation dispatch over HTTP not yet implemented')"
-      ],
-      "date_last_verified": "2026-07-29",
-      "verifier": "code inspection (2026-07-29) of synthera-mesh/src/federation.rs",
-      "verified_artifact": "_meta-solara/synthera/crates/synthera-mesh/src/federation.rs",
-      "verified_note": "Code shape matches the /synthera 'Federation' card exactly, including the honest Degraded self-report and the explicit 'not yet implemented' HTTP transport. Asserts the code shape, NOT that the router is exercised on live governed paths."
-    },
-    {
-      "id": "policy-engine-deterministic-sandboxed",
-      "claim": "A deterministic, sandboxed policy VM (a stack-based interpreter with an enforced instruction budget) evaluates policy rules; rules are authored off the hot path.",
-      "evidence": [
-        "_meta-solara/synthera/crates/synthera-policy/src/vm.rs (module doc: 'Deterministic, sandboxed, stack-based interpreter'; test instruction_budget_is_enforced)",
-        "_meta-solara/synthera/crates/synthera-policy/src/loader.rs (deny_unknown_fields fail-closed rule loading)"
-      ],
-      "date_last_verified": "2026-07-29",
-      "verifier": "code inspection (2026-07-29) of synthera-policy/src/vm.rs + loader.rs",
-      "verified_artifact": "_meta-solara/synthera/crates/synthera-policy/src/vm.rs",
-      "verified_note": "The engine exists and is deterministic + instruction-budget-bounded (the 'sandboxed' claim, a bounded bytecode VM — not OS-level isolation). CAVEAT: the taint layer (taint_evaluator.rs) has an Advisory mode that warns-but-allows, so 'enforced on the hot path' is conditional on the deployed mode — see policy-audit-live-on-every-path. This entry asserts the engine's existence and properties, not live enforcement on governed paths."
-    },
-    {
-      "id": "policy-audit-live-on-every-path",
-      "claim": "Every governed path evaluates against the same policy engine and writes to the same audit-of-record, live in the deployed substrate (in Enforce mode, not Advisory).",
-      "evidence": [],
-      "date_last_verified": null,
-      "verified_note": "UNPROVEN — deliberately null so scripts/verify-claims.mjs fails until a probe backs it. The policy VM (synthera-policy/vm.rs) and audit code exist, but no evidence shows they are wired into and exercised on the adapter hot paths in the deployed substrate: the phase1e run proved mint-path attenuation/containment, not policy evaluation or audit writes. A backing probe must also confirm Enforce mode (not the taint layer's Advisory warn-but-allow) on governed paths. Until then this claim must not be made as live on the site (the /synthera 'Live today' copy was scoped accordingly)."
+      "verified_note": "Verified by a dated PASSING run of the phase1e LIVE conformance harnesses: ADK 7/7, OpenAI 9/9 across both delegation surfaces. Wire evidence shows real substrate mints, distinct attenuated child VAIDs, and over-envelope children denied at the substrate mint wall (least-privilege attenuation, ADR-0027 Phase 2). CORRECTION (2026-07-29): the claim previously read 'the same identity, policy and audit' — but the run proves identity + attenuated delegation, NOT policy evaluation or audit writes. Scoped to what the artifact backs; live policy/audit posture is a product claim in the synthera register. LangChain rests on published+conformance-tested vaid-langchain, not this live run."
     }
   ]
 }
