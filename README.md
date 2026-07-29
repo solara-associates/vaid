@@ -15,6 +15,35 @@ no network service in between. Both reference SDKs reproduce the same frozen
 conformance vector byte-for-byte — that is the cross-language proof, made
 concrete (see [Two languages, one vector](#two-languages-one-vector)).
 
+## Evaluate VAID in 15 minutes
+
+Everything below installs from **PyPI / crates.io** — no repo checkout, no server, no API key.
+
+**Python** (PyPI):
+
+```
+pip install vaid-pop vaid-mint vaid-langchain
+```
+
+**Rust** (crates.io):
+
+```
+cargo add vaid-pop vaid-mint vaid-client
+```
+
+Then prove the interoperability contract against the frozen vector that ships **inside the package you just installed** — one file, one command ([`examples/conformance_harness.py`](examples/conformance_harness.py), which imports only the installed `vaid-pop`):
+
+```
+pip install vaid-pop
+python conformance_harness.py       # PASS/FAIL per vector, byte-level diff on failure
+```
+
+To certify **your own** implementation, replace the single `digest_fn` in that file with your JCS (RFC 8785) → SHA-256 and re-run: matching bytes = conformant, a diff shows exactly where you drifted.
+
+**What is and isn't runnable today** lives in the capabilities manifest — [`docs/capabilities.json`](docs/capabilities.json), rendered at `/capabilities` — not in this prose; trust that, because CI fails if it drifts from reality. Installable today: request proof-of-possession (`vaid-pop`), the reference mint with attenuated delegation `child ⊆ parent` (`vaid-mint`), cross-language conformance, and the LangChain request-signing adapter (`vaid-langchain`).
+
+**One thing is *not* reproducible from published packages:** the framework-governance claim — *one governance layer, not one per framework* — runs against the private substrate. It is presented as **read-only evidence**: the dated conformance artifact `forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md` (ADK 7/7, OpenAI 9/9 PASS, live). Reproducing it requires substrate access; the published packages give you the client + reference-mint half.
+
 ## What this is
 
 The byte-level standard, reference implementations in two languages, a reference mint with delegation, a LangChain integration, and completion records:
@@ -151,10 +180,11 @@ the same Ed25519 signature** from the same fixed inputs — proven from the
 installed package, with no repo checkout required:
 
 ```
-cd python/vaid-pop
-pip install .
+pip install vaid-pop        # from PyPI
 vaid-pop-conformance        # PASS = installed signer == frozen vector, byte-for-byte
 ```
+
+(From a repo checkout instead: `cd python/vaid-pop && pip install .`)
 
 So the interoperability guarantee is not a claim about a spec document — it is two
 independent implementations, in two languages, with no shared runtime, hitting the

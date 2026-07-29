@@ -20,6 +20,14 @@ headers = signer.sign_headers("POST", "/vaid/mint", body_bytes)
 > The `x-synthera-*` header names are the VAID wire contract — the prefix is the
 > fixed header namespace a conforming verifier reads, not a package dependency.
 
+## Install
+
+```
+pip install vaid-pop
+```
+
+(From a repo checkout: `cd python/vaid-pop && pip install .`)
+
 ## The firewall
 
 Cross-language byte-identity is the whole point. The signer is locked against the

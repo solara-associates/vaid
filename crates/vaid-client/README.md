@@ -25,6 +25,12 @@ Two signing strategies, for two key custodies:
 - `PortRequestSigner` — defers signing to an `OperatorSigningPort` (an external
   key store: the key never leaves its keystore).
 
+## Install
+
+```
+cargo add vaid-client
+```
+
 ## Byte-identity
 
 Canonicalization is **not** reimplemented here — it reuses the `vaid-pop`

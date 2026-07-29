@@ -72,9 +72,15 @@ The quickstart hard-codes a demo VAID + key purely to run offline. Do not ship
 hard-coded keys — treat the agent's private key (and, per the mint's delegation
 model, any parent VAID it holds) as a credential.
 
-## Install (local dev)
+## Install
 
-Depends on `vaid-pop`. For a local checkout:
+From PyPI (pulls `vaid-pop` and `langchain-core`):
+
+```
+pip install vaid-langchain
+```
+
+**Local dev only** — from a repo checkout:
 
 ```
 pip install -e python/vaid-pop
