@@ -3,6 +3,12 @@
 The proof-of-possession (PoP) signing primitive: the minimal, self-contained
 surface an external client needs to authenticate a VAID-bound request.
 
+## Install
+
+```
+cargo add vaid-pop
+```
+
 ## What it carries
 
 - **`vaid_pop`** — the canonical signing primitive: RFC 8785 (JCS) → SHA-256 →
