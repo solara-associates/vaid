@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for VAID capability STATUS. Prose (the marketing site, docs) renders status FROM this file rather than asserting it, so a sentence can never carry a stale status. Guarded by TWO CI checks: (1) a DRIFT check — every vendored copy (e.g. the site's) must byte-match this file; (2) a VERIFICATION check (scripts/verify-capabilities.mjs) — status must match reality: a `shipped` capability's package version must be published on its registry (or its repo_ref must resolve), and a `roadmap`/`planned` capability blocked on a PR must have that PR still OPEN (a capability blocked on a merged PR is a status that should have flipped). See docs/adr/0002-capabilities-manifest.md. NOTE: `status_text` is the one hand-written field — a review item at release, not generated.",
+  "_comment": "Single source of truth for VAID capability STATUS. Prose (the marketing site, docs) renders status FROM this file rather than asserting it, so a sentence can never carry a stale status. Guarded by TWO CI checks: (1) a DRIFT check \u2014 every vendored copy (e.g. the site's) must byte-match this file; (2) a VERIFICATION check (scripts/verify-capabilities.mjs) \u2014 status must match reality: a `shipped` capability's package version must be published on its registry (or its repo_ref must resolve), and a `roadmap`/`planned` capability blocked on a PR must have that PR still OPEN (a capability blocked on a merged PR is a status that should have flipped). See docs/adr/0002-capabilities-manifest.md. NOTE: `status_text` is the one hand-written field \u2014 a review item at release, not generated.",
   "version": 1,
   "capabilities": [
     {
@@ -8,10 +8,20 @@
       "status": "shipped",
       "landed_in": "vaid-pop 0.1.0",
       "packages": [
-        { "language": "rust", "registry": "crates.io", "package": "vaid-pop", "version": "0.1.0" },
-        { "language": "python", "registry": "pypi", "package": "vaid-pop", "version": "0.1.0" }
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-pop",
+          "version": "0.1.0"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-pop",
+          "version": "0.1.0"
+        }
       ],
-      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key — offline, no service.",
+      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key \u2014 offline, no service.",
       "blocked_on": null
     },
     {
@@ -20,10 +30,20 @@
       "status": "shipped",
       "landed_in": "vaid-mint 0.1.2",
       "packages": [
-        { "language": "rust", "registry": "crates.io", "package": "vaid-mint", "version": "0.1.2" },
-        { "language": "python", "registry": "pypi", "package": "vaid-mint", "version": "0.1.3" }
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-mint",
+          "version": "0.1.2"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-mint",
+          "version": "0.1.3"
+        }
       ],
-      "status_text": "A reference mint issues VAIDs and mints attenuated child VAIDs; published and installable. Rust and Python version independently — Python 0.1.3 is a docs-only PyPI re-release over the same 0.1.2 behaviour — so byte-for-byte agreement is asserted at the conformance-vector level, not the version number.",
+      "status_text": "A reference mint issues VAIDs and mints attenuated child VAIDs; published and installable. Rust and Python version independently \u2014 Python 0.1.3 is a docs-only PyPI re-release over the same 0.1.2 behaviour \u2014 so byte-for-byte agreement is asserted at the conformance-vector level, not the version number.",
       "blocked_on": null
     },
     {
@@ -32,8 +52,18 @@
       "status": "shipped",
       "landed_in": "vaid-pop 0.1.0",
       "packages": [
-        { "language": "rust", "registry": "crates.io", "package": "vaid-pop", "version": "0.1.0" },
-        { "language": "python", "registry": "pypi", "package": "vaid-pop", "version": "0.1.0" }
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-pop",
+          "version": "0.1.0"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-pop",
+          "version": "0.1.0"
+        }
       ],
       "status_text": "Rust and Python reproduce a frozen conformance vector byte-for-byte.",
       "blocked_on": null
@@ -44,7 +74,12 @@
       "status": "shipped",
       "landed_in": "vaid-langchain 0.1.0",
       "packages": [
-        { "language": "python", "registry": "pypi", "package": "vaid-langchain", "version": "0.1.0" }
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-langchain",
+          "version": "0.1.0"
+        }
       ],
       "status_text": "A LangChain adapter that signs requests under the VAID proof-of-possession contract.",
       "blocked_on": null
@@ -52,26 +87,46 @@
     {
       "id": "vaid-document-verification",
       "title": "Public-key VAID document verification",
-      "status": "roadmap",
-      "landed_in": null,
+      "status": "shipped",
+      "landed_in": "vaid-mint 0.2.0",
       "packages": [
-        { "language": "rust", "registry": "crates.io", "package": "vaid-mint", "version": null },
-        { "language": "python", "registry": "pypi", "package": "vaid-mint", "version": null }
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-mint",
+          "version": "0.2.0"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-mint",
+          "version": "0.2.0"
+        }
       ],
-      "status_text": "Verifying a VAID document's authenticity from the issuer's public key alone — no issuer instance.",
-      "blocked_on": { "type": "pr", "repo": "solara-associates/vaid", "number": 2 }
+      "status_text": "Verifying a VAID document's authenticity from the issuer's public key alone \u2014 no issuer instance.",
+      "blocked_on": null
     },
     {
       "id": "revocation-lineage-aware",
       "title": "Three-state, lineage-aware revocation seam",
-      "status": "roadmap",
-      "landed_in": null,
+      "status": "shipped",
+      "landed_in": "vaid-mint 0.2.0",
       "packages": [
-        { "language": "rust", "registry": "crates.io", "package": "vaid-mint", "version": null },
-        { "language": "python", "registry": "pypi", "package": "vaid-mint", "version": null }
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-mint",
+          "version": "0.2.0"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-mint",
+          "version": "0.2.0"
+        }
       ],
-      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, failing closed.",
-      "blocked_on": { "type": "pr", "repo": "solara-associates/vaid", "number": 2 }
+      "status_text": "Revocation checked over a VAID's full lineage \u2014 three-state, revoking a parent revokes its children, failing closed.",
+      "blocked_on": null
     },
     {
       "id": "attenuation-verification",
@@ -80,7 +135,10 @@
       "landed_in": null,
       "packages": [],
       "status_text": "Verifying, as a third party, that a child's authority is within its parent's.",
-      "blocked_on": { "type": "decision", "ref": "attenuation format decision (owner: A. Smeyatsky)" }
+      "blocked_on": {
+        "type": "decision",
+        "ref": "attenuation format decision (owner: A. Smeyatsky)"
+      }
     },
     {
       "id": "lineage-chain-verification",
@@ -89,7 +147,10 @@
       "landed_in": null,
       "packages": [],
       "status_text": "Verifying a VAID's full ancestor chain from the leaf alone, as a third party.",
-      "blocked_on": { "type": "decision", "ref": "attenuation format decision (owner: A. Smeyatsky)" }
+      "blocked_on": {
+        "type": "decision",
+        "ref": "attenuation format decision (owner: A. Smeyatsky)"
+      }
     }
   ]
 }
