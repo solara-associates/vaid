@@ -56,6 +56,14 @@ The register originally stated, in its own header, that there was **deliberately
 
 *Not yet built (cross-repo):* the freshness check confirms `verified_artifact` is a non-empty string, not that the path resolves. Most artifacts (e.g. the phase1e run) live in **other repos** (`forge-agents`), so existence cannot be checked from a vaid-only checkout. Asserting resolution needs either a pinned cross-repo checkout in CI or a committed digest/URL the check can fetch; recorded as a follow-on, deliberately out of scope here.
 
+## Registry parity — every in-repo version must be published
+
+The verification check validates versions a *capability* names. It does **not** catch a package that is version-bumped in-repo but never published, because no capability references it — exactly how python `vaid-pop` came to sit at `0.2.0` in-repo while PyPI served `0.1.0`. Repo and registry disagreeing silently is the same drift class the manifest exists to close, one level down.
+
+`scripts/verify-package-versions.mjs` (same `capabilities` CI job) enumerates every publishable package (`crates/*/Cargo.toml`, `python/*/pyproject.toml`) and asserts its **in-repo version is published on its registry** — independent of any capability claim. It asserts *published*, **not** *equals-latest*: a repo legitimately sits at a version about to be released, and the release gate makes bump-and-publish near-atomic, so "bumped on `main` but not yet published" is **red until you publish** — the intended tightening, not a side effect.
+
+Opt-out for a package deliberately not on a public registry: Cargo `publish = false` in `[package]`, or the `Private :: Do Not Upload` classifier in `pyproject` `[project].classifiers`. Fails loud, fails closed on network.
+
 ## Consequences
 
 - A capability change is one manifest edit; the site (and any consumer) re-vendors and re-renders — copy edits, not rewrites.

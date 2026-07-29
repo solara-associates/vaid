@@ -91,6 +91,15 @@ capability blocked on a merged PR fails — its status should have flipped. See
 status from this file; do not re-assert status in prose. `status_text` is the one
 hand-written field — review it here too.
 
+**Registry parity (every package, not just claimed ones).** The same CI job also
+runs `scripts/verify-package-versions.mjs`, which asserts that **every** package's
+in-repo version (`crates/*/Cargo.toml`, `python/*/pyproject.toml`) is **published on
+its registry** — independent of any capability claim. So a version bump on `main`
+that has not been published yet is **red until you publish**: bump and publish are
+near-atomic by design. A package deliberately not published to a public registry
+opts out via Cargo `publish = false` or the `Private :: Do Not Upload` classifier in
+`pyproject`.
+
 ## Proposing a change
 
 1. **Open an issue** describing the change and whether it affects on-the-wire
