@@ -183,3 +183,5 @@ jobs:
         run: node scripts/verify-capabilities.mjs
       - name: Verify docs/claims-register.json freshness (age budget + backing)
         run: node scripts/verify-claims.mjs
+      - name: Verify in-repo package versions are published (registry parity)
+        run: node scripts/verify-package-versions.mjs
