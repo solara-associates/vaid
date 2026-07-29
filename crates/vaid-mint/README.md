@@ -9,6 +9,12 @@ Identity) standard. It does two things:
   mints a child whose authority is always a *subset* of its own
   (`child ⊆ parent`), verified fail-closed at mint time.
 
+## Install
+
+```
+cargo add vaid-mint
+```
+
 ## Trust model — read this before using the mint
 
 | Concern | Reference mint (this crate) | Hosted / commercial |

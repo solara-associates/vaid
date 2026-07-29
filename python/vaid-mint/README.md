@@ -173,11 +173,22 @@ Per **Decision B** this is self-consistent within this repo (Rust == Python); it
 is **not** byte-conformant against the managed authority's (still-moving) VAID
 format.
 
-## Install (local dev)
+## Install
 
-`vaid-mint` depends on `vaid-pop`. For a local checkout, install both editable:
+From PyPI (pulls `vaid-pop`, `cryptography`, `rfc8785` automatically):
+
+```
+pip install vaid-mint
+```
+
+**Local dev only** — from a repo checkout, install both editable:
 
 ```
 pip install -e python/vaid-pop
 pip install -e python/vaid-mint --no-deps
 ```
+
+`--no-deps` is used **only** here, and only because `vaid-pop` was just installed
+editable from the same checkout on the line above — without it, pip would fetch the
+published `vaid-pop` from PyPI and shadow your local one. Do **not** use `--no-deps`
+with the PyPI install above; there you want pip to resolve the dependencies.
