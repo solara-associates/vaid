@@ -10,16 +10,19 @@
 //!   ephemerally ([`ReferenceIssuer::ephemeral`]) or supplied by the caller
 //!   ([`ReferenceIssuer::from_pkcs8`] / [`ReferenceIssuer::from_seed`]). A
 //!   self-hoster persists and protects that key however they choose.
-//! - **Non-durable revocation, but a pluggable seam.** The built-in revoked set
-//!   is in-memory and does not survive restart. A self-hoster can now inject a
-//!   durable backend via the [`crate::revocation::RevocationCheck`] seam
-//!   ([`ReferenceIssuer::with_revocation_check`]) without patching the crate; the
-//!   built-in in-memory set remains the default and any injected check is layered
-//!   on top of it. See the crate README's "Trust model" section.
-//! - **No lineage lookup service.** The child→parent map is kept in memory for
-//!   local inspection only.
+//! - **Non-durable revocation, but a pluggable seam.** The default in-memory
+//!   revocation store does not survive restart. A self-hoster injects a durable
+//!   backend via the three-state [`crate::revocation::RevocationCheck`] seam
+//!   ([`ReferenceIssuer::with_revocation_check`]) without patching the crate. See
+//!   `docs/spec/revocation.md` R.4 and the crate README's "Trust model" section.
+//! - **The issuer is the lineage resolver.** It records **every** mint in an
+//!   in-memory map — roots with no parent, children with their parent — so it can
+//!   tell a known root from an id it has never seen ([`LineageResolver`], spec
+//!   R.4.2). The map is not durable and is not a network service; after a restart
+//!   it is empty, and a child presented against it resolves to
+//!   [`RevocationStatus::Unavailable`] rather than being mistaken for a root.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Utc};
@@ -31,7 +34,10 @@ use crate::document::{
     VAID_SIG_VERSION_V2,
 };
 use crate::error::{MintError, MintResult};
-use crate::revocation::RevocationCheck;
+use crate::revocation::{
+    assemble_lineage, InMemoryRevocationList, LineageAssembly, LineageResolver, ParentResolution,
+    RevocationCheck, RevocationStatus,
+};
 
 /// The default issuance TTL, in hours, when a caller does not supply one. Short
 /// by design: with only non-durable revocation in this reference, a short TTL is
@@ -81,18 +87,27 @@ pub trait VaidIssuer: Send + Sync {
     fn verify_vaid(&self, vaid: &Vaid) -> bool;
 }
 
-/// The open reference issuer. Holds an Ed25519 kernel key, an in-memory
-/// child→parent lineage map, an in-memory revoked set (the default revocation
-/// backend), and an optional injected [`RevocationCheck`] layered on top of it.
+/// The open reference issuer. Holds an Ed25519 kernel key, an in-memory lineage
+/// map recording every mint (so it can act as the verifier-side
+/// [`LineageResolver`]), and the three-state [`RevocationCheck`] consulted at
+/// verification.
 pub struct ReferenceIssuer {
     kernel_key_pair: Ed25519KeyPair,
     vaid_ttl_hours: i64,
-    lineage: Mutex<HashMap<VaidId, VaidId>>,
-    revoked: Mutex<HashSet<VaidId>>,
-    /// An optional additional revocation backend, consulted in `verify_vaid`
-    /// alongside (not instead of) the built-in `revoked` set. `None` by default;
-    /// injected via [`ReferenceIssuer::with_revocation_check`].
-    revocation_check: Option<Arc<dyn RevocationCheck>>,
+    /// Every minted VAID: `Some(parent)` for a child, `None` for a root. Recording
+    /// roots (not just children) is what lets [`resolve_parent`] distinguish a
+    /// known root from an unknown id — the crux of spec R.4.2.
+    ///
+    /// [`resolve_parent`]: ReferenceIssuer::resolve_parent
+    lineage: Mutex<HashMap<VaidId, Option<VaidId>>>,
+    /// The revocation store consulted in `verify_vaid`. Defaults to `default_store`
+    /// (in-memory, [`InMemoryRevocationList::assume_nothing_revoked`]); replaced by
+    /// [`ReferenceIssuer::with_revocation_check`].
+    revocation: Arc<dyn RevocationCheck>,
+    /// The built-in in-memory store that [`ReferenceIssuer::revoke`] mutates. It is
+    /// the default `revocation`; injecting a custom check leaves this in place but
+    /// unconsulted (revoke through the injected backend instead).
+    default_store: Arc<InMemoryRevocationList>,
 }
 
 impl ReferenceIssuer {
@@ -126,23 +141,32 @@ impl ReferenceIssuer {
     }
 
     fn with_key(kernel_key_pair: Ed25519KeyPair, vaid_ttl_hours: i64) -> Self {
+        // Default revocation posture: assume-nothing-revoked, so a live issuer
+        // vouches "nothing revoked yet" and a fresh, un-revoked VAID verifies out of
+        // the box rather than failing closed on Unavailable. RESTART BEHAVIOUR: this
+        // store is non-durable and cannot detect its own restart — after a restart it
+        // is reconstructed empty and again vouches NotRevoked, so a VAID revoked
+        // before the restart verifies clean. For restart-safety, inject a durable
+        // `RevocationCheck`, or hold the store absent until revocation state is
+        // re-loaded. See `docs/spec/revocation.md` R.4.6.
+        let default_store = Arc::new(InMemoryRevocationList::assume_nothing_revoked());
         Self {
             kernel_key_pair,
             vaid_ttl_hours,
             lineage: Mutex::new(HashMap::new()),
-            revoked: Mutex::new(HashSet::new()),
-            revocation_check: None,
+            revocation: default_store.clone(),
+            default_store,
         }
     }
 
-    /// Inject an additional [`RevocationCheck`] backend (e.g. a durable,
-    /// restart-surviving store). It is consulted in [`VaidIssuer::verify_vaid`]
-    /// **in addition to** the built-in in-memory revoked set — a VAID is rejected
-    /// if either reports it revoked — so enabling the seam never silently disables
-    /// the built-in behavior. Consumes and re-wraps `self`, preserving the kernel
-    /// key, TTL, and any lineage/revocations already recorded.
+    /// Replace the revocation store consulted at verification with an injected
+    /// [`RevocationCheck`] — e.g. a durable, restart-surviving backend that returns
+    /// [`RevocationStatus::Unavailable`] when its store is unreachable. The built-in
+    /// [`ReferenceIssuer::revoke`] store stays but is no longer consulted; revoke
+    /// through the injected backend instead. Consumes and re-wraps `self`,
+    /// preserving the kernel key, TTL, and any lineage already recorded.
     pub fn with_revocation_check(mut self, revocation_check: Arc<dyn RevocationCheck>) -> Self {
-        self.revocation_check = Some(revocation_check);
+        self.revocation = revocation_check;
         self
     }
 
@@ -152,20 +176,35 @@ impl ReferenceIssuer {
         self.kernel_key_pair.public_key().as_ref()
     }
 
-    /// Revoke a VAID (in-memory). A revoked VAID fails [`VaidIssuer::verify_vaid`]
-    /// regardless of signature validity. Does not survive restart.
+    /// Revoke a VAID in the built-in in-memory store. A revoked VAID — and every
+    /// VAID attenuated from it (R.4.4) — fails [`VaidIssuer::verify_vaid`]. Does not
+    /// survive restart. Has no effect on verification if a custom [`RevocationCheck`]
+    /// was injected via [`ReferenceIssuer::with_revocation_check`]; revoke through
+    /// that backend instead.
     pub fn revoke(&self, vaid_id: VaidId) {
-        self.revoked.lock().expect("revoked lock not poisoned").insert(vaid_id);
+        self.default_store.revoke(vaid_id);
     }
 
-    /// Is this VAID revoked in this issuer's in-memory set?
-    pub fn is_revoked(&self, vaid_id: &VaidId) -> bool {
-        self.revoked.lock().expect("revoked lock not poisoned").contains(vaid_id)
+    /// Clear the in-memory lineage map, modelling the loss of resolver state across
+    /// a process restart. Afterwards any VAID carrying a `parent_vaid` resolves to
+    /// [`RevocationStatus::Unavailable`] — its ancestry can no longer be completed
+    /// (R.4.2) — while a genuinely rootless VAID still verifies. An ops/test
+    /// primitive.
+    pub fn clear_lineage(&self) {
+        self.lineage.lock().expect("lineage lock not poisoned").clear();
     }
 
-    /// The recorded parent of a VAID, if this issuer minted it with lineage.
-    pub fn parent_of(&self, vaid_id: &VaidId) -> Option<VaidId> {
-        self.lineage.lock().expect("lineage lock not poisoned").get(vaid_id).copied()
+    /// The revocation status of `vaid` under this issuer (spec R.4): assemble its
+    /// ordered lineage from this issuer's resolver, then consult the revocation
+    /// store with it. An incomplete lineage is [`RevocationStatus::Unavailable`] and
+    /// the store is not consulted (R.4.2). [`VaidIssuer::verify_vaid`] gates on this;
+    /// it is exposed so a caller can distinguish `Unavailable` from `NotRevoked`
+    /// (R.4.3) rather than seeing only a rejected/accepted boolean.
+    pub fn revocation_status(&self, vaid: &Vaid) -> RevocationStatus {
+        match assemble_lineage(vaid, self) {
+            LineageAssembly::Incomplete => RevocationStatus::Unavailable,
+            LineageAssembly::Complete(lineage) => self.revocation.check_lineage(&lineage),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -203,12 +242,13 @@ impl ReferenceIssuer {
         let signature = self.kernel_key_pair.sign(&canonical_vaid_signing_bytes(&unsigned));
         let vaid = unsigned.with_kernel_signature(signature.as_ref().to_vec());
 
-        if let Some(parent) = parent_vaid {
-            self.lineage
-                .lock()
-                .expect("lineage lock not poisoned")
-                .insert(vaid.vaid_id(), parent);
-        }
+        // Record EVERY mint — roots as `None`, children as `Some(parent)` — so the
+        // resolver can distinguish a known root from an id it has never seen. This
+        // is the bookkeeping spec R.4.2 depends on; it changes no document bytes.
+        self.lineage
+            .lock()
+            .expect("lineage lock not poisoned")
+            .insert(vaid.vaid_id(), parent_vaid);
 
         Ok(vaid)
     }
@@ -216,6 +256,21 @@ impl ReferenceIssuer {
 
 // `compute_lineage_hash` lives in `document` (a document concern, and the
 // conformance vector references it); re-exported implicitly via crate root.
+
+impl LineageResolver for ReferenceIssuer {
+    /// Resolve one hop from the in-memory lineage map. A recorded VAID with `None`
+    /// is a **known root**; a recorded VAID with `Some(parent)` is a **child**; an
+    /// unrecorded id is **unknown** — the distinction spec R.4.2 turns on, and the
+    /// reason an empty (post-restart) map yields `Unavailable` for a child rather
+    /// than mistaking it for a root.
+    fn resolve_parent(&self, vaid_id: &VaidId) -> ParentResolution {
+        match self.lineage.lock().expect("lineage lock not poisoned").get(vaid_id) {
+            Some(Some(parent)) => ParentResolution::Parent(*parent),
+            Some(None) => ParentResolution::Root,
+            None => ParentResolution::Unknown,
+        }
+    }
+}
 
 impl VaidIssuer for ReferenceIssuer {
     fn issue_vaid_with_key(
@@ -275,14 +330,12 @@ impl VaidIssuer for ReferenceIssuer {
         if vaid.is_expired() {
             return false;
         }
-        // Built-in in-memory revoked set, plus any injected revocation backend.
-        if self.is_revoked(&vaid.vaid_id()) {
-            return false;
-        }
-        if let Some(check) = &self.revocation_check {
-            if check.is_revoked(&vaid.vaid_id()) {
-                return false;
-            }
+        // Revocation over the FULL ordered lineage (R.4.4), failing closed on
+        // Unavailable: an incomplete lineage or an unreachable store rejects the
+        // VAID — it never silently passes (R.4.2, R.4.5).
+        match self.revocation_status(vaid) {
+            RevocationStatus::NotRevoked => {}
+            RevocationStatus::Revoked | RevocationStatus::Unavailable => return false,
         }
         let public_key = UnparsedPublicKey::new(&ED25519, self.kernel_public_key());
         public_key
@@ -394,12 +447,12 @@ mod tests {
 
     #[test]
     fn injected_revocation_check_is_consulted() {
-        use crate::revocation::InMemoryRevocationList;
-
-        let list = Arc::new(InMemoryRevocationList::new());
+        // An assume-nothing-revoked injected store: verifies until something is
+        // revoked through it.
+        let store = Arc::new(InMemoryRevocationList::assume_nothing_revoked());
         let issuer = ReferenceIssuer::ephemeral(1)
             .unwrap()
-            .with_revocation_check(list.clone());
+            .with_revocation_check(store.clone());
         let vaid = issuer
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -411,8 +464,7 @@ mod tests {
             )
             .unwrap();
         assert!(issuer.verify_vaid(&vaid), "not yet revoked → verifies");
-        // Revoke via the injected backend only (not the issuer's built-in set).
-        list.revoke(vaid.vaid_id());
+        store.revoke(vaid.vaid_id());
         assert!(
             !issuer.verify_vaid(&vaid),
             "an injected revocation backend must be consulted at verification"
@@ -420,12 +472,12 @@ mod tests {
     }
 
     #[test]
-    fn injected_never_revoked_does_not_break_normal_verification() {
-        use crate::revocation::NeverRevoked;
-
+    fn injected_unavailable_store_fails_closed() {
+        // A store whose state is absent (e.g. a durable backend that is
+        // unreachable) reports Unavailable, and verification fails closed (R.4.5).
         let issuer = ReferenceIssuer::ephemeral(1)
             .unwrap()
-            .with_revocation_check(Arc::new(NeverRevoked));
+            .with_revocation_check(Arc::new(InMemoryRevocationList::unavailable()));
         let vaid = issuer
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -436,10 +488,11 @@ mod tests {
                 vec![],
             )
             .unwrap();
-        assert!(issuer.verify_vaid(&vaid));
-        // The built-in set still works even with a no-op backend injected.
-        issuer.revoke(vaid.vaid_id());
-        assert!(!issuer.verify_vaid(&vaid), "built-in revoked set still enforced");
+        assert_eq!(issuer.revocation_status(&vaid), RevocationStatus::Unavailable);
+        assert!(
+            !issuer.verify_vaid(&vaid),
+            "a VAID whose revocation store is unavailable must fail closed"
+        );
     }
 
     #[test]

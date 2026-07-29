@@ -214,3 +214,43 @@ Durable backing stores are a host-application responsibility in all versions. Th
 reference implementation ships in-memory stores for development. R.4.6 governs how
 those stores must behave when their state is absent, not whether the reference
 implementation must become durable.
+
+**Note on the reference default (0.2 onward).** The reference issuer defaults its
+revocation store to a *vouching* posture (the constructor is named
+`assume_nothing_revoked`, not for its empty state but for what it does): it answers
+`NotRevoked` over an empty set so a fresh issuer verifies out of the box. Being
+non-durable, it cannot detect its own restart — after a restart it is reconstructed
+empty and again vouches `NotRevoked`, so a VAID revoked before the restart verifies
+clean. This is a deliberate trade of restart-detection for out-of-the-box usability
+in development, and it is legitimate under R.4.6 (which requires only that an
+*absent* store report `Unavailable`, and that absent be distinguishable from
+vouching — both of which hold), **not** under R.4.5 as a configuration: it is not a
+fail-open verifier setting, it is the reference's development default, and it is
+named to be unmisreadable. Two alternatives make a deployment restart-safe: (1)
+inject a durable `RevocationCheck`; or (2) start the store in absent state until
+revocation state has been loaded into it — an absent store reports `Unavailable`,
+so verification fails closed until the load completes.
+
+## R.7 Authenticity is separate from policy
+
+Verifying a VAID answers two different questions, and they must not be collapsed:
+
+- **Authenticity** — was this document genuinely issued under a given kernel key, and
+  is it internally consistent? This needs only the issuer's **public** key. It is
+  answered by `verify_vaid_authenticity` (checks the signature-scheme version, the kernel
+  signature over the canonical document, and `lineage_hash` consistency), and it is
+  available to any third party — cross-organisation, offline, or after the fact —
+  because a signature needs only the public key to check.
+- **Standing** — may this VAID be *used* right now? That is policy: at minimum
+  **expiry** (a temporal check) and **revocation** (this section). Standing is
+  evaluated on top of authenticity, by the party that holds the relevant state.
+
+`verify_vaid_authenticity` deliberately answers authenticity **only**. It does not check
+expiry, and — the load-bearing point for this specification — it does **not** consult
+revocation. Gating authenticity on revocation would reintroduce the R.4.2 problem in
+a new place: a resolver-less verifier cannot perform the lineage/revocation lookup, so
+every third-party verification would fail closed, and the portable, publicly-checkable
+authenticity that is the point of a VAID would be lost. Revocation status is therefore
+reported on a **separate path** (`RevocationCheck` / the reference's
+`revocation_status`), or not at all where the verifier has no revocation state — never
+as a precondition of confirming the document is real.
