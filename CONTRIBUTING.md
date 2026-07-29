@@ -65,10 +65,26 @@ tagging, confirm the package's `Cargo.toml` / `pyproject.toml`, its in-code vers
 (`__version__` for Python), and its changelog's latest entry all agree.
 
 **Capabilities manifest (release gate).** Before you tag, answer: *does this release
-change `docs/capabilities.json`?* If a capability's status, version, or `landed_in`
-moved — e.g. a PR shipped public-key document verification — update the manifest **in
-the same PR**, so status is recorded when it ships rather than reconciled by hand
-later. The `capabilities` CI job (`scripts/verify-capabilities.mjs`) enforces it: a
+change `docs/capabilities.json`?* There are two cases, and they land at **different
+times** — getting this wrong fails CI every time (correctly, but wastefully):
+
+- **Not gated on publication** — a `status_text` fix, a `landed_in` note, or any
+  status change whose evidence *already exists* (a `repo_ref` path that resolves, or
+  an already-published version): update the manifest **in the same PR** as the change.
+- **Gated on a published artifact** — flipping a capability to `shipped` with a
+  registry version happens **AFTER the publish, not with the merge**. `shipped` means
+  *published*: `verify-capabilities.mjs` requires the version to exist on crates.io /
+  PyPI, and **merging a PR publishes nothing**. So the flip is a step in the **release
+  checklist, positioned after the registry publish**, and it lands as its **own
+  follow-up PR** — which passes because the versions now exist. Flipping to `shipped`
+  in the code-merge PR, before publish, fails CI until the packages are pushed.
+
+Concretely, for a version bump the order is: **merge → tag → publish to
+crates.io/PyPI → then the manifest-flip PR.** (This is not hypothetical — see
+[ADR-0002](docs/adr/0002-capabilities-manifest.md): the check caught a
+shipped-but-unpublished flip on its first real use.)
+
+The `capabilities` CI job (`scripts/verify-capabilities.mjs`) enforces it: a
 `shipped` version must be published on its registry, and a `roadmap`/`planned`
 capability blocked on a merged PR fails — its status should have flipped. See
 [ADR-0002](docs/adr/0002-capabilities-manifest.md). Prose (docs, the site) renders
