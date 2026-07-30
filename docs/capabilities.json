@@ -129,6 +129,18 @@
       "blocked_on": null
     },
     {
+      "id": "typescript-implementation",
+      "title": "TypeScript implementation (third conforming language)",
+      "status": "planned",
+      "landed_in": null,
+      "packages": [],
+      "status_text": "A third conforming implementation in TypeScript \u2014 minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. The packages (vaid-pop, vaid-mint, vaid-client, all 0.2.0) are in-repo and NOT yet on npm, so this is not shipped; on publish, flip this to shipped and add the npm package entries to the capabilities above, per the ADR-0002 release order.",
+      "blocked_on": {
+        "type": "decision",
+        "ref": "npm publish of vaid-pop / vaid-mint / vaid-client 0.2.0 (owner: A. Smeyatsky)"
+      }
+    },
+    {
       "id": "attenuation-verification",
       "title": "Third-party attenuation (authority) verification",
       "status": "planned",
