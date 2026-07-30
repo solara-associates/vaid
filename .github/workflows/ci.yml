@@ -63,7 +63,7 @@ jobs:
         run: npm test --prefix typescript
 
   conformance-drift:
-    name: PoP conformance drift-check (Rust == Python == vector, byte-identical)
+    name: PoP conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -110,7 +110,7 @@ jobs:
         run: node typescript/vaid-pop/dist/bin/conformance.js
 
   mint-conformance-drift:
-    name: Mint conformance drift-check (Rust == Python == vector, byte-identical)
+    name: Mint conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -204,7 +204,7 @@ jobs:
         run: node typescript/vaid-mint/dist/bin/conformance.js
 
   pathquery-conformance-drift:
-    name: Path-with-query drift-check (Rust == Python == vector, byte-identical)
+    name: Path-with-query drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -247,7 +247,7 @@ jobs:
         run: node typescript/vaid-client/dist/bin/conformance.js
 
   completion-conformance-drift:
-    name: Completion-record drift-check (Rust == Python == vector, byte-identical)
+    name: Completion-record drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
