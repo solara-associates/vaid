@@ -1,0 +1,24 @@
+{
+  "name": "vaid-typescript",
+  "private": true,
+  "description": "npm workspace root for the VAID TypeScript packages. Not published — see vaid-pop, vaid-mint, vaid-client.",
+  "type": "module",
+  "workspaces": [
+    "vaid-pop",
+    "vaid-mint",
+    "vaid-client"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "conformance": "npm run conformance --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "@types/node": "^22.10.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
