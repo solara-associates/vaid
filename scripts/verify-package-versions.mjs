@@ -15,6 +15,7 @@
 // Opt-out for a package not meant for a public registry:
 //   - Rust (Cargo.toml [package]):   publish = false            (Cargo-native)
 //   - Python (pyproject [project]):  classifier "Private :: Do Not Upload"
+//   - npm (package.json):            "private": true            (npm-native)
 //
 // Fails LOUD, fails CLOSED on network — same posture as verify-capabilities.mjs.
 //
@@ -45,6 +46,7 @@ async function isPublished(registry, name, version) {
   const url =
     registry === 'crates.io' ? `https://crates.io/api/v1/crates/${name}/${version}`
     : registry === 'pypi'    ? `https://pypi.org/pypi/${name}/${version}/json`
+    : registry === 'npm'     ? `https://registry.npmjs.org/${name}/${version}`
     : null;
   if (!url) throw new Error(`unknown registry '${registry}'`);
   let res;
@@ -88,6 +90,18 @@ if (existsSync(pyDir)) for (const d of readdirSync(pyDir)) {
   const name = strField(sec, 'name');
   if (!name) continue;
   pkgs.push({ dir: `python/${d}`, registry: 'pypi', name, version: strField(sec, 'version'), skip: /Private :: Do Not Upload/.test(t) });
+}
+// TypeScript packages. A third implementation not covered here is exactly how the
+// repo/registry drift this check exists to catch would reappear in a new language.
+const tsDir = fileURLToPath(new URL('typescript/', ROOT));
+if (existsSync(tsDir)) for (const d of readdirSync(tsDir)) {
+  const f = fileURLToPath(new URL(`typescript/${d}/package.json`, ROOT));
+  if (!existsSync(f)) continue;
+  let pkg;
+  try { pkg = JSON.parse(readFileSync(f, 'utf8')); }
+  catch (e) { failures.push(`  ✗ [typescript/${d}] package.json is not parseable: ${e.message}`); continue; }
+  if (!pkg.name) continue;
+  pkgs.push({ dir: `typescript/${d}`, registry: 'npm', name: pkg.name, version: pkg.version, skip: pkg.private === true });
 }
 
 for (const p of pkgs) {

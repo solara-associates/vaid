@@ -37,8 +37,9 @@ TRUTH_OPERATOR="$REPO_ROOT/crates/vaid-client/tests/vectors/operator_pop_v1.json
 TRUTH_MINT="$REPO_ROOT/crates/vaid-mint/tests/vectors/mint_v1.json"
 TRUTH_PATHQUERY="$REPO_ROOT/crates/vaid-client/tests/vectors/pathquery_v1.json"
 TRUTH_COMPLETION="$REPO_ROOT/crates/vaid-pop/tests/vectors/completion_v1.json"
+TRUTH_MINT_POP="$REPO_ROOT/crates/vaid-mint/tests/vectors/mint_pop_v1.json"
 
-for f in "$TRUTH_OPERATOR" "$TRUTH_MINT" "$TRUTH_PATHQUERY" "$TRUTH_COMPLETION"; do
+for f in "$TRUTH_OPERATOR" "$TRUTH_MINT" "$TRUTH_PATHQUERY" "$TRUTH_COMPLETION" "$TRUTH_MINT_POP"; do
   [ -f "$f" ] || { echo "FATAL: truth vector missing: $f"; exit 2; }
 done
 
@@ -79,6 +80,7 @@ else
     TRUTH_MINT="$TRUTH_MINT" \
     TRUTH_PATHQUERY="$TRUTH_PATHQUERY" \
     TRUTH_COMPLETION="$TRUTH_COMPLETION" \
+    TRUTH_MINT_POP="$TRUTH_MINT_POP" \
     "$PY" - <<'PYEOF'
 import json, os, sys
 from importlib.resources import files
@@ -122,8 +124,11 @@ except Exception as e:
 try:
     import vaid_mint.conformance as vmc
     same_bytes("vaid_mint", "mint_v1.json", os.environ["TRUTH_MINT"], "vaid-mint/mint")
-    vmc.run()  # digest + kernel signature + lineage + vaid_id==agent_id
-    print("    ✓ vaid-mint: mint_v1 reproduced")
+    same_bytes("vaid_mint", "mint_pop_v1.json", os.environ["TRUTH_MINT_POP"], "vaid-mint/mint-pop")
+    # run() covers BOTH bundled vectors: the document (digest + kernel signature +
+    # lineage + vaid_id==agent_id) and the MintPopPayload.
+    vmc.run()
+    print("    ✓ vaid-mint: mint_v1 + mint_pop_v1 reproduced")
 except Exception as e:
     failures.append(f"vaid-mint: {e}")
     print(f"    ✗ vaid-mint: {e}")
@@ -179,9 +184,15 @@ base64 = "0.22"
 EOF
 
 cat > "$PROJ/src/main.rs" <<'RSEOF'
-// Reproduces the four frozen vectors using ONLY the registry-installed crates'
-// public APIs. Vector file paths are passed as argv (the repo's frozen truth);
-// no repo source is compiled. Prints per-vector PASS/FAIL, exits 1 on any miss.
+// Reproduces four of the five frozen vectors using ONLY the registry-installed
+// crates' public APIs. Vector file paths are passed as argv (the repo's frozen
+// truth); no repo source is compiled. Prints per-vector PASS/FAIL, exits 1 on any
+// miss.
+//
+// The fifth, mint_pop_v1, is covered on the Python side above via the installed
+// vaid-mint packaged firewall (which checks both its bundled vectors) plus a
+// vendored-copy byte comparison. Stated here rather than left to inference: this
+// harness covers four, and the run as a whole covers five.
 use std::fs;
 use base64::Engine as _;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -316,7 +327,7 @@ fi
 echo
 echo "=================================================================="
 if [ ${#FAILURES[@]} -eq 0 ]; then
-  echo " SMOKE TEST PASSED — published artifacts reproduce all four frozen vectors."
+  echo " SMOKE TEST PASSED — published artifacts reproduce all five frozen vectors."
   echo "=================================================================="
   exit 0
 else
