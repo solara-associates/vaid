@@ -1,0 +1,64 @@
+{
+  "_comment": "Mint conformance vector (v1). Load-bearing. `input` is a real UNSIGNED VAID document (snake_case; the Rust `Vaid` has no serde rename), with `kernel_signature` empty. A conforming mint MUST produce `digest_sha256_hex` from `input` by nulling `kernel_signature`, canonicalizing per JCS (RFC 8785), and SHA-256; and (given the kernel seed) reproduce `ed25519.signature_hex` byte-for-byte. `input.lineage_hash` MUST equal sha256_hex(parent_vaid==null ? 'GENESIS:{agent_id}' : '{parent_vaid}:{agent_id}'), and `input.vaid_id` MUST equal `input.agent_id`. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
+  "digest_sha256_hex": "a5d73cf487b4eade190acdae31e61322a83dae5639b6891ede3a8d32af0bbf86",
+  "ed25519": {
+    "_comment": "Deterministic kernel key (same RFC 8032 seed as operator_pop_v1.json). Any conforming mint derives the same kernel public key and produces the same signature over digest_sha256_hex.",
+    "kernel_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "signature_hex": "ec5172291b658ca84fe6e63198a60c6d487b83f56398e3e1ec7f10201e13df3b0dd5efaf04bc9bd93f202529fe36e786d4803199d4061863771942bcd66bd20f"
+  },
+  "input": {
+    "agent_class": "child",
+    "agent_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "capability_set": [
+      "read"
+    ],
+    "expires_at": "2026-06-05T12:00:00Z",
+    "issued_at": "2026-06-04T12:00:00Z",
+    "kernel_signature": [],
+    "lineage_hash": "8cfa78111036355daa47f7c32bb762ccd4562487e75da1b99a71259baaaeae42",
+    "parent_vaid": "11111111-1111-1111-1111-111111111111",
+    "public_key_der": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ],
+    "scope_boundary": [
+      "data.aifactory.sub"
+    ],
+    "sig_version": 2,
+    "tenant_id": "aifactory",
+    "vaid_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "version": "1.0.0"
+  },
+  "scheme": "JCS(RFC8785) over the full VAID document with kernel_signature nulled -> SHA-256 -> pure Ed25519 over the 32-byte digest as raw message; raw 64-byte signature; raw 32-byte kernel public key"
+}

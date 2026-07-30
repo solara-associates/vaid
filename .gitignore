@@ -22,3 +22,9 @@ build/
 .venv/
 .buildvenv/
 .installtest/
+
+# TypeScript / npm
+node_modules/
+typescript/*/dist/
+typescript/*/test-dist/
+*.tsbuildinfo

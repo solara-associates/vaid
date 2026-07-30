@@ -1,0 +1,61 @@
+{
+  "name": "vaid-client",
+  "version": "0.2.0",
+  "description": "The VAID proof-of-possession request signer (TypeScript): signs requests into the four x-synthera-* PoP headers, byte-identical to the Rust and Python clients.",
+  "keywords": [
+    "synthera",
+    "vaid",
+    "agent-identity",
+    "ed25519",
+    "proof-of-possession",
+    "request-signing",
+    "http"
+  ],
+  "license": "Apache-2.0",
+  "author": "solara.associates <info@solara.associates>",
+  "homepage": "https://github.com/solara-associates/vaid",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solara-associates/vaid.git",
+    "directory": "typescript/vaid-client"
+  },
+  "bugs": "https://github.com/solara-associates/vaid/issues",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/conformance.d.ts",
+      "default": "./dist/conformance.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "vaid-client-conformance": "dist/bin/conformance.js"
+  },
+  "files": [
+    "dist",
+    "vectors",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "pretest": "tsc -p tsconfig.test.json && node -e \"require('node:fs').cpSync('vectors','test-dist/vectors',{recursive:true})\"",
+    "test": "node --test test-dist/test/*.test.js",
+    "conformance": "npm run build && node dist/bin/conformance.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "vaid-pop": "^0.2.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
