@@ -70,17 +70,34 @@ The byte-level standard, reference implementations in two languages, a reference
 
 - **`vaid-langchain`** (Python, `python/vaid-langchain`) is a LangChain integration that signs requests using the VAID contract via an `httpx.Auth` adapter.
 
+- **`vaid-pop`, `vaid-mint`, `vaid-client`** (TypeScript, `typescript/`) are the
+  third conforming implementation: the same PoP primitive, the same reference mint
+  with attenuated delegation and the three-state revocation seam, and the same
+  request signer. They reproduce **all five** frozen vectors byte-for-byte, in the
+  same CI drift jobs as Rust and Python. ⚠️ **Not yet published to npm** — they are
+  in-repo only, so `npm install vaid-pop` does not work today. See
+  [`docs/capabilities.json`](docs/capabilities.json).
+
 - **completion records** (`vaid-pop`, `completion_v1.json` vector) — a self-reported provenance record for what an agent claims it did. Single-tier assurance today: self-reported only, and the type's own documentation says so.
 
 That is the entire open scope. There is no server, no database, and no runtime to
 stand up beyond the mint if you choose to self-host it. You add the Rust crates to a Cargo project, or `pip install` the Python packages, and call them.
 
-The code is the byte-level specification. What code cannot carry — where the
-conformance surface stops, and why — is recorded in prose beside it. The first such
-document, [`docs/spec/revocation.md`](docs/spec/revocation.md), specifies the
-`RevocationCheck` seam and states plainly that revocation sits **outside** the
-conformance surface ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)).
-Its R.6 table records what ships today versus what is planned.
+The vectors are the byte-level specification; the prose beside them says where the
+conformance surface starts and stops. Two documents, taking opposite postures:
+
+- [`docs/spec/encoding.md`](docs/spec/encoding.md) is **normative and inside** the
+  surface. It writes down the rules that decide the bytes — snake_case documents
+  versus camelCase payloads, byte fields as arrays of numbers, `kernel_signature`
+  nulled rather than deleted, whole-second RFC 3339 `Z` — each with the digest a
+  wrong choice actually produces. It exists because those rules previously lived
+  only in reference source, so a fourth implementer could not derive the bytes
+  without reading Rust. They can now.
+- [`docs/spec/revocation.md`](docs/spec/revocation.md) is **non-normative and
+  outside** it. It specifies the `RevocationCheck` seam and states plainly that
+  revocation sits outside the conformance surface
+  ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)). Its R.6
+  table records what ships today versus what is planned.
 
 ## What it does
 
@@ -191,6 +208,22 @@ independent implementations, in two languages, with no shared runtime, hitting t
 same bytes. The Rust `cargo test` above and the Python `vaid-pop-conformance`
 assert against the same vector; the repo's `pop-conformance` CI job runs both and
 fails on any divergence. That is the standard, proven.
+
+**A third language, from the repo.** The TypeScript packages under `typescript/`
+vendor byte-identical copies of the same five vectors and reproduce every digest
+and signature, and each conformance-drift CI job now `cmp`s the TypeScript copy and
+runs its gate alongside the Rust and Python ones. Because they are not on npm yet,
+this is provable only from a checkout:
+
+```
+cd typescript && npm ci && npm run build && npm test
+node typescript/vaid-mint/dist/bin/conformance.js   # the packaged firewall
+```
+
+Three independent implementations agreeing byte-for-byte is a stronger statement
+than two — a two-language agreement can hide a shared assumption that neither
+author questioned. It is worth saying exactly what it is not: a claim about
+installability, which waits on the npm publish.
 
 ## What is deliberately not here
 

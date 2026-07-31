@@ -1,0 +1,61 @@
+{
+  "name": "vaid-mint",
+  "version": "0.2.0",
+  "description": "The open, self-hostable reference mint (TypeScript) for the VAID standard: mint a root VAID and mint attenuated child VAIDs (scope/capability-contained delegation), byte-identical to the Rust and Python mints.",
+  "keywords": [
+    "synthera",
+    "vaid",
+    "agent-identity",
+    "ed25519",
+    "delegation",
+    "attenuation",
+    "mint"
+  ],
+  "license": "Apache-2.0",
+  "author": "solara.associates <info@solara.associates>",
+  "homepage": "https://github.com/solara-associates/vaid",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solara-associates/vaid.git",
+    "directory": "typescript/vaid-mint"
+  },
+  "bugs": "https://github.com/solara-associates/vaid/issues",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/conformance.d.ts",
+      "default": "./dist/conformance.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "vaid-mint-conformance": "dist/bin/conformance.js"
+  },
+  "files": [
+    "dist",
+    "vectors",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "pretest": "tsc -p tsconfig.test.json && node -e \"require('node:fs').cpSync('vectors','test-dist/vectors',{recursive:true})\"",
+    "test": "node --test test-dist/test/*.test.js",
+    "conformance": "npm run build && node dist/bin/conformance.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "vaid-pop": "^0.2.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

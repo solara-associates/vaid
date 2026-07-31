@@ -9,6 +9,11 @@ child to parent ancestry (`parent_vaid`, `lineage_hash`); **mint**, **attenuate*
 
 ---
 
+> **Companion document.** [`encoding.md`](encoding.md) takes the opposite posture:
+> it is normative and specifies what is *inside* the conformance surface — the
+> encoding rules that decide the canonical bytes. Read it for what conformance
+> requires; read this for where it stops.
+
 ## R.1 Revocation and conformance
 
 Revocation is outside the VAID conformance surface.

@@ -80,7 +80,7 @@ times** — getting this wrong fails CI every time (correctly, but wastefully):
   in the code-merge PR, before publish, fails CI until the packages are pushed.
 
 Concretely, for a version bump the order is: **merge → tag → publish to
-crates.io/PyPI → then the manifest-flip PR.** (This is not hypothetical — see
+crates.io/PyPI/npm → then the manifest-flip PR.** (This is not hypothetical — see
 [ADR-0002](docs/adr/0002-capabilities-manifest.md): the check caught a
 shipped-but-unpublished flip on its first real use.)
 
@@ -91,14 +91,37 @@ capability blocked on a merged PR fails — its status should have flipped. See
 status from this file; do not re-assert status in prose. `status_text` is the one
 hand-written field — review it here too.
 
+**Internal version agreement (a package must not contradict itself).**
+`scripts/verify-internal-versions.mjs` (same CI job, no network) asserts that every
+source a consumer might read reports the same version: the **manifest**
+(`Cargo.toml` / `pyproject.toml` / `package.json`), the **code-level constant**
+(Python's `__version__`; Rust reads `CARGO_PKG_VERSION` and npm packages read
+`package.json`, so neither has a second source that can drift), and the
+**CHANGELOG.md top entry** where one exists. A language with no second source is a
+note, not a failure — inventing one would create the drift this check exists to
+catch.
+
+This closes a gap the registry check could not see: python `vaid-mint` shipped
+`pyproject.toml = 0.2.0` against `__version__ = "0.1.3"`, and both registry parity
+and the capabilities check passed while the installed package misreported its own
+version. This requirement was already written here; nothing enforced it until now.
+
 **Registry parity (every package, not just claimed ones).** The same CI job also
 runs `scripts/verify-package-versions.mjs`, which asserts that **every** package's
-in-repo version (`crates/*/Cargo.toml`, `python/*/pyproject.toml`) is **published on
-its registry** — independent of any capability claim. So a version bump on `main`
-that has not been published yet is **red until you publish**: bump and publish are
-near-atomic by design. A package deliberately not published to a public registry
-opts out via Cargo `publish = false` or the `Private :: Do Not Upload` classifier in
-`pyproject`.
+in-repo version (`crates/*/Cargo.toml`, `python/*/pyproject.toml`,
+`typescript/*/package.json`) is **published on its registry** — independent of any
+capability claim. So a version bump on `main` that has not been published yet is
+**red until you publish**: bump and publish are near-atomic by design. A package
+deliberately not published to a public registry opts out via Cargo
+`publish = false`, the `Private :: Do Not Upload` classifier in `pyproject`, or
+`"private": true` in `package.json`.
+
+> **Currently red, deliberately.** `typescript/vaid-pop`, `typescript/vaid-mint`
+> and `typescript/vaid-client` sit at `0.2.0` in-repo and are not yet on npm, so
+> this check fails for those three until they are published. That is the gate
+> doing its job — the packages exist and the registry does not have them. The
+> conformance and drift jobs are green; only parity is red, and `npm publish`
+> turns it green.
 
 ## Proposing a change
 
