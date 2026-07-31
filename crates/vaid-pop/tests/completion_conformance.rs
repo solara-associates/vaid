@@ -20,7 +20,10 @@ fn vector() -> Value {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 fn to_hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -84,9 +87,18 @@ fn assurance_tier_strings_match_frozen_vector() {
     ];
     let serialized: Vec<String> = tiers
         .iter()
-        .map(|t| serde_json::to_value(t).unwrap().as_str().unwrap().to_string())
+        .map(|t| {
+            serde_json::to_value(t)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
         .collect();
-    assert_eq!(serialized, frozen, "AssuranceTier strings diverged from the frozen vector — BLOCKER");
+    assert_eq!(
+        serialized, frozen,
+        "AssuranceTier strings diverged from the frozen vector — BLOCKER"
+    );
 
     // And the input's declared tier deserializes to the substantiated tier.
     let rec = input_record(&v);

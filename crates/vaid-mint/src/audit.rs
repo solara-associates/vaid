@@ -53,7 +53,10 @@ impl InMemoryAudit {
 
     /// Snapshot the recorded entries.
     pub fn entries(&self) -> Vec<AuditEntry> {
-        self.entries.lock().expect("audit lock not poisoned").clone()
+        self.entries
+            .lock()
+            .expect("audit lock not poisoned")
+            .clone()
     }
 
     /// Number of recorded entries.
@@ -70,10 +73,13 @@ impl InMemoryAudit {
 #[async_trait]
 impl AuditSink for InMemoryAudit {
     async fn record(&self, event_type: &str, details: Value) -> MintResult<()> {
-        self.entries.lock().expect("audit lock not poisoned").push(AuditEntry {
-            event_type: event_type.to_string(),
-            details,
-        });
+        self.entries
+            .lock()
+            .expect("audit lock not poisoned")
+            .push(AuditEntry {
+                event_type: event_type.to_string(),
+                details,
+            });
         Ok(())
     }
 }

@@ -17,13 +17,26 @@ NOT byte-conformant against the managed authority's (still-moving) VAID format.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 
 import rfc8785
 
-# Signature-scheme discriminant; ``2`` for every VAID minted here. Covered by the
+# Signature-scheme discriminant; ``3`` for every VAID minted here. Covered by the
 # signature and gated at verify.
-VAID_SIG_VERSION_V2 = 2
+#
+# v3 (ADR-0004) adds ``trust_domain`` and ``kernel_key_thumbprint``. The v2
+# constant is deliberately REMOVED rather than retained, mirroring Rust: no code
+# can accidentally accept a v2 document, and there is no dual-version path — a v2
+# document must not verify under a v3 verifier, because accepting both would
+# recreate the downgrade surface that signing ``sig_version`` exists to close.
+VAID_SIG_VERSION_V3 = 3
+
+#: The exact timestamp profile inside signed bytes (``docs/spec/encoding.md``
+#: E.6): whole-second RFC 3339 in UTC with a literal ``Z``. Narrower than RFC 3339
+#: on purpose — it is the round-trip fixed point, so a verifier that re-serializes
+#: while recomputing canonical bytes agrees with the signer.
+_E6_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def canonical_vaid_signing_bytes(vaid: dict) -> bytes:
@@ -65,6 +78,8 @@ def build_unsigned_vaid_document(
     scope_boundary: list[str],
     lineage_hash: str,
     capability_set: list[str],
+    trust_domain: str,
+    kernel_key_thumbprint: str,
 ) -> dict:
     """Assemble the snake_case VAID document with an empty ``kernel_signature``.
 
@@ -72,7 +87,7 @@ def build_unsigned_vaid_document(
     signs the canonical bytes of this and attaches the signature.
     """
     return {
-        "sig_version": VAID_SIG_VERSION_V2,
+        "sig_version": VAID_SIG_VERSION_V3,
         "vaid_id": vaid_id,
         "agent_id": agent_id,
         "agent_class": agent_class,
@@ -86,22 +101,82 @@ def build_unsigned_vaid_document(
         "scope_boundary": list(scope_boundary),
         "lineage_hash": lineage_hash,
         "capability_set": list(capability_set),
+        "trust_domain": trust_domain,
+        "kernel_key_thumbprint": kernel_key_thumbprint,
     }
 
 
-def is_expired(vaid: dict) -> bool:
-    """Has the document passed its ``expires_at``? Mirror of ``Vaid::is_expired``
-    (``Utc::now() > self.expires_at``).
+def _parse_rfc3339(value: object) -> datetime | None:
+    """Permissively parse an RFC 3339 timestamp to an aware UTC datetime, or
+    ``None`` if it is not one.
 
-    Parses the whole-second RFC 3339 ``"...Z"`` ``expires_at`` this package writes
-    at issuance. Expiry is a hard reject in
-    :meth:`~vaid_mint.issuer.ReferenceIssuer.verify_vaid`; this stays available for
-    a caller that needs to distinguish "forged" from "expired" beforehand.
+    Permissive on purpose: this is the parser :func:`is_expired` uses, and
+    :func:`is_expired` must be TOTAL. Conformance to the narrower E.6 profile is a
+    separate question, asked separately by :func:`has_conforming_timestamps`.
     """
-    expires_at = datetime.strptime(vaid["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
-        tzinfo=timezone.utc
-    )
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        # RFC 3339 requires an offset. A naive timestamp is not one, and guessing
+        # UTC would silently invent a value the signer never wrote.
+        return None
+    return dt.astimezone(timezone.utc)
+
+
+def is_expired(vaid: dict) -> bool:
+    """Has the document passed its ``expires_at``? Mirror of ``Vaid::is_expired``.
+
+    **Total: never raises** (issue #10). Previously this parsed with a fixed format
+    string and raised ``ValueError`` on any timestamp that was valid RFC 3339 but
+    not whole-second ``Z`` — from a function whose signature promises a ``bool``,
+    with no mention of it in the docstring, so callers did not guard. Rust and
+    TypeScript returned a bool for the same inputs. Two of three implementations
+    were permissive by accident of which parser each language makes idiomatic, and
+    majority-by-accident was becoming the de facto standard.
+
+    Settled by splitting the surface rather than by picking a winner:
+
+    - this function stays total and answers only "is it past expiry";
+    - :func:`has_conforming_timestamps` answers the E.6 profile question
+      explicitly, so a caller that wants strictness asks for it and can tell the
+      two failures apart.
+
+    An unparseable or absent ``expires_at`` returns ``True`` — **fail closed**. A
+    document whose expiry cannot be read is not a document that can be shown to be
+    unexpired.
+    """
+    expires_at = _parse_rfc3339(vaid.get("expires_at"))
+    if expires_at is None:
+        return True
     return datetime.now(timezone.utc) > expires_at
+
+
+def has_conforming_timestamps(vaid: dict) -> bool:
+    """Do ``issued_at`` and ``expires_at`` match the E.6 profile exactly —
+    whole-second RFC 3339 in UTC with a literal ``Z``?
+
+    The explicit half of the issue #10 split. E.6 says implementations SHOULD
+    reject other forms rather than silently normalizing them; this is how a caller
+    asks. Sub-second precision (``...:00.000Z``, which JavaScript's
+    ``toISOString`` emits by default) and a numeric offset (``+00:00``) are both
+    valid RFC 3339 and both non-conforming here.
+
+    Not consulted by authenticity verification: a document that reached a verifier
+    with a non-conforming timestamp will already fail the signature check, because
+    the verifier re-serializes into the profile and recomputes different bytes.
+    This exists so that failure can be *explained* rather than merely observed.
+    """
+    for field in ("issued_at", "expires_at"):
+        value = vaid.get(field)
+        if not isinstance(value, str) or not _E6_TIMESTAMP.match(value):
+            return False
+        if _parse_rfc3339(value) is None:
+            return False
+    return True
 
 
 def is_in_scope(vaid: dict, resource: str) -> bool:

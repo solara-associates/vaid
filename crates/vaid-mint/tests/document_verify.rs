@@ -22,7 +22,7 @@ fn hex(s: &str) -> Vec<u8> {
 /// Mint a root, then return ONLY its issuer's kernel public key and the document —
 /// the issuer itself is dropped, so verification has no access to it.
 fn public_key_and_doc() -> (Vec<u8>, Vaid) {
-    let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
     let vaid = issuer
         .issue_vaid_with_lineage(
             AgentClass::new("root"),
@@ -53,14 +53,23 @@ fn tampered_document_fails() {
     let mut val = serde_json::to_value(&vaid).unwrap();
     val["scope_boundary"] = json!(["data.x", "data.everything"]);
     let forged: Vaid = serde_json::from_value(val).unwrap();
-    assert!(!verify_vaid_authenticity(&public_key, &forged), "a rewritten field must fail");
+    assert!(
+        !verify_vaid_authenticity(&public_key, &forged),
+        "a rewritten field must fail"
+    );
 }
 
 #[test]
 fn a_different_key_does_not_verify() {
     let (_public_key, vaid) = public_key_and_doc();
-    let other = ReferenceIssuer::ephemeral(1).unwrap().kernel_public_key().to_vec();
-    assert!(!verify_vaid_authenticity(&other, &vaid), "another issuer's key must not verify it");
+    let other = ReferenceIssuer::ephemeral(1, "vaid.example")
+        .unwrap()
+        .kernel_public_key()
+        .to_vec();
+    assert!(
+        !verify_vaid_authenticity(&other, &vaid),
+        "another issuer's key must not verify it"
+    );
 }
 
 #[test]
@@ -69,7 +78,10 @@ fn lineage_hash_mismatch_detected_explicitly() {
     // DIRECTLY — recomputing from parent_vaid + agent_id — not incidentally via the
     // kernel signature.
     let (_public_key, vaid) = public_key_and_doc();
-    assert!(verify_lineage_hash(&vaid), "the genuine document's lineage_hash is consistent");
+    assert!(
+        verify_lineage_hash(&vaid),
+        "the genuine document's lineage_hash is consistent"
+    );
 
     let mut val = serde_json::to_value(&vaid).unwrap();
     val["lineage_hash"] = json!("00000000000000000000000000000000000000000000000000000000deadbeef");

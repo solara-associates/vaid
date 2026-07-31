@@ -58,8 +58,9 @@ export {
   computeLineageHash,
   hasCapability,
   isExpired,
+  hasConformingTimestamps,
   isInScope,
-  VAID_SIG_VERSION_V2,
+  VAID_SIG_VERSION_V3,
   type AgentClass,
   type AgentId,
   type Rfc3339Utc,
@@ -108,3 +109,12 @@ export {
 } from './revocation.js';
 
 export { verifyLineageHash, verifyVaidAuthenticity } from './verify.js';
+
+export {
+  kernelKeyThumbprint,
+  isValidTrustDomain,
+  isSpecialUseTrustDomain,
+  THUMBPRINT_URI_PREFIX,
+  TRUST_DOMAIN_MAX_LEN,
+  TRUST_DOMAIN_MAX_LABEL_LEN,
+} from "./issuerIdentity.js";

@@ -26,7 +26,7 @@
 use ring::signature::{UnparsedPublicKey, ED25519};
 
 use crate::document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, Vaid, VAID_SIG_VERSION_V2,
+    canonical_vaid_signing_bytes, compute_lineage_hash, Vaid, VAID_SIG_VERSION_V3,
 };
 
 /// Verify a VAID document's **authenticity** against an issuer's kernel **public**
@@ -37,10 +37,21 @@ use crate::document::{
 /// result does not mean the VAID is currently usable; it means it is real.
 ///
 /// **Checks (all must hold for `true`):**
-/// - the signature-scheme version is current;
+/// - the signature-scheme version is current (v3 only — a v2 document is
+///   rejected, and there is no dual-version path);
+/// - `trust_domain` is well-formed ([`crate::issuer_identity::is_valid_trust_domain`]);
+/// - `kernel_key_thumbprint` **corresponds to `kernel_public_key`** — the v3
+///   key-commitment check. Without it a caller could verify a document against a
+///   key the document never named, and "verified under some key we hold" is a
+///   verdict nobody can audit;
 /// - `lineage_hash` is internally consistent ([`verify_lineage_hash`]);
 /// - the kernel Ed25519 signature is valid over the canonical document under
 ///   `kernel_public_key`.
+///
+/// The thumbprint check is ordered **before** the signature check deliberately:
+/// it is one hash against 64 bytes of Ed25519 verification, so a caller holding a
+/// bundle can reject a non-corresponding key without paying for a signature
+/// verification it already knows will fail.
 ///
 /// **Does NOT check — the caller must handle these separately:**
 /// - **expiry** — call [`crate::document::Vaid::is_expired`]; an expired-but-signed
@@ -52,7 +63,15 @@ use crate::document::{
 /// A malformed key, a bad signature, or any tampered signed field is `false`, never
 /// an error.
 pub fn verify_vaid_authenticity(kernel_public_key: &[u8], vaid: &Vaid) -> bool {
-    if vaid.sig_version() != VAID_SIG_VERSION_V2 {
+    if vaid.sig_version() != VAID_SIG_VERSION_V3 {
+        return false;
+    }
+    if !crate::issuer_identity::is_valid_trust_domain(vaid.trust_domain()) {
+        return false;
+    }
+    if vaid.kernel_key_thumbprint()
+        != crate::issuer_identity::kernel_key_thumbprint(kernel_public_key)
+    {
         return false;
     }
     if !verify_lineage_hash(vaid) {

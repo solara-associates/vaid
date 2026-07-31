@@ -38,6 +38,9 @@ serde_json = { workspace = true }
 # The VAID-document canonicalizer nulls `kernel_signature` and JCS-canonicalizes
 # the whole document; serde_jcs is the same RFC 8785 implementation vaid-pop uses.
 serde_jcs = "0.2"
+# RFC 7638/9278 thumbprints are base64url (no padding). Already a workspace
+# dependency; not new to the tree.
+base64 = { workspace = true }
 sha2 = { workspace = true }
 ring = { workspace = true }
 chrono = { workspace = true }
