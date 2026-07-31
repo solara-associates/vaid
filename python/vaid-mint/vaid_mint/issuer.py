@@ -38,8 +38,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from vaid_mint.error import IdentityError
+from vaid_mint.issuer_identity import (
+    is_valid_trust_domain,
+    kernel_key_thumbprint,
+)
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V2,
+    VAID_SIG_VERSION_V3,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
@@ -71,7 +76,22 @@ class ReferenceIssuer:
     :class:`~vaid_mint.revocation.LineageResolver`), and the three-state
     :class:`~vaid_mint.revocation.RevocationCheck` consulted at verification."""
 
-    def __init__(self, kernel_key: Ed25519PrivateKey, vaid_ttl_hours: int) -> None:
+    def __init__(
+        self,
+        kernel_key: Ed25519PrivateKey,
+        vaid_ttl_hours: int,
+        trust_domain: str,
+    ) -> None:
+        if not is_valid_trust_domain(trust_domain):
+            # Reject at construction, not at mint: an issuer whose every output
+            # would fail verification is not a useful object to hold.
+            raise IdentityError(
+                f"trust_domain {trust_domain!r} is not well-formed (ADR-0004): "
+                "lowercase ASCII letters, digits, '-' and '.'; at least two labels; "
+                "each 1-63 bytes without a leading or trailing '-'; no trailing dot; "
+                "1-253 bytes total; final label not all-numeric"
+            )
+        self._trust_domain = trust_domain
         self._kernel_key = kernel_key
         self._vaid_ttl_hours = vaid_ttl_hours
         # Every minted VAID: parent id for a child, ``None`` for a root. Recording
@@ -94,14 +114,14 @@ class ReferenceIssuer:
     # ── constructors mirroring the Rust ones ──
 
     @classmethod
-    def ephemeral(cls, vaid_ttl_hours: int) -> "ReferenceIssuer":
+    def ephemeral(cls, vaid_ttl_hours: int, trust_domain: str) -> "ReferenceIssuer":
         """Freshly generated ephemeral kernel key (not persisted)."""
-        return cls(Ed25519PrivateKey.generate(), vaid_ttl_hours)
+        return cls(Ed25519PrivateKey.generate(), vaid_ttl_hours, trust_domain)
 
     @classmethod
-    def from_seed(cls, seed: bytes, vaid_ttl_hours: int) -> "ReferenceIssuer":
+    def from_seed(cls, seed: bytes, vaid_ttl_hours: int, trust_domain: str) -> "ReferenceIssuer":
         """Build from a raw 32-byte Ed25519 seed — for deterministic vectors."""
-        return cls(Ed25519PrivateKey.from_private_bytes(seed), vaid_ttl_hours)
+        return cls(Ed25519PrivateKey.from_private_bytes(seed), vaid_ttl_hours, trust_domain)
 
     def with_revocation_check(self, revocation_check: RevocationCheck) -> "ReferenceIssuer":
         """Replace the revocation store consulted at verification with an injected
@@ -112,7 +132,7 @@ class ReferenceIssuer:
 
         Returns ``self`` so it chains::
 
-            issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(check)
+            issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_check(check)
         """
         self._revocation = revocation_check
         return self
@@ -192,6 +212,12 @@ class ReferenceIssuer:
             scope_boundary=scope_boundary,
             lineage_hash=lineage_hash,
             capability_set=capability_set,
+            trust_domain=self._trust_domain,
+            # Derived from the signing key itself, never supplied: the thumbprint
+            # cannot disagree with the key that is about to sign.
+            kernel_key_thumbprint=kernel_key_thumbprint(
+                self._kernel_key.public_key().public_bytes_raw()
+            ),
         )
         digest = canonical_vaid_signing_bytes(unsigned)
         signature = self._kernel_key.sign(digest)  # raw 64-byte Ed25519
@@ -268,7 +294,7 @@ class ReferenceIssuer:
 
         A bad signature is ``False``, never an exception.
         """
-        if vaid.get("sig_version") != VAID_SIG_VERSION_V2:
+        if vaid.get("sig_version") != VAID_SIG_VERSION_V3:
             return False
         # TTL is enforced as a hard reject, not merely reported: an expired VAID
         # fails verification even with a valid kernel signature.

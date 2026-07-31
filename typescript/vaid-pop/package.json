@@ -1,6 +1,6 @@
 {
   "name": "vaid-pop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The VAID proof-of-possession signing primitive (TypeScript): RFC 8785 (JCS) -> SHA-256 -> Ed25519, byte-identical to the Rust and Python implementations against the frozen conformance vectors.",
   "keywords": [
     "synthera",

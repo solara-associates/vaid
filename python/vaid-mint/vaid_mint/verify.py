@@ -21,8 +21,12 @@ from __future__ import annotations
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from vaid_mint.issuer_identity import (
+    is_valid_trust_domain,
+    kernel_key_thumbprint,
+)
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V2,
+    VAID_SIG_VERSION_V3,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
 )
@@ -56,6 +60,10 @@ def verify_vaid_authenticity(kernel_public_key: bytes, vaid: dict) -> bool:
 
     Does NOT check — the caller must handle these separately:
 
+    - **the E.6 timestamp profile** — call
+      :func:`~vaid_mint.document.has_conforming_timestamps`; a non-conforming
+      timestamp already fails the signature check here, and that function is how
+      the failure is explained rather than merely observed;
     - **expiry** — call :func:`~vaid_mint.document.is_expired`; an expired-but-signed
       VAID returns ``True`` here;
     - **revocation** — evaluate a :class:`~vaid_mint.revocation.RevocationCheck` (or,
@@ -65,7 +73,20 @@ def verify_vaid_authenticity(kernel_public_key: bytes, vaid: dict) -> bool:
     A malformed key, a bad signature, or any tampered signed field is ``False``,
     never an exception.
     """
-    if vaid.get("sig_version") != VAID_SIG_VERSION_V2:
+    if vaid.get("sig_version") != VAID_SIG_VERSION_V3:
+        return False
+    if not is_valid_trust_domain(vaid.get("trust_domain")):
+        return False
+    # The v3 key-commitment check: does the document's thumbprint CORRESPOND to
+    # the key we were handed? Without it a caller could verify a document against
+    # a key the document never named, and "verified under some key we hold" is a
+    # verdict nobody can audit. Ordered before the signature check — one hash is
+    # cheaper than an Ed25519 verification already known to fail.
+    try:
+        expected = kernel_key_thumbprint(bytes(kernel_public_key))
+    except (TypeError, ValueError):
+        return False
+    if vaid.get("kernel_key_thumbprint") != expected:
         return False
     if not verify_lineage_hash(vaid):
         return False
