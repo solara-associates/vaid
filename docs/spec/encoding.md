@@ -1,9 +1,18 @@
 # Encoding
 
 **Prose specification. VAID.**
-Revision 2, 29 July 2026. Written from the findings of the third (TypeScript)
-implementation; revised the same day to record that E.11's gap is closed by
-`mint_pop_v1.json`.
+Revision 3, 31 July 2026. Written from the findings of the third (TypeScript)
+implementation; revised 29 July to record that E.11's gap is closed by
+`mint_pop_v1.json`; revised again for **v3** (ADR-0004), which adds
+`trust_domain` and `kernel_key_thumbprint` to the VAID document and moves
+`sig_version` to `3`.
+
+**On the section numbering.** The two new field rules are E.15 and E.16 but appear
+below between E.10 and E.11, where they belong logically — with the other
+field-level rules rather than after the conformance statement. They are not
+numbered E.11 and E.12 because renumbering would silently invalidate every `E.n`
+citation in the three implementations' source and in ADR-0003 and ADR-0004. Stable
+citations were judged worth more than tidy ordering.
 
 Terminology follows the repo: a **VAID** is the document (`Vaid`); a **payload** is
 any other structure that is canonicalized and signed (`RequestAuthPayload`,
@@ -36,7 +45,7 @@ The vectors freeze the answer. This writes down the rule.
 Each section below states the rule, then states what a wrong choice produces.
 Those consequences are computed, not asserted: E.13 lists the digest each wrong
 choice yields for the `mint_v1` input, against the correct
-`a5d73cf487b4eade190acdae31e61322a83dae5639b6891ede3a8d32af0bbf86`.
+`eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0`.
 
 ## E.2 The pipeline
 
@@ -63,7 +72,7 @@ to produce bytes that are wrong in a way that looks right.
 
 | Structure | Convention | Example fields |
 |---|---|---|
-| The VAID document (`Vaid`) | **snake_case** | `sig_version`, `vaid_id`, `agent_class`, `public_key_der`, `kernel_signature`, `parent_vaid`, `scope_boundary`, `lineage_hash`, `capability_set` |
+| The VAID document (`Vaid`) | **snake_case** | `sig_version`, `vaid_id`, `agent_class`, `public_key_der`, `kernel_signature`, `parent_vaid`, `scope_boundary`, `lineage_hash`, `capability_set`, `trust_domain`, `kernel_key_thumbprint` |
 | `RequestAuthPayload` | **camelCase** | `vaidId`, `method`, `path`, `bodySha256`, `tenantId`, `timestamp`, `clientNonce` |
 | `CompletionRecord` | **camelCase** | `vaidId`, `requestDigestSha256`, `tenantId`, `status`, `resultSha256`, `completedAt`, `signerVaidId`, `assuranceTier`, `recordNonce` |
 | `MintPopPayload` | **camelCase** | `publicKeyDer`, `tenantId`, `agentClass`, `version`, `parentVaid`, `scopeBoundary`, `capabilitySet`, `nonce`, `issuedAt` |
@@ -194,7 +203,7 @@ distinction between `[]` and `null` here is semantic as well as syntactic.
 
 ## E.8 Numbers are numbers
 
-`sig_version` is a JSON **number** (`2`), not a string (`"2"`).
+`sig_version` is a JSON **number** (`3` at v3), not a string (`"3"`).
 
 Numeric values are serialized per RFC 8785 §3.2.2.3, which is ECMAScript
 `Number::toString`. VAID's signed structures contain only small non-negative
@@ -243,6 +252,88 @@ no delimiter escaping.
 **`vaid_id` equals `agent_id`** — they are the same UUID, and the document carries
 it twice.
 
+## E.15 `trust_domain` is constrained, and compared byte-for-byte
+
+`trust_domain` (v3, ADR-0004) names the issuing deployment. It is **required** —
+never absent, never `null` — because an optional field would admit two possible
+key sets and therefore two canonical forms.
+
+The grammar is normative:
+
+- lowercase ASCII only: `a`–`z`, `0`–`9`, `-`, `.`
+- at least two labels separated by `.`; each label 1–63 bytes; no leading or
+  trailing `-`
+- no trailing dot, no empty labels
+- 1–253 bytes total
+- the final label MUST NOT be all-numeric, which excludes dotted-quad IP literals
+
+**Comparison is byte equality. An implementation MUST NOT normalize.** This is the
+rule most likely to be got wrong, because normalizing looks helpful. It is not: the
+value is inside the signed bytes, so a verifier that lowercases before comparing
+recomputes different canonical bytes from the ones the signer covered, and the
+signature fails for a reason that has nothing to do with the key — the same failure
+mode as E.6. An uppercase producer is **non-conforming**, not something to correct.
+
+Two deliberate divergences from SPIFFE's trust-domain grammar, each with a reason:
+**no underscore**, because an underscore cannot appear in a hostname and such a name
+cannot be bound by the WebPKI or DNS anchor this identifier exists to be bound by;
+and **no case-insensitive comparison**, for the reason above. SPIFFE also permits IP
+addresses; this does not, because an IP has no controller to bind to.
+
+Implementations SHOULD validate with explicit character checks rather than a regular
+expression: JavaScript, Python and Rust regex dialects disagree about `\w`, Unicode
+classes and anchoring, and this predicate must give the same answer in all three.
+
+Special-use names (RFC 2606 / RFC 6761 — `example`, `invalid`, `localhost`, `test`,
+`local`, `internal`) are **permitted by the grammar** and forbidden by policy: a
+production issuer MUST NOT use one, and a verifier SHOULD refuse to bind a trust
+bundle to one. The frozen vector depends on that split — see E.11.
+
+## E.16 `kernel_key_thumbprint` is an RFC 9278 URI over an RFC 7638 thumbprint
+
+`kernel_key_thumbprint` (v3, ADR-0004) commits the document to the key that signed
+it. Also **required**.
+
+The value is the full RFC 9278 thumbprint URI, not a bare thumbprint:
+
+```
+urn:ietf:params:oauth:jwk-thumbprint:sha-256:<base64url, unpadded>
+```
+
+The thumbprint itself is RFC 7638 over the Ed25519 public key as a JWK. For an OKP
+key the required members are exactly `crv`, `kty`, `x` (RFC 8037 §2), ordered
+lexicographically with no whitespace:
+
+```json
+{"crv":"Ed25519","kty":"OKP","x":"<base64url of the raw 32-byte key, unpadded>"}
+```
+
+SHA-256 that, then base64url-encode the digest **without padding**.
+
+**This is byte-identical to what RFC 8785 (JCS) produces for the same object** — JCS
+sorts keys by UTF-16 code unit, and `crv` < `kty` < `x` under every ordering. An
+implementation SHOULD therefore compute it with the JCS implementation it already
+uses for E.2 rather than adding a JOSE dependency or hand-rolling the member
+selection, which is the part of RFC 7638 that is actually easy to get wrong.
+
+Note the encoding asymmetry with E.4, which is deliberate and easy to trip on:
+`public_key_der` is an **array of numbers**, while the key material inside the
+thumbprint's JWK is **base64url**. They are different serializations of a key in the
+same document, because one is VAID's own convention and the other is RFC 7638's.
+
+Carrying the URI prefix rather than a bare thumbprint gives hash agility for free: a
+later move off SHA-256 changes the value, not the field.
+
+**A verifier MUST check that this value corresponds to the key it is verifying
+against**, and reject the document if it does not. Skipping that check makes the
+field decorative — a caller could verify a document against a key the document never
+named, and "verified under some key we hold" is a verdict nobody can audit.
+
+Correctness should be pinned against the **published RFC 8037 Appendix A.3
+thumbprint vector**, not only against the other implementations. Three
+implementations agreeing with each other is precisely the situation E.11 exists to
+warn about.
+
 ## E.11 Vector coverage
 
 Every signed structure is pinned by a frozen vector:
@@ -253,6 +344,24 @@ Every signed structure is pinned by a frozen vector:
 | `RequestAuthPayload` | `operator_pop_v1.json`, and `pathquery_v1.json` for the path convention |
 | `CompletionRecord` | `completion_v1.json` |
 | `MintPopPayload` | `mint_pop_v1.json` |
+
+**The vector's `trust_domain` MUST be a reserved documentation name, and
+`mint_v1.json` uses `vaid.example`.** This is a security rule, not a convention.
+Every vector publishes its own private key seed so that any implementation can
+reproduce the signature — which means anyone can produce validly-signed documents
+under the vector's kernel key. That was harmless while the document named no
+issuer. It stops being harmless the moment the document carries one: a vector
+naming a real deployment would be a published, working forgery generator for that
+deployment, shipped inside the standard's own test fixture. RFC 2606 reserves
+`.example` for exactly this, and E.15's rule that a verifier SHOULD refuse to bind
+a trust bundle to a special-use name is what makes the vector's issuer unbindable
+by rule rather than by good intentions.
+
+**Only `mint_v1.json` was re-frozen for v3.** `MintPopPayload` gains no field: the
+thumbprint is issuer-side output and a holder cannot know it, so `mint_pop_v1.json`
+is untouched, as are `operator_pop_v1.json`, `pathquery_v1.json` and
+`completion_v1.json`. A format break should touch the smallest number of frozen
+artifacts that the change actually requires.
 
 **This was not true when revision 1 of this document was written**, and the gap is
 recorded here rather than quietly closed, because how it was found and closed is
@@ -313,18 +422,34 @@ the `mint_v1.json` input, holding everything else correct. An implementation
 debugging a vector failure can match its own output against this table to identify
 which rule it broke.
 
+**Every digest below was recomputed for v3.** They are computed values, not
+asserted ones, so the v3 field additions changed all of them — a stale row here
+would be exactly the documentation defect E.11 exists to shame.
+
 | Rule | Choice | Resulting digest |
 |---|---|---|
-| — | **Correct — all rules applied** | `a5d73cf487b4eade190acdae31e61322a83dae5639b6891ede3a8d32af0bbf86` |
-| E.3 | Document keys camelCased | `9d73ba18463aba2725426cd5cbd761f43e1747023a1d0aabaad9c9be83982ede` |
-| E.4 | Byte fields as base64 strings | `9f4dd3e9d908e813394bd28aef2d2691d4fcc27129963c556daf3415111f1918` |
-| E.4 | Byte fields as hex strings | `d12f141ea8af0b1812a512a6dd517c70545715e945d8965e43d6f168ba01fdeb` |
-| E.5 | `kernel_signature` key deleted | `9756f30df2add433e5e2c71a9fb8b24c9c05028bfc1e963ecfc72fb06e3ac5f4` |
-| E.5 | `kernel_signature` left as `[]` | `e0697f1ac8c001dea73c1259bf9836cf2780d5c31ba6653d87f61102438abb3f` |
-| E.6 | Timestamps with milliseconds | `150264134484378c72c440d2a93c4dd65258acb6942ef8f0c0b2a5182173b416` |
-| E.6 | Timestamps with a `+00:00` offset | `cf5e70888c1f128a83be2ca4b7908f567c44376d1c3df2660a0c0e9dfc2f29d8` |
-| E.7 | `parent_vaid` key omitted (its value here is a UUID, not null — the null case is exercised by `mint_pop_v1` below) | `0d38b377f832b2ee3321f65e2943383945e26594660f160a9e91eb055bab0929` |
-| E.8 | `sig_version` as the string `"2"` | `0d1f86d8e547e3042ebc5210472bf32126a5cbc45aac91919f56095b961d0ac9` |
+| — | **Correct — all rules applied** | `eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0` |
+| E.3 | Document keys camelCased | `320c00f79438a359450bc6f77f2fdda17b56f17dcce71a3fd556fd234fdc0386` |
+| E.4 | Byte fields as base64 strings | `35f1a0101717c37f0f81bc910a7866b31819cd96713fb90b977935138efd1e39` |
+| E.4 | Byte fields as hex strings | `7622e1e253e674f7f7939ed94f81cf3ed13df04e9579556eb4e884375325885f` |
+| E.5 | `kernel_signature` key deleted | `ee352179f515329b9698227565f8764a5310b141254369259c113e7441fb68cd` |
+| E.5 | `kernel_signature` left as `[]` | `88d844a78690f7748d0821807c489d2e3e9ad105d1e3f9fdbbdf9d28a6ac15b1` |
+| E.6 | Timestamps with milliseconds | `32e408ba68f7dfcda03b92db42386d16eba406550b6f8ba848f668c7e4547b9d` |
+| E.6 | Timestamps with a `+00:00` offset | `34fbca5466cb9afa84a95c0fccbb5956d75b98784df4423242ab08abf8a67f81` |
+| E.7 | `parent_vaid` key omitted (its value here is a UUID, not null — the null case is exercised by `mint_pop_v1` below) | `18b94a22485f6015ac7a8651d609b30abdeee47119eefb580adfd24994f082a2` |
+| E.8 | `sig_version` as the string `"3"` | `2c3c24fb01fa6ade8ee98a96b8ae6be5b6a731580afd957b7d2b1c6ed2cc10aa` |
+| E.15 | `trust_domain` uppercased — i.e. normalized rather than rejected | `c10c41523236d31b3c63eeb33f409d60bf7e81a1af72641aa00909074b6cebdf` |
+| E.15 | `trust_domain` with a trailing dot | `7d6b0608ee40a8c5c74691d7017a8a4abec4dad1baa08e55dac95abac894cd83` |
+| E.16 | `kernel_key_thumbprint` as a bare thumbprint, RFC 9278 URI prefix dropped | `b9840d4bc3397ffc7cfbac0fae0599df81094bd5bc5887238e9c85a599e4f187` |
+| E.16 | Thumbprint base64 (standard alphabet, padded) instead of base64url unpadded | `0fec448428fb446275fbc03ba2dd5ea38d2dc35c5e059c51b19b4865c8407476` |
+| E.16 | Raw public key in place of its hash — the thumbprint never computed | `81c346a15b2174adcb197c662bfbdaf88c51641395b132e4c5995d20a76503ec` |
+
+The last three rows are the v3 additions worth dwelling on. Dropping the URI prefix
+and using the wrong base64 alphabet are both what an implementer reaches for when
+reading "thumbprint" and skipping RFC 9278; and putting the raw key where its hash
+belongs is the shortcut that makes the document look self-verifying, which is
+exactly the failure mode ADR-0004 rejects the embedded-key design over. All three
+are well-formed JSON that a non-conforming implementation would sign happily.
 
 Every wrong choice yields a digest that is wrong in the ordinary way — completely
 different, immediately visible. None of them produces a near-miss, and none of them
@@ -355,7 +480,8 @@ digest that differs from the correct one only in the way every other error does.
 ## E.14 Conformance
 
 An implementation conforms to this document if and only if it reproduces all five
-frozen vectors byte-for-byte — both the digest and, from the given seed, the
+frozen vectors byte-for-byte (`mint_v1.json` is at v3; the other four are unchanged
+by ADR-0004 and were NOT re-frozen) — both the digest and, from the given seed, the
 Ed25519 signature. The vectors are the test; this document is the reason the test
 passes.
 

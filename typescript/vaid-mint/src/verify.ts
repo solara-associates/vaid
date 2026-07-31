@@ -27,11 +27,12 @@
  */
 
 import { ed25519Verify, numbersToBytes } from 'vaid-pop';
+import { isValidTrustDomain, kernelKeyThumbprint } from './issuerIdentity.js';
 
 import {
   canonicalVaidSigningBytes,
   computeLineageHash,
-  VAID_SIG_VERSION_V2,
+  VAID_SIG_VERSION_V3,
   type Vaid,
 } from './document.js';
 
@@ -72,7 +73,14 @@ export function verifyLineageHash(vaid: Vaid): boolean {
  * never a throw.
  */
 export function verifyVaidAuthenticity(kernelPublicKey: Uint8Array, vaid: Vaid): boolean {
-  if (vaid.sig_version !== VAID_SIG_VERSION_V2) return false;
+  if (vaid.sig_version !== VAID_SIG_VERSION_V3) return false;
+  if (!isValidTrustDomain(vaid.trust_domain)) return false;
+  // The v3 key-commitment check: does the document's thumbprint CORRESPOND to
+  // the key we were handed? Without it a caller could verify a document against a
+  // key the document never named, and "verified under some key we hold" is a
+  // verdict nobody can audit. Ordered before the signature check — one hash is
+  // cheaper than an Ed25519 verification already known to fail.
+  if (vaid.kernel_key_thumbprint !== kernelKeyThumbprint(kernelPublicKey)) return false;
   if (!verifyLineageHash(vaid)) return false;
   try {
     return ed25519Verify(

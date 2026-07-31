@@ -186,7 +186,9 @@ pub struct InMemoryRevocationList {
 impl InMemoryRevocationList {
     /// A store with **absent** state: it reports `Unavailable` until populated.
     pub fn new() -> Self {
-        Self { state: Mutex::new(None) }
+        Self {
+            state: Mutex::new(None),
+        }
     }
 
     /// A store that **vouches "nothing is revoked"** over an empty set.
@@ -201,7 +203,9 @@ impl InMemoryRevocationList {
     /// durable [`RevocationCheck`], or hold the store in [`new`](Self::new)/absent
     /// state until you have re-loaded revocation state into it.
     pub fn assume_nothing_revoked() -> Self {
-        Self { state: Mutex::new(Some(HashSet::new())) }
+        Self {
+            state: Mutex::new(Some(HashSet::new())),
+        }
     }
 
     /// Alias for [`new`](Self::new) that reads as intent at a call site — e.g.
@@ -226,7 +230,10 @@ impl InMemoryRevocationList {
     /// True when the store is vouching for its contents, false when its state is
     /// absent.
     pub fn is_available(&self) -> bool {
-        self.state.lock().expect("revocation lock not poisoned").is_some()
+        self.state
+            .lock()
+            .expect("revocation lock not poisoned")
+            .is_some()
     }
 }
 
@@ -264,9 +271,15 @@ mod tests {
     #[test]
     fn absent_store_is_unavailable_vouching_store_is_not_revoked() {
         let absent = InMemoryRevocationList::new();
-        assert_eq!(absent.check_lineage(&[VaidId::new()]), RevocationStatus::Unavailable);
+        assert_eq!(
+            absent.check_lineage(&[VaidId::new()]),
+            RevocationStatus::Unavailable
+        );
         let empty = InMemoryRevocationList::assume_nothing_revoked();
-        assert_eq!(empty.check_lineage(&[VaidId::new()]), RevocationStatus::NotRevoked);
+        assert_eq!(
+            empty.check_lineage(&[VaidId::new()]),
+            RevocationStatus::NotRevoked
+        );
     }
 
     #[test]
@@ -284,8 +297,14 @@ mod tests {
     #[test]
     fn mark_unavailable_flips_back_to_unavailable() {
         let list = InMemoryRevocationList::assume_nothing_revoked();
-        assert_eq!(list.check_lineage(&[VaidId::new()]), RevocationStatus::NotRevoked);
+        assert_eq!(
+            list.check_lineage(&[VaidId::new()]),
+            RevocationStatus::NotRevoked
+        );
         list.mark_unavailable();
-        assert_eq!(list.check_lineage(&[VaidId::new()]), RevocationStatus::Unavailable);
+        assert_eq!(
+            list.check_lineage(&[VaidId::new()]),
+            RevocationStatus::Unavailable
+        );
     }
 }

@@ -26,7 +26,10 @@ fn vstr(v: &Value, key: &str) -> String {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -121,7 +124,9 @@ impl OperatorSigningPort for SeedPort {
 #[tokio::test]
 async fn port_request_signer_matches_frozen_signature() {
     let v = vector();
-    let port = SeedPort { kp: seed_keypair(&v) };
+    let port = SeedPort {
+        kp: seed_keypair(&v),
+    };
     let signer = PortRequestSigner::from_vaid_json(vaid_json(&v).as_bytes(), &port).unwrap();
 
     let now = chrono::DateTime::parse_from_rfc3339(&vstr(&v, "timestamp"))

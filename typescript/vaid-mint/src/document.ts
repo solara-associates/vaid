@@ -45,7 +45,7 @@ export type { Rfc3339Utc, TenantId, VaidId } from 'vaid-pop';
  * verification. A document whose `sig_version` is not this value is rejected at
  * verify.
  */
-export const VAID_SIG_VERSION_V2 = 2;
+export const VAID_SIG_VERSION_V3 = 3;
 
 /** Unique identifier for an agent instance — a UUID string. */
 export type AgentId = string;
@@ -63,7 +63,7 @@ export type AgentClass = string;
  * Field names are snake_case on purpose — see the module docs.
  */
 export interface Vaid {
-  /** Signature-scheme discriminant; `2` for every VAID minted here. */
+  /** Signature-scheme discriminant; `3` for every VAID minted here. */
   sig_version: number;
   vaid_id: VaidId;
   agent_id: AgentId;
@@ -78,6 +78,19 @@ export interface Vaid {
   kernel_signature: number[];
   /** VAID of the spawning agent. Root agents have no parent (`null`). */
   parent_vaid: VaidId | null;
+  /**
+   * v3: the issuing deployment's trust domain — a constrained, DNS-shaped name
+   * (ADR-0004). Gives a verifier something to look `kernel_key_thumbprint` up
+   * **under**. Compared by byte equality, never normalized.
+   */
+  trust_domain: string;
+  /**
+   * v3: RFC 9278 thumbprint URI over the RFC 7638 JWK thumbprint of the kernel
+   * public key that signed this document. A commitment, not a key — you cannot
+   * verify a signature with a hash, so a verifier is structurally forced to
+   * source the key from elsewhere and the trust decision stays visible.
+   */
+  kernel_key_thumbprint: string;
   /** Data domains / resource namespaces this agent may operate within. */
   scope_boundary: string[];
   /** Hash of the parent VAID chain — enables delegation-tree reconstruction. */
@@ -135,9 +148,11 @@ export function buildUnsignedVaidDocument(fields: {
   scopeBoundary: readonly string[];
   lineageHash: string;
   capabilitySet: readonly string[];
+  trustDomain: string;
+  kernelKeyThumbprint: string;
 }): Vaid {
   return {
-    sig_version: VAID_SIG_VERSION_V2,
+    sig_version: VAID_SIG_VERSION_V3,
     vaid_id: fields.vaidId,
     agent_id: fields.agentId,
     agent_class: fields.agentClass,
@@ -151,12 +166,63 @@ export function buildUnsignedVaidDocument(fields: {
     scope_boundary: [...fields.scopeBoundary],
     lineage_hash: fields.lineageHash,
     capability_set: [...fields.capabilitySet],
+    trust_domain: fields.trustDomain,
+    kernel_key_thumbprint: fields.kernelKeyThumbprint,
   };
 }
 
-/** True once past `expires_at`. Mirror of Rust `Vaid::is_expired`. */
+/**
+ * The exact timestamp profile inside signed bytes (`docs/spec/encoding.md` E.6):
+ * whole-second RFC 3339 in UTC with a literal `Z`.
+ */
+const E6_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/**
+ * True once past `expires_at`. Mirror of Rust `Vaid::is_expired`.
+ *
+ * **Total: never throws** (issue #10). The three implementations disagreed here:
+ * Python raised `ValueError` on any timestamp that was valid RFC 3339 but not
+ * whole-second `Z`, while Rust and this returned a boolean. TypeScript inherited
+ * Rust's permissiveness by default rather than by decision, and
+ * majority-by-accident was becoming the de facto standard.
+ *
+ * Settled by splitting the surface rather than picking a winner: this stays total
+ * and answers only "is it past expiry"; {@link hasConformingTimestamps} answers
+ * the E.6 profile question explicitly.
+ *
+ * **An unparseable `expires_at` returns `true` — fail closed.** This is a
+ * behaviour change, and it fixes a latent fail-open: `Date.parse` returns `NaN`
+ * for garbage, and every comparison against `NaN` is `false`, so an unreadable
+ * expiry previously reported "not expired". A document whose expiry cannot be
+ * read is not a document that can be shown to be unexpired.
+ */
 export function isExpired(vaid: Vaid, now: Date = new Date()): boolean {
-  return now.getTime() > Date.parse(vaid.expires_at);
+  const expires = Date.parse(vaid.expires_at);
+  if (Number.isNaN(expires)) return true;
+  return now.getTime() > expires;
+}
+
+/**
+ * Do `issued_at` and `expires_at` match the E.6 profile exactly — whole-second
+ * RFC 3339 in UTC with a literal `Z`?
+ *
+ * The explicit half of the issue #10 split. E.6 says implementations SHOULD
+ * reject other forms rather than silently normalizing them; this is how a caller
+ * asks. Sub-second precision (`...:00.000Z`, which `Date.prototype.toISOString`
+ * emits by default, so this implementation gets it wrong unless it truncates) and
+ * a numeric offset (`+00:00`) are both valid RFC 3339 and both non-conforming.
+ *
+ * Not consulted by authenticity verification: a document that reached a verifier
+ * with a non-conforming timestamp will already fail the signature check, because
+ * the verifier re-serializes into the profile and recomputes different bytes.
+ * This exists so that failure can be *explained* rather than merely observed.
+ */
+export function hasConformingTimestamps(vaid: Vaid): boolean {
+  for (const value of [vaid.issued_at, vaid.expires_at]) {
+    if (typeof value !== "string" || !E6_TIMESTAMP.test(value)) return false;
+    if (Number.isNaN(Date.parse(value))) return false;
+  }
+  return true;
 }
 
 /**

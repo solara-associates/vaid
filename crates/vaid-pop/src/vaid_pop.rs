@@ -21,10 +21,9 @@ use sha2::{Digest, Sha256};
 /// exact byte string a holder signs and a verifier checks — both sides MUST
 /// derive it the same way, which is why it lives in one place.
 pub fn canonical_request_signing_bytes<T: Serialize>(payload: &T) -> Vec<u8> {
-    let value =
-        serde_json::to_value(payload).expect("request payload must be serde-serializable");
-    let canonical = serde_jcs::to_vec(&value)
-        .expect("RFC 8785 canonicalization of a valid Value cannot fail");
+    let value = serde_json::to_value(payload).expect("request payload must be serde-serializable");
+    let canonical =
+        serde_jcs::to_vec(&value).expect("RFC 8785 canonicalization of a valid Value cannot fail");
     let mut hasher = Sha256::new();
     hasher.update(&canonical);
     hasher.finalize().to_vec()
@@ -75,7 +74,11 @@ mod tests {
     }
 
     fn dummy() -> DummyPayload {
-        DummyPayload { a: "x".into(), b: 7, c: vec![1, 2, 3] }
+        DummyPayload {
+            a: "x".into(),
+            b: 7,
+            c: vec![1, 2, 3],
+        }
     }
 
     #[test]
@@ -111,7 +114,11 @@ mod tests {
         let kp = fresh_keypair();
         let pk = kp.public_key().as_ref().to_vec();
         let sig = sign_payload(&dummy(), &kp);
-        let tampered = DummyPayload { a: "x".into(), b: 8, c: vec![1, 2, 3] };
+        let tampered = DummyPayload {
+            a: "x".into(),
+            b: 8,
+            c: vec![1, 2, 3],
+        };
         assert!(!verify_signed_payload(&tampered, &pk, &sig));
     }
 

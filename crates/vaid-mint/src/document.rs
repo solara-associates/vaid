@@ -27,7 +27,14 @@ pub use vaid_pop::{TenantId, VaidId};
 /// a downgrade to a weaker payload cannot be forged without breaking
 /// verification. A document whose `sig_version` is not this value is rejected at
 /// verify.
-pub const VAID_SIG_VERSION_V2: u8 = 2;
+///
+/// **v3 (ADR-0004).** v3 adds `trust_domain` and `kernel_key_thumbprint`. The
+/// v2 constant is deliberately **removed** rather than retained: every use site
+/// becomes a compile error, so none is missed, and no code can accidentally
+/// accept a v2 document. There is no dual-version acceptance — a v2 document must
+/// not verify under a v3 verifier, because accepting both would recreate the very
+/// downgrade surface that signing `sig_version` exists to close.
+pub const VAID_SIG_VERSION_V3: u8 = 3;
 
 /// Unique identifier for an agent instance. Not part of the PoP signing contract,
 /// so it is defined here rather than in `vaid-pop`.
@@ -77,7 +84,8 @@ impl AgentClass {
 ///
 /// v2 fields: `parent_vaid` (delegation lineage), `scope_boundary` (data-domain
 /// restrictions), `lineage_hash` (parent-chain hash), `capability_set` (explicit
-/// grants). Every field except `kernel_signature` is covered by the signature.
+/// grants). v3 adds `trust_domain` and `kernel_key_thumbprint` (ADR-0004). Every
+/// field except `kernel_signature` is covered by the signature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vaid {
     /// Signature-scheme discriminant; `2` for every VAID minted here. Covered by
@@ -103,6 +111,18 @@ pub struct Vaid {
     lineage_hash: String,
     /// Explicit capability grants at spawn. No ambient authority.
     capability_set: Vec<String>,
+    /// v3: the issuing deployment's trust domain — a constrained, DNS-shaped
+    /// name (ADR-0004). Gives a verifier something to look `kernel_key_thumbprint`
+    /// up **under**; a thumbprint alone is selection with nothing to select
+    /// within. Compared by byte equality, never normalized.
+    trust_domain: String,
+    /// v3: RFC 9278 thumbprint URI over the RFC 7638 JWK thumbprint of the
+    /// kernel public key that signed this document. A commitment, not a key —
+    /// you cannot verify a signature with a hash, so a verifier is structurally
+    /// forced to source the key from elsewhere and the trust decision stays
+    /// visible. See ADR-0004 for why that failure mode, not circularity, is the
+    /// reason the key itself is not embedded.
+    kernel_key_thumbprint: String,
 }
 
 impl Vaid {
@@ -123,10 +143,12 @@ impl Vaid {
         scope_boundary: Vec<String>,
         lineage_hash: String,
         capability_set: Vec<String>,
+        trust_domain: String,
+        kernel_key_thumbprint: String,
     ) -> Self {
         let vaid_id = VaidId::from_uuid(*agent_id.as_uuid());
         Self {
-            sig_version: VAID_SIG_VERSION_V2,
+            sig_version: VAID_SIG_VERSION_V3,
             vaid_id,
             agent_id,
             agent_class,
@@ -140,6 +162,8 @@ impl Vaid {
             scope_boundary,
             lineage_hash,
             capability_set,
+            trust_domain,
+            kernel_key_thumbprint,
         }
     }
 
@@ -191,6 +215,12 @@ impl Vaid {
     }
     pub fn capability_set(&self) -> &[String] {
         &self.capability_set
+    }
+    pub fn trust_domain(&self) -> &str {
+        &self.trust_domain
+    }
+    pub fn kernel_key_thumbprint(&self) -> &str {
+        &self.kernel_key_thumbprint
     }
 
     /// True once past `expires_at`.
@@ -274,6 +304,8 @@ mod tests {
             scope.into_iter().map(String::from).collect(),
             "lineage".into(),
             caps.into_iter().map(String::from).collect(),
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
         )
     }
 

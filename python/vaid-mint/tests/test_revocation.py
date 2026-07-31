@@ -77,7 +77,7 @@ def test_in_memory_list_satisfies_the_protocol():
 
 def test1_bypass_revoking_parent_rejects_child():
     """Revoking a parent must revoke a child attenuated from it (R.4.4)."""
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     child = issue_child(issuer, root)
 
@@ -90,7 +90,7 @@ def test1_bypass_revoking_parent_rejects_child():
 
 def test2_restart_truncation_is_unavailable_not_notrevoked():
     """A cleared lineage map (restart) makes a child Unavailable, not NotRevoked."""
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     issuer.revoke(root["vaid_id"])
@@ -105,7 +105,7 @@ def test2_restart_truncation_is_unavailable_not_notrevoked():
 
 def test3_store_failure_is_unavailable_and_rejects():
     """An unreachable revocation store yields Unavailable and fails closed."""
-    issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_check(
         InMemoryRevocationList.unavailable()
     )
     vaid = issue_root(issuer)
@@ -117,7 +117,7 @@ def test3_store_failure_is_unavailable_and_rejects():
 def test4_rootless_clean_is_notrevoked_and_verifies():
     """A rootless VAID with nothing revoked is NotRevoked and verifies — the case
     tests 1 and 2 must not have broken."""
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     vaid = issue_root(issuer)
 
     assert issuer.revocation_status(vaid) is RevocationStatus.NOT_REVOKED
@@ -128,38 +128,38 @@ def test_cross_language_scenarios():
     """The (scenario -> status) table both languages agree on. Identical to the
     Rust ``cross_language_scenarios`` test."""
     # clean_root: rootless, nothing revoked        -> NOT_REVOKED
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     assert issuer.revocation_status(root) is RevocationStatus.NOT_REVOKED
 
     # revoked_root: rootless, itself revoked        -> REVOKED
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     issuer.revoke(root["vaid_id"])
     assert issuer.revocation_status(root) is RevocationStatus.REVOKED
 
     # child_parent_revoked: child of a revoked root -> REVOKED (R.4.4)
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     issuer.revoke(root["vaid_id"])
     assert issuer.revocation_status(child) is RevocationStatus.REVOKED
 
     # child_clean: child of a clean root            -> NOT_REVOKED
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     assert issuer.revocation_status(child) is RevocationStatus.NOT_REVOKED
 
     # child_parent_unresolvable: restart truncation -> UNAVAILABLE (R.4.2)
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     issuer.clear_lineage()
     assert issuer.revocation_status(child) is RevocationStatus.UNAVAILABLE
 
     # store_unavailable: store unreachable          -> UNAVAILABLE (R.4.3)
-    issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_check(
         InMemoryRevocationList.unavailable()
     )
     root = issue_root(issuer)
@@ -170,7 +170,7 @@ def test_cross_language_scenarios():
 
 
 def test_revocation_fails_verification():
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     vaid = issue_root(issuer)
     assert issuer.verify_vaid(vaid)
     issuer.revoke(vaid["vaid_id"])
@@ -179,7 +179,7 @@ def test_revocation_fails_verification():
 
 def test_expired_vaid_fails_verification():
     # A negative TTL issues a VAID already past its expiry.
-    issuer = ReferenceIssuer.ephemeral(-1)
+    issuer = ReferenceIssuer.ephemeral(-1, "vaid.example")
     vaid = issue_root(issuer)
     assert is_expired(vaid), "fixture must be expired"
     assert not issuer.verify_vaid(vaid), "an expired VAID must fail even with a valid signature"

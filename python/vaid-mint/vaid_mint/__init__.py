@@ -24,7 +24,7 @@ Usage::
 
     from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
 
-    issuer = ReferenceIssuer.ephemeral(24)
+    issuer = ReferenceIssuer.ephemeral(24, "vaid.example")
     mint = MintService(issuer, InMemoryAudit())
     vaid = mint.mint_root(VaidSeed(agent_class="orchestrator", version="1.0.0",
                                    tenant_id="acme", scope_boundary=["data.acme"],
@@ -35,12 +35,13 @@ Usage::
 from vaid_mint.audit import AuditEntry, AuditSink, InMemoryAudit, NoopAudit
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V2,
+    VAID_SIG_VERSION_V3,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
     has_capability,
     is_expired,
+    has_conforming_timestamps,
     is_in_scope,
 )
 from vaid_mint.error import AuditError, IdentityError, MintError, UnauthorizedError
@@ -73,10 +74,11 @@ __all__ = [
     "build_unsigned_vaid_document",
     "is_in_scope",
     "is_expired",
+    "has_conforming_timestamps",
     "has_capability",
     "scope_attenuates",
     "caps_attenuate",
-    "VAID_SIG_VERSION_V2",
+    "VAID_SIG_VERSION_V3",
     "MINT_POP_FRESHNESS_SECS",
     "DEFAULT_VAID_TTL_HOURS",
     "RevocationCheck",
@@ -100,4 +102,4 @@ __all__ = [
     "AuditError",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
