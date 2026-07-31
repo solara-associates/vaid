@@ -128,7 +128,15 @@ fn main() {
                      and SHA-256; and (given the kernel seed) reproduce `ed25519.signature_hex` \
                      byte-for-byte. `input.lineage_hash` MUST equal \
                      sha256_hex(parent_vaid==null ? 'GENESIS:{agent_id}' : '{parent_vaid}:{agent_id}'), \
-                     and `input.vaid_id` MUST equal `input.agent_id`. Any drift is a break. \
+                     and `input.vaid_id` MUST equal `input.agent_id`. v3 (ADR-0004) adds `trust_domain` and \
+                     `kernel_key_thumbprint`: the thumbprint MUST equal the RFC 9278 URI over the \
+                     RFC 7638 JWK thumbprint of `ed25519.kernel_public_key_hex`, so a conforming \
+                     verifier can check the document commits to the key that signed it. \
+                     `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this vector publishes \
+                     its own kernel private seed, so anyone can sign documents under it — a real \
+                     trust domain here would be a published forgery generator for that deployment. \
+                     RFC 2606 reserves `.example`, and a conforming verifier SHOULD refuse to bind \
+                     a trust bundle to a special-use name. Any drift is a break. \
                      SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against \
                      the closed VAID format.",
         "scheme": "JCS(RFC8785) over the full VAID document with kernel_signature nulled -> \
