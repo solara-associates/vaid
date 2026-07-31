@@ -1,0 +1,59 @@
+{
+  "_comment": "Mint proof-of-possession conformance vector (v1). Load-bearing. `input` is a real MintPopPayload (#[serde(rename_all=camelCase)]) — the payload a holder signs to prove it controls the BYO public key it registers at mint. A conforming implementation MUST produce `digest_sha256_hex` from `input` via JCS (RFC 8785) -> SHA-256, and (given `ed25519.private_key_seed_hex`) reproduce `ed25519.signature_hex` byte-for-byte. TWO THINGS THIS VECTOR PINS THAT NO OTHER DOES: (1) it is the ROOT case, so `parentVaid` is JSON **null** — the only null in any frozen vector, pinning docs/spec/encoding.md E.7 (an absent value is null with its key retained, NEVER an omitted key); (2) `publicKeyDer` IS the public half of the signing seed, so the signature verifies against the key being registered — the whole semantic content of proof-of-possession, checkable end-to-end via verify_signed_payload. Before this vector existed, MintPopPayload was the one signed structure with no frozen artifact (encoding.md E.11): the implementations agreed by construction, not by proof.",
+  "digest_sha256_hex": "5360ff1f70ea39b3bca277301f9d0a8f9280e8530d32a405bc25b1b46dcf810c",
+  "ed25519": {
+    "_comment": "Deterministic holder key (same RFC 8032 seed as operator_pop_v1.json). NOTE the difference from mint_v1.json: here the public key is not an independent value but exactly `input.publicKeyDer`, because a proof-of-possession signs FOR the key it registers.",
+    "private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "signature_hex": "4d041f769bf1e9abd3b183ea8136a66b5027b267931898eb9ebd710c932143399fe76c88c6d2518811687f860f665eb2e7d1733d38d05db720021d6b749d2301"
+  },
+  "input": {
+    "agentClass": "runner",
+    "capabilitySet": [
+      "read"
+    ],
+    "issuedAt": "2026-06-04T12:00:00Z",
+    "nonce": "0123456789abcdef0123456789abcdef",
+    "parentVaid": null,
+    "publicKeyDer": [
+      3,
+      161,
+      7,
+      191,
+      243,
+      206,
+      16,
+      190,
+      29,
+      112,
+      221,
+      24,
+      231,
+      75,
+      192,
+      153,
+      103,
+      228,
+      214,
+      48,
+      155,
+      165,
+      13,
+      95,
+      29,
+      220,
+      134,
+      100,
+      18,
+      85,
+      49,
+      184
+    ],
+    "scopeBoundary": [
+      "data.aifactory"
+    ],
+    "tenantId": "aifactory",
+    "version": "1.0.0"
+  },
+  "scheme": "JCS(RFC8785) over the camelCase MintPopPayload -> SHA-256 -> pure Ed25519 over the 32-byte digest as raw message; raw 64-byte signature; raw 32-byte Ed25519 public key. Byte-valued fields (publicKeyDer) are arrays of numbers, per docs/spec/encoding.md E.4."
+}

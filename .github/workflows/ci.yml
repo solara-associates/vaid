@@ -45,8 +45,25 @@ jobs:
       - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain)
         run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain
 
+  typescript:
+    name: TypeScript conformance (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install workspace (vaid-pop + vaid-mint + vaid-client)
+        run: npm ci --prefix typescript
+      - name: Build in dependency order (vaid-pop -> vaid-mint -> vaid-client)
+        run: npm run build --prefix typescript
+      - name: node --test conformance suite (vaid-pop + vaid-mint + vaid-client)
+        run: npm test --prefix typescript
+
   conformance-drift:
-    name: PoP conformance drift-check (Rust == Python == vector, byte-identical)
+    name: PoP conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -60,6 +77,12 @@ jobs:
           cmp \
             crates/vaid-client/tests/vectors/operator_pop_v1.json \
             python/vaid-pop/vaid_pop/vectors/operator_pop_v1.json
+          cmp \
+            crates/vaid-client/tests/vectors/operator_pop_v1.json \
+            typescript/vaid-pop/vectors/operator_pop_v1.json
+          cmp \
+            crates/vaid-client/tests/vectors/operator_pop_v1.json \
+            typescript/vaid-client/vectors/operator_pop_v1.json
       # (b) Re-run BOTH conformance suites against their vendored vectors so this
       # single job proves: Rust output == vector AND Python output == vector, and
       # (via the cmp above) the two vectors are the same bytes ⇒ Rust == Python.
@@ -77,9 +100,17 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install "./python/vaid-pop[test]"
       - name: Python conformance gate (pytest)
         run: python -m pytest python/vaid-pop/tests/test_conformance.py
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install + build TypeScript workspace
+        run: npm ci --prefix typescript && npm run build --prefix typescript
+      - name: TypeScript conformance gate (packaged firewall)
+        run: node typescript/vaid-pop/dist/bin/conformance.js
 
   mint-conformance-drift:
-    name: Mint conformance drift-check (Rust == Python == vector, byte-identical)
+    name: Mint conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -90,6 +121,9 @@ jobs:
           cmp \
             crates/vaid-mint/tests/vectors/mint_v1.json \
             python/vaid-mint/vaid_mint/vectors/mint_v1.json
+          cmp \
+            crates/vaid-mint/tests/vectors/mint_v1.json \
+            typescript/vaid-mint/vectors/mint_v1.json
       # (b) Re-run BOTH mint conformance gates against their vendored vectors:
       # Rust output == vector AND Python output == vector, and (via cmp) the two
       # vectors are the same bytes ⇒ Rust == Python. Self-consistent within this
@@ -111,9 +145,66 @@ jobs:
           python -m pip install "./python/vaid-mint[test]"
       - name: Python mint conformance gate (pytest)
         run: python -m pytest python/vaid-mint/tests/test_mint_conformance.py
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install + build TypeScript workspace
+        run: npm ci --prefix typescript && npm run build --prefix typescript
+      - name: TypeScript mint conformance gate (packaged firewall)
+        run: node typescript/vaid-mint/dist/bin/conformance.js
+
+  mint-pop-conformance-drift:
+    name: Mint-PoP drift-check (Rust == Python == TypeScript == vector, byte-identical)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # (a) All three vendored copies of the mint-PoP vector MUST be identical.
+      # This vector pins `MintPopPayload` — until it was frozen, that was the one
+      # SIGNED structure with no artifact holding the implementations to it
+      # (docs/spec/encoding.md E.11), and it is the only vector carrying a JSON
+      # null (E.7).
+      - name: Cross-language mint-PoP-vector byte-identity (cmp)
+        run: |
+          cmp \
+            crates/vaid-mint/tests/vectors/mint_pop_v1.json \
+            python/vaid-mint/vaid_mint/vectors/mint_pop_v1.json
+          cmp \
+            crates/vaid-mint/tests/vectors/mint_pop_v1.json \
+            typescript/vaid-mint/vectors/mint_pop_v1.json
+      # (b) Re-run all three gates against their vendored copies ⇒ each language's
+      # output == vector, and (via cmp) the copies are the same bytes.
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: Rust mint-PoP conformance gate (cargo test -p vaid-mint --test mint_pop_conformance)
+        run: cargo test -p vaid-mint --test mint_pop_conformance --locked
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install vaid-pop + vaid-mint + test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python/vaid-pop[test]"
+          python -m pip install "./python/vaid-mint[test]"
+      - name: Python mint-PoP conformance gate (pytest)
+        run: python -m pytest python/vaid-mint/tests/test_mint_pop_conformance.py
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install + build TypeScript workspace
+        run: npm ci --prefix typescript && npm run build --prefix typescript
+      # The packaged vaid-mint firewall checks both the document and the mint-PoP
+      # vector.
+      - name: TypeScript mint-PoP conformance gate (packaged firewall)
+        run: node typescript/vaid-mint/dist/bin/conformance.js
 
   pathquery-conformance-drift:
-    name: Path-with-query drift-check (Rust == Python == vector, byte-identical)
+    name: Path-with-query drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -124,6 +215,9 @@ jobs:
           cmp \
             crates/vaid-client/tests/vectors/pathquery_v1.json \
             python/vaid-langchain/vaid_langchain/vectors/pathquery_v1.json
+          cmp \
+            crates/vaid-client/tests/vectors/pathquery_v1.json \
+            typescript/vaid-client/vectors/pathquery_v1.json
       # (b) Re-run BOTH gates against their vendored copies ⇒ Rust == Python ==
       # vector for the pinned path+query signing convention.
       - name: Install Rust toolchain (pinned to rust-toolchain.toml)
@@ -143,9 +237,17 @@ jobs:
           python -m pip install "./python/vaid-langchain[test]"
       - name: Python pathquery conformance gate (pytest)
         run: python -m pytest python/vaid-langchain/tests/test_path_convention.py
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install + build TypeScript workspace
+        run: npm ci --prefix typescript && npm run build --prefix typescript
+      - name: TypeScript pathquery conformance gate (packaged firewall)
+        run: node typescript/vaid-client/dist/bin/conformance.js
 
   completion-conformance-drift:
-    name: Completion-record drift-check (Rust == Python == vector, byte-identical)
+    name: Completion-record drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -156,6 +258,9 @@ jobs:
           cmp \
             crates/vaid-pop/tests/vectors/completion_v1.json \
             python/vaid-pop/vaid_pop/vectors/completion_v1.json
+          cmp \
+            crates/vaid-pop/tests/vectors/completion_v1.json \
+            typescript/vaid-pop/vectors/completion_v1.json
       # (b) Re-run BOTH gates ⇒ Rust == Python == vector for the completion record,
       # including the AssuranceTier enum-string drift guard (first vector w/ enum).
       - name: Install Rust toolchain (pinned to rust-toolchain.toml)
@@ -172,6 +277,16 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install "./python/vaid-pop[test]"
       - name: Python completion conformance gate (pytest)
         run: python -m pytest python/vaid-pop/tests/test_completion_conformance.py
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install + build TypeScript workspace
+        run: npm ci --prefix typescript && npm run build --prefix typescript
+      # The packaged vaid-pop firewall covers the completion record, including the
+      # AssuranceTier enum-string drift guard.
+      - name: TypeScript completion conformance gate (packaged firewall)
+        run: node typescript/vaid-pop/dist/bin/conformance.js
 
   capabilities:
     name: Capabilities manifest & claims-register verified
@@ -183,5 +298,10 @@ jobs:
         run: node scripts/verify-capabilities.mjs
       - name: Verify docs/claims-register.json freshness (age budget + backing)
         run: node scripts/verify-claims.mjs
+      # Local, no network: every package must agree WITH ITSELF (manifest vs code
+      # constant vs changelog). Runs BEFORE the registry check — a package that
+      # contradicts itself makes the registry answer meaningless.
+      - name: Verify each package agrees with itself (internal version agreement)
+        run: node scripts/verify-internal-versions.mjs
       - name: Verify in-repo package versions are published (registry parity)
         run: node scripts/verify-package-versions.mjs
