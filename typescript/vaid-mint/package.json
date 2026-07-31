@@ -53,7 +53,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "vaid-pop": "^0.2.0"
+    "vaid-pop": "^0.3.0"
   },
   "engines": {
     "node": ">=20.19.0"
