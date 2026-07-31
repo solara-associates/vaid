@@ -23,6 +23,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { THUMBPRINT_URI_PREFIX } from '../src/issuerIdentity.js';
+
 import { canonicalize, ed25519PublicKey, ed25519Sign, fromHex, sha256, toHex } from 'vaid-pop';
 
 import { canonicalVaidSigningBytes, computeLineageHash } from '../src/index.js';
@@ -115,7 +117,10 @@ test('every signed field is covered — a one-field change breaks the digest', (
   // Walks the document rather than spot-checking, so a future field added to the
   // struct cannot be silently left outside the coverage this test claims.
   const mutations: Record<string, unknown> = {
-    sig_version: 3,
+    // Must NOT be the document's real value, or the "mutation" is a no-op and
+    // the assertion below passes vacuously. It read `3` while the document was
+    // v2; the v3 bump made the two coincide, and this test caught it.
+    sig_version: 4,
     vaid_id: '22222222-2222-2222-2222-222222222222',
     agent_id: '22222222-2222-2222-2222-222222222222',
     agent_class: 'other',
@@ -128,6 +133,8 @@ test('every signed field is covered — a one-field change breaks the digest', (
     scope_boundary: ['data.aifactory.sub', 'data.everything'],
     lineage_hash: '0'.repeat(64),
     capability_set: ['read', 'write'],
+    trust_domain: 'other.example',
+    kernel_key_thumbprint: `${THUMBPRINT_URI_PREFIX}AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
   };
 
   for (const key of Object.keys(document)) {
