@@ -29,6 +29,8 @@
  * caller that needs to distinguish "forged" from "expired" beforehand.
  */
 
+import { MintError } from './error.js';
+import { isValidTrustDomain, kernelKeyThumbprint } from './issuerIdentity.js';
 import {
   ed25519PublicKey,
   ed25519Sign,
@@ -47,7 +49,7 @@ import {
   canonicalVaidSigningBytes,
   computeLineageHash,
   isExpired,
-  VAID_SIG_VERSION_V2,
+  VAID_SIG_VERSION_V3,
   type AgentClass,
   type Vaid,
 } from './document.js';
@@ -120,6 +122,14 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   readonly #kernelSeed: Ed25519Seed;
   readonly #kernelPublicKey: Uint8Array;
   readonly #vaidTtlHours: number;
+
+  /**
+   * v3: the trust domain stamped into every VAID this issuer mints (ADR-0004).
+   * Validated at construction. The companion thumbprint is NOT stored — it is
+   * derived from the kernel key at mint time, so it cannot disagree with the key
+   * that signs.
+   */
+  readonly #trustDomain: string;
   /**
    * Every minted VAID: the parent id for a child, `null` for a root. Recording
    * roots (not just children) is what lets {@link resolveParent} distinguish a
@@ -135,10 +145,21 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   /** The revocation store consulted in {@link verifyVaid}. */
   #revocation: RevocationCheck;
 
-  private constructor(kernelSeed: Ed25519Seed, vaidTtlHours: number) {
+  private constructor(kernelSeed: Ed25519Seed, vaidTtlHours: number, trustDomain: string) {
+    if (!isValidTrustDomain(trustDomain)) {
+      // Reject at construction, not at mint: an issuer whose every output would
+      // fail verification is not a useful object to hold.
+      throw new MintError(
+        `trust_domain ${JSON.stringify(trustDomain)} is not well-formed (ADR-0004): ` +
+          "lowercase ASCII letters, digits, '-' and '.'; at least two labels; each 1-63 " +
+          "bytes without a leading or trailing '-'; no trailing dot; 1-253 bytes total; " +
+          'final label not all-numeric',
+      );
+    }
     this.#kernelSeed = kernelSeed;
     this.#kernelPublicKey = ed25519PublicKey(kernelSeed);
     this.#vaidTtlHours = vaidTtlHours;
+    this.#trustDomain = trustDomain;
     // Default revocation posture: assume-nothing-revoked, so a live issuer
     // vouches "nothing revoked yet" and a fresh, un-revoked VAID verifies out of
     // the box rather than failing closed on Unavailable. RESTART BEHAVIOUR: this
@@ -156,8 +177,11 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * issuer verify only for this process's lifetime — the key is not persisted.
    * The zero-config default for local self-hosting and tests.
    */
-  static ephemeral(vaidTtlHours: number = DEFAULT_VAID_TTL_HOURS): ReferenceIssuer {
-    return new ReferenceIssuer(randomEd25519Seed(), vaidTtlHours);
+  static ephemeral(
+    vaidTtlHours: number = DEFAULT_VAID_TTL_HOURS,
+    trustDomain = 'vaid.example',
+  ): ReferenceIssuer {
+    return new ReferenceIssuer(randomEd25519Seed(), vaidTtlHours, trustDomain);
   }
 
   /**
@@ -166,11 +190,15 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * path deterministic conformance vectors use, where every language must derive
    * the identical kernel key and produce identical signatures.
    */
-  static fromSeed(seed: Uint8Array, vaidTtlHours: number = DEFAULT_VAID_TTL_HOURS): ReferenceIssuer {
+  static fromSeed(
+    seed: Uint8Array,
+    vaidTtlHours: number = DEFAULT_VAID_TTL_HOURS,
+    trustDomain = 'vaid.example',
+  ): ReferenceIssuer {
     if (seed.length !== 32) {
       throw new RangeError(`kernel seed must be 32 bytes, got ${seed.length}`);
     }
-    return new ReferenceIssuer(seed, vaidTtlHours);
+    return new ReferenceIssuer(seed, vaidTtlHours, trustDomain);
   }
 
   /**
@@ -260,6 +288,10 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
       scopeBoundary: attributes.scopeBoundary,
       lineageHash,
       capabilitySet: attributes.capabilitySet,
+      trustDomain: this.#trustDomain,
+      // Derived from the signing key itself, never supplied: the thumbprint
+      // cannot disagree with the key that is about to sign.
+      kernelKeyThumbprint: kernelKeyThumbprint(this.kernelPublicKey()),
     });
     const signature = ed25519Sign(canonicalVaidSigningBytes(unsigned), this.#kernelSeed);
     const vaid: Vaid = { ...unsigned, kernel_signature: Array.from(signature) };
@@ -283,7 +315,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   }
 
   verifyVaid(vaid: Vaid): boolean {
-    if (vaid.sig_version !== VAID_SIG_VERSION_V2) return false;
+    if (vaid.sig_version !== VAID_SIG_VERSION_V3) return false;
     // TTL is enforced as a hard reject, not merely reported: an expired VAID
     // fails verification even with a valid kernel signature.
     if (isExpired(vaid)) return false;

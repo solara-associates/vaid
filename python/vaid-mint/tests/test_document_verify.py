@@ -22,7 +22,7 @@ MINT_VECTOR = Path(__file__).resolve().parents[1] / "vaid_mint" / "vectors" / "m
 
 
 def _public_key_and_doc() -> tuple[bytes, dict]:
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     vaid = issuer.issue_vaid_with_lineage(
         agent_class="root",
         version="1.0.0",
@@ -49,7 +49,7 @@ def test_tampered_document_fails():
 
 def test_a_different_key_does_not_verify():
     _pk, vaid = _public_key_and_doc()
-    other = ReferenceIssuer.ephemeral(1).kernel_public_key()
+    other = ReferenceIssuer.ephemeral(1, "vaid.example").kernel_public_key()
     assert not verify_vaid_authenticity(other, vaid), "another issuer's key must not verify it"
 
 

@@ -1,6 +1,6 @@
 {
   "name": "vaid-client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The VAID proof-of-possession request signer (TypeScript): signs requests into the four x-synthera-* PoP headers, byte-identical to the Rust and Python clients.",
   "keywords": [
     "synthera",

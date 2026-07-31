@@ -26,6 +26,7 @@ from vaid_mint import (
     is_in_scope,
 )
 from vaid_mint.error import IdentityError, UnauthorizedError
+from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.mint_types import MintPop
 
 
@@ -34,7 +35,7 @@ from vaid_mint.mint_types import MintPop
 
 def fixture():
     audit = InMemoryAudit()
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     return MintService(issuer, audit), audit, issuer
 
 
@@ -81,6 +82,8 @@ def parent_doc(tenant, scope, caps) -> dict:
         scope_boundary=list(scope),
         lineage_hash="lineage",
         capability_set=list(caps),
+        trust_domain="vaid.example",
+        kernel_key_thumbprint=kernel_key_thumbprint(bytes(32)),
     )
 
 
@@ -165,7 +168,7 @@ def test_root_byo_key_replay_is_rejected():
 
 def test_root_mint_denied_by_gate_has_no_side_effects():
     audit = InMemoryAudit()
-    svc = MintService(ReferenceIssuer.ephemeral(1), audit, DenyAll())
+    svc = MintService(ReferenceIssuer.ephemeral(1, "vaid.example"), audit, DenyAll())
     seed = VaidSeed(agent_class="x", version="1.0.0", tenant_id="acme")
     with pytest.raises(UnauthorizedError, match="denied by gate"):
         svc.mint_root(seed)
@@ -285,7 +288,7 @@ def test_rejected_attenuation_does_not_consume_the_pop_nonce():
 
 def test_minted_child_verifies_and_is_contained_by_parent():
     audit = InMemoryAudit()
-    issuer = ReferenceIssuer.ephemeral(1)
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     svc = MintService(issuer, audit)
     # Mint a REAL parent root through the issuer, so its lineage is recorded and the
     # child's ancestry is resolvable at verification (R.4.2). A synthetic parent
