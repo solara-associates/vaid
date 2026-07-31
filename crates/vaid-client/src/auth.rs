@@ -90,7 +90,11 @@ impl PopIdentity {
         // A verifier re-deserializes the VAID by field and recomputes its own
         // canonical bytes, so carrying the document bytes verbatim is correct.
         let vaid_header = base64::engine::general_purpose::STANDARD.encode(vaid_json);
-        Ok(Self { vaid_header, vaid_id: id.vaid_id, tenant_id: id.tenant_id })
+        Ok(Self {
+            vaid_header,
+            vaid_id: id.vaid_id,
+            tenant_id: id.tenant_id,
+        })
     }
 
     /// Build the canonical payload + the whole-second timestamp string for a
@@ -106,7 +110,9 @@ impl PopIdentity {
         now: DateTime<Utc>,
         nonce: &str,
     ) -> (RequestAuthPayload, String) {
-        let now = now.with_nanosecond(0).expect("zero nanoseconds is always valid");
+        let now = now
+            .with_nanosecond(0)
+            .expect("zero nanoseconds is always valid");
         let timestamp = now.to_rfc3339_opts(SecondsFormat::Secs, true);
         let payload = RequestAuthPayload {
             vaid_id: self.vaid_id,
@@ -140,7 +146,10 @@ pub struct RequestSigner {
 impl RequestSigner {
     /// Construct from the minted VAID document JSON and the agent's key pair.
     pub fn from_vaid_json(vaid_json: &[u8], key: Ed25519KeyPair) -> Result<Self, PopError> {
-        Ok(Self { identity: PopIdentity::from_vaid_json(vaid_json)?, key })
+        Ok(Self {
+            identity: PopIdentity::from_vaid_json(vaid_json)?,
+            key,
+        })
     }
 
     /// Produce the four PoP headers for `(method, path, body)`, generating a
@@ -167,7 +176,9 @@ impl RequestSigner {
         let (payload, timestamp) = self.identity.payload(method, path, body, now, nonce);
         // Reuse the shared primitive: canonicalize + sign in one call.
         let signature = sign_payload(&payload, &self.key);
-        Ok(self.identity.headers(timestamp, nonce.to_string(), &signature))
+        Ok(self
+            .identity
+            .headers(timestamp, nonce.to_string(), &signature))
     }
 }
 
@@ -186,7 +197,10 @@ impl<'a> PortRequestSigner<'a> {
         vaid_json: &[u8],
         port: &'a dyn OperatorSigningPort,
     ) -> Result<Self, PopError> {
-        Ok(Self { identity: PopIdentity::from_vaid_json(vaid_json)?, port })
+        Ok(Self {
+            identity: PopIdentity::from_vaid_json(vaid_json)?,
+            port,
+        })
     }
 
     /// Produce the four PoP headers, generating a fresh nonce + current timestamp.
@@ -196,7 +210,8 @@ impl<'a> PortRequestSigner<'a> {
         path: &str,
         body: &[u8],
     ) -> Result<PopHeaders, PopError> {
-        self.sign_headers_at(method, path, body, Utc::now(), &fresh_nonce()?).await
+        self.sign_headers_at(method, path, body, Utc::now(), &fresh_nonce()?)
+            .await
     }
 
     /// Deterministic variant: caller supplies `now` + `nonce`.
@@ -216,7 +231,9 @@ impl<'a> PortRequestSigner<'a> {
             .sign(&digest)
             .await
             .map_err(|e| PopError::Signing(e.to_string()))?;
-        Ok(self.identity.headers(timestamp, nonce.to_string(), &signature))
+        Ok(self
+            .identity
+            .headers(timestamp, nonce.to_string(), &signature))
     }
 }
 

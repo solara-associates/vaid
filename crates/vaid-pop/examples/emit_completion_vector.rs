@@ -16,7 +16,10 @@ use vaid_pop::request_completion::{AssuranceTier, CompletionRecord};
 use vaid_pop::vaid_pop::canonical_request_signing_bytes;
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 fn to_hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -26,8 +29,7 @@ fn main() {
     const KERNEL_SEED_HEX: &str =
         "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
     // sha256("") — the empty result body.
-    const EMPTY_SHA256: &str =
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     // The operator vector's request digest — the request this completion attests.
     const OPERATOR_REQUEST_DIGEST: &str =
         "ee474ba87d703ebeacf663d7d6a2f15319bdef285c5b702e336d0f4af5b61327";

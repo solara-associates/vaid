@@ -136,7 +136,10 @@ impl MintService {
         // (3) Replay — atomic check-and-insert. `insert` returns false if the
         // nonce was already present. Record before accepting the signature.
         {
-            let mut nonces = self.consumed_pop_nonces.lock().expect("nonce lock not poisoned");
+            let mut nonces = self
+                .consumed_pop_nonces
+                .lock()
+                .expect("nonce lock not poisoned");
             if !nonces.insert(pop.nonce.clone()) {
                 return Err(MintError::Identity(
                     "PoP nonce already used — replay rejected".into(),
@@ -340,7 +343,7 @@ mod tests {
 
     fn fixture() -> (MintService, Arc<InMemoryAudit>) {
         let audit = Arc::new(InMemoryAudit::new());
-        let issuer = Arc::new(ReferenceIssuer::ephemeral(1).unwrap());
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
         let svc = MintService::new(issuer, audit.clone());
         (svc, audit)
     }
@@ -427,7 +430,7 @@ mod tests {
         }
 
         let audit = Arc::new(InMemoryAudit::new());
-        let issuer = Arc::new(ReferenceIssuer::ephemeral(1).unwrap());
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
         let svc = MintService::with_authorization(issuer, audit.clone(), Arc::new(DenyAll));
 
         let req = MintVaidRequest {
@@ -455,7 +458,13 @@ mod tests {
         let seed = byo_seed(registered.clone());
         let pop = make_pop(&seed, &registered, &kp, "nonce-aaa", Utc::now());
 
-        let resp = svc.mint_root(MintVaidRequest { seed, pop: Some(pop) }).await.unwrap();
+        let resp = svc
+            .mint_root(MintVaidRequest {
+                seed,
+                pop: Some(pop),
+            })
+            .await
+            .unwrap();
         assert_eq!(resp.vaid.public_key_der(), registered.as_slice());
         assert_eq!(audit.entries()[0].details["byo_key"], json!(true));
         assert_eq!(audit.entries()[0].details["pop_verified"], json!(true));
@@ -471,7 +480,13 @@ mod tests {
         let seed = byo_seed(victim_pub.clone());
         let pop = make_pop(&seed, &victim_pub, &attacker, "nonce-bbb", Utc::now());
 
-        let err = svc.mint_root(MintVaidRequest { seed, pop: Some(pop) }).await.unwrap_err();
+        let err = svc
+            .mint_root(MintVaidRequest {
+                seed,
+                pop: Some(pop),
+            })
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("does not verify"), "got: {err}");
         assert!(audit.is_empty(), "no VAID minted → no audit");
     }
@@ -480,8 +495,14 @@ mod tests {
     async fn root_byo_key_without_pop_is_rejected() {
         let (svc, _) = fixture();
         let seed = byo_seed(pubkey(&holder_keypair()));
-        let err = svc.mint_root(MintVaidRequest { seed, pop: None }).await.unwrap_err();
-        assert!(err.to_string().contains("proof-of-possession required"), "got: {err}");
+        let err = svc
+            .mint_root(MintVaidRequest { seed, pop: None })
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("proof-of-possession required"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -493,10 +514,18 @@ mod tests {
         let pop = make_pop(&seed, &registered, &kp, "nonce-replay", Utc::now());
 
         let first = svc
-            .mint_root(MintVaidRequest { seed: seed.clone(), pop: Some(pop.clone()) })
+            .mint_root(MintVaidRequest {
+                seed: seed.clone(),
+                pop: Some(pop.clone()),
+            })
             .await;
         assert!(first.is_ok());
-        let replay = svc.mint_root(MintVaidRequest { seed, pop: Some(pop) }).await;
+        let replay = svc
+            .mint_root(MintVaidRequest {
+                seed,
+                pop: Some(pop),
+            })
+            .await;
         assert!(replay.unwrap_err().to_string().contains("replay"));
     }
 
@@ -508,7 +537,13 @@ mod tests {
         let seed = byo_seed(registered.clone());
         let stale = Utc::now() - chrono::Duration::seconds(MINT_POP_FRESHNESS_SECS + 60);
         let pop = make_pop(&seed, &registered, &kp, "nonce-stale", stale);
-        let err = svc.mint_root(MintVaidRequest { seed, pop: Some(pop) }).await.unwrap_err();
+        let err = svc
+            .mint_root(MintVaidRequest {
+                seed,
+                pop: Some(pop),
+            })
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("freshness window"), "got: {err}");
     }
 
@@ -530,10 +565,17 @@ mod tests {
             scope.into_iter().map(String::from).collect(),
             "lineage".into(),
             caps.into_iter().map(String::from).collect(),
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
         )
     }
 
-    fn child_seed(parent: &Vaid, scope: Vec<&str>, caps: Vec<&str>, child_pub: Vec<u8>) -> VaidSeed {
+    fn child_seed(
+        parent: &Vaid,
+        scope: Vec<&str>,
+        caps: Vec<&str>,
+        child_pub: Vec<u8>,
+    ) -> VaidSeed {
         VaidSeed {
             agent_class: "child".into(),
             version: "1.0.0".into(),
@@ -555,7 +597,10 @@ mod tests {
         let pubk = pubkey(&kp);
         let seed = child_seed(parent, scope, caps, pubk.clone());
         let pop = make_pop(&seed, &pubk, &kp, nonce, Utc::now());
-        MintVaidRequest { seed, pop: Some(pop) }
+        MintVaidRequest {
+            seed,
+            pop: Some(pop),
+        }
     }
 
     #[tokio::test]
@@ -565,18 +610,33 @@ mod tests {
         let req = signed_child(&parent, vec!["data.aifactory.sub"], vec!["read"], "ok-1");
 
         let resp = svc.mint_child(req, Some(&parent)).await.unwrap();
-        assert_eq!(resp.vaid.parent_vaid(), Some(parent.vaid_id()), "lineage bound");
+        assert_eq!(
+            resp.vaid.parent_vaid(),
+            Some(parent.vaid_id()),
+            "lineage bound"
+        );
         assert_eq!(audit.entries()[0].details["delegated"], json!(true));
-        assert_eq!(audit.entries()[0].details["attenuation_verified"], json!(true));
+        assert_eq!(
+            audit.entries()[0].details["attenuation_verified"],
+            json!(true)
+        );
     }
 
     #[tokio::test]
     async fn child_scope_exceeding_parent_is_denied() {
         let (svc, audit) = fixture();
         let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
-        let req = signed_child(&parent, vec!["data.somewhere-else"], vec!["read"], "deny-scope");
+        let req = signed_child(
+            &parent,
+            vec!["data.somewhere-else"],
+            vec!["read"],
+            "deny-scope",
+        );
         let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
-        assert!(err.to_string().contains("scope_boundary exceeds"), "got: {err}");
+        assert!(
+            err.to_string().contains("scope_boundary exceeds"),
+            "got: {err}"
+        );
         assert!(audit.is_empty());
     }
 
@@ -586,7 +646,10 @@ mod tests {
         let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
         let req = signed_child(&parent, vec![], vec!["read"], "deny-empty-scope");
         let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
-        assert!(err.to_string().contains("scope_boundary exceeds"), "got: {err}");
+        assert!(
+            err.to_string().contains("scope_boundary exceeds"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -603,9 +666,17 @@ mod tests {
     async fn child_caps_exceeding_parent_are_denied() {
         let (svc, _) = fixture();
         let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
-        let req = signed_child(&parent, vec!["data.aifactory.sub"], vec!["read", "write"], "deny-caps");
+        let req = signed_child(
+            &parent,
+            vec!["data.aifactory.sub"],
+            vec!["read", "write"],
+            "deny-caps",
+        );
         let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
-        assert!(err.to_string().contains("capability_set exceeds"), "got: {err}");
+        assert!(
+            err.to_string().contains("capability_set exceeds"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -629,14 +700,29 @@ mod tests {
         let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
         let kp = holder_keypair();
         let pubk = pubkey(&kp);
-        let mut seed = child_seed(&parent, vec!["data.aifactory.sub"], vec!["read"], pubk.clone());
+        let mut seed = child_seed(
+            &parent,
+            vec!["data.aifactory.sub"],
+            vec!["read"],
+            pubk.clone(),
+        );
         seed.tenant_id = "acme".into(); // forge a foreign tenant
         let pop = make_pop(&seed, &pubk, &kp, "forge-tenant", Utc::now());
         let err = svc
-            .mint_child(MintVaidRequest { seed, pop: Some(pop) }, Some(&parent))
+            .mint_child(
+                MintVaidRequest {
+                    seed,
+                    pop: Some(pop),
+                },
+                Some(&parent),
+            )
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("cross-tenant delegation is denied"), "got: {err}");
+        assert!(
+            err.to_string()
+                .contains("cross-tenant delegation is denied"),
+            "got: {err}"
+        );
         assert!(audit.is_empty());
     }
 
@@ -646,11 +732,22 @@ mod tests {
         let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
         let kp = holder_keypair();
         let pubk = pubkey(&kp);
-        let mut seed = child_seed(&parent, vec!["data.aifactory.sub"], vec!["read"], pubk.clone());
+        let mut seed = child_seed(
+            &parent,
+            vec!["data.aifactory.sub"],
+            vec!["read"],
+            pubk.clone(),
+        );
         seed.parent_vaid = Some(VaidId::new()); // forge a different parent
         let pop = make_pop(&seed, &pubk, &kp, "forge-parent", Utc::now());
         let err = svc
-            .mint_child(MintVaidRequest { seed, pop: Some(pop) }, Some(&parent))
+            .mint_child(
+                MintVaidRequest {
+                    seed,
+                    pop: Some(pop),
+                },
+                Some(&parent),
+            )
             .await
             .unwrap_err();
         assert!(err.to_string().contains("parent_vaid"), "got: {err}");
@@ -661,9 +758,17 @@ mod tests {
     async fn mint_child_without_parent_context_is_denied() {
         let (svc, _) = fixture();
         let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
-        let req = signed_child(&parent, vec!["data.aifactory.sub"], vec!["read"], "no-parent");
+        let req = signed_child(
+            &parent,
+            vec!["data.aifactory.sub"],
+            vec!["read"],
+            "no-parent",
+        );
         let err = svc.mint_child(req, None).await.unwrap_err();
-        assert!(err.to_string().contains("no verified parent VAID"), "got: {err}");
+        assert!(
+            err.to_string().contains("no verified parent VAID"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -701,7 +806,7 @@ mod tests {
     #[tokio::test]
     async fn minted_child_verifies_and_is_contained_by_parent() {
         let audit = Arc::new(InMemoryAudit::new());
-        let issuer = Arc::new(ReferenceIssuer::ephemeral(1).unwrap());
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
         let svc = MintService::new(issuer.clone(), audit);
         // Mint a REAL parent root through the issuer, so its lineage is recorded and
         // the child's ancestry is resolvable at verification (R.4.2). A synthetic
@@ -726,10 +831,16 @@ mod tests {
         let req = signed_child(&parent, vec!["data.aifactory.reports"], vec!["read"], "e2e");
         let child = svc.mint_child(req, Some(&parent)).await.unwrap().vaid;
 
-        assert!(issuer.verify_vaid(&child), "minted child must verify against the issuer");
+        assert!(
+            issuer.verify_vaid(&child),
+            "minted child must verify against the issuer"
+        );
         // Containment: every child scope entry is within the parent, every child
         // cap is held by the parent.
         assert!(child.scope_boundary().iter().all(|s| parent.is_in_scope(s)));
-        assert!(child.capability_set().iter().all(|c| parent.has_capability(c)));
+        assert!(child
+            .capability_set()
+            .iter()
+            .all(|c| parent.has_capability(c)));
     }
 }

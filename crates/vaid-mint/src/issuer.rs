@@ -30,8 +30,8 @@ use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 
 use crate::document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
-    VAID_SIG_VERSION_V2,
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
+    VaidId, VAID_SIG_VERSION_V3,
 };
 use crate::error::{MintError, MintResult};
 use crate::revocation::{
@@ -94,6 +94,12 @@ pub trait VaidIssuer: Send + Sync {
 pub struct ReferenceIssuer {
     kernel_key_pair: Ed25519KeyPair,
     vaid_ttl_hours: i64,
+    /// v3: the trust domain stamped into every VAID this issuer mints
+    /// (ADR-0004). Validated at construction, so an issuer that could only emit
+    /// non-conforming documents cannot be built. The companion
+    /// `kernel_key_thumbprint` is NOT stored here — it is derived from the kernel
+    /// key at mint time, so it cannot disagree with the key that signs.
+    trust_domain: String,
     /// Every minted VAID: `Some(parent)` for a child, `None` for a root. Recording
     /// roots (not just children) is what lets [`resolve_parent`] distinguish a
     /// known root from an unknown id — the crux of spec R.4.2.
@@ -114,33 +120,74 @@ impl ReferenceIssuer {
     /// Build with a freshly generated **ephemeral** kernel key. VAIDs signed by
     /// this issuer verify only for this process's lifetime — the key is not
     /// persisted. The zero-config default for local self-hosting and tests.
-    pub fn ephemeral(vaid_ttl_hours: i64) -> MintResult<Self> {
+    pub fn ephemeral(vaid_ttl_hours: i64, trust_domain: &str) -> MintResult<Self> {
         let rng = SystemRandom::new();
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng)
             .map_err(|e| MintError::Identity(format!("kernel key generation failed: {e}")))?;
-        Self::from_pkcs8(pkcs8.as_ref(), vaid_ttl_hours)
+        Self::from_pkcs8(pkcs8.as_ref(), vaid_ttl_hours, trust_domain)
     }
 
     /// Build from a caller-supplied PKCS#8 kernel key — the self-hosting
     /// persistence path (load the key from wherever you keep it and hand the
     /// bytes here). VAIDs signed by this issuer verify across restarts as long as
     /// the same key is supplied.
-    pub fn from_pkcs8(pkcs8: &[u8], vaid_ttl_hours: i64) -> MintResult<Self> {
+    pub fn from_pkcs8(pkcs8: &[u8], vaid_ttl_hours: i64, trust_domain: &str) -> MintResult<Self> {
+        let trust_domain = Self::checked_trust_domain(trust_domain)?;
         let kernel_key_pair = Ed25519KeyPair::from_pkcs8(pkcs8)
             .map_err(|e| MintError::Identity(format!("kernel key parse failed: {e}")))?;
-        Ok(Self::with_key(kernel_key_pair, vaid_ttl_hours))
+        Ok(Self::with_key(
+            kernel_key_pair,
+            vaid_ttl_hours,
+            trust_domain,
+        ))
+    }
+
+    /// Reject a malformed trust domain at construction rather than at mint.
+    /// An issuer whose every output would fail verification is not a useful
+    /// object to hold.
+    fn checked_trust_domain(trust_domain: &str) -> MintResult<String> {
+        if !crate::issuer_identity::is_valid_trust_domain(trust_domain) {
+            return Err(MintError::Identity(format!(
+                "trust_domain {trust_domain:?} is not well-formed (ADR-0004): lowercase ASCII \
+                 letters, digits, '-' and '.'; at least two labels; each 1-63 bytes without a \
+                 leading or trailing '-'; no trailing dot; 1-253 bytes total; final label not \
+                 all-numeric"
+            )));
+        }
+        Ok(trust_domain.to_string())
     }
 
     /// Build from a raw 32-byte Ed25519 seed. Primarily for deterministic
     /// conformance vectors (RFC 8032 test seeds), where both languages must
     /// derive the identical kernel key and produce identical signatures.
-    pub fn from_seed(seed: &[u8], vaid_ttl_hours: i64) -> MintResult<Self> {
+    pub fn from_seed(seed: &[u8], vaid_ttl_hours: i64, trust_domain: &str) -> MintResult<Self> {
+        let trust_domain = Self::checked_trust_domain(trust_domain)?;
         let kernel_key_pair = Ed25519KeyPair::from_seed_unchecked(seed)
             .map_err(|e| MintError::Identity(format!("kernel seed parse failed: {e}")))?;
-        Ok(Self::with_key(kernel_key_pair, vaid_ttl_hours))
+        Ok(Self::with_key(
+            kernel_key_pair,
+            vaid_ttl_hours,
+            trust_domain,
+        ))
     }
 
-    fn with_key(kernel_key_pair: Ed25519KeyPair, vaid_ttl_hours: i64) -> Self {
+    /// The trust domain this issuer stamps into every VAID it mints.
+    pub fn trust_domain(&self) -> &str {
+        &self.trust_domain
+    }
+
+    /// The RFC 9278 thumbprint URI of this issuer's kernel public key — the value
+    /// stamped into every VAID it mints, and the value a verifier uses to select
+    /// this issuer's key from a trust bundle.
+    pub fn kernel_key_thumbprint(&self) -> String {
+        crate::issuer_identity::kernel_key_thumbprint(self.kernel_public_key())
+    }
+
+    fn with_key(
+        kernel_key_pair: Ed25519KeyPair,
+        vaid_ttl_hours: i64,
+        trust_domain: String,
+    ) -> Self {
         // Default revocation posture: assume-nothing-revoked, so a live issuer
         // vouches "nothing revoked yet" and a fresh, un-revoked VAID verifies out of
         // the box rather than failing closed on Unavailable. RESTART BEHAVIOUR: this
@@ -153,6 +200,7 @@ impl ReferenceIssuer {
         Self {
             kernel_key_pair,
             vaid_ttl_hours,
+            trust_domain,
             lineage: Mutex::new(HashMap::new()),
             revocation: default_store.clone(),
             default_store,
@@ -191,7 +239,10 @@ impl ReferenceIssuer {
     /// (R.4.2) — while a genuinely rootless VAID still verifies. An ops/test
     /// primitive.
     pub fn clear_lineage(&self) {
-        self.lineage.lock().expect("lineage lock not poisoned").clear();
+        self.lineage
+            .lock()
+            .expect("lineage lock not poisoned")
+            .clear();
     }
 
     /// The revocation status of `vaid` under this issuer (spec R.4): assemble its
@@ -238,8 +289,14 @@ impl ReferenceIssuer {
             scope_boundary,
             lineage_hash,
             capability_set,
+            self.trust_domain.clone(),
+            // Derived from the signing key itself, never supplied: the thumbprint
+            // cannot disagree with the key that is about to sign.
+            crate::issuer_identity::kernel_key_thumbprint(self.kernel_public_key()),
         );
-        let signature = self.kernel_key_pair.sign(&canonical_vaid_signing_bytes(&unsigned));
+        let signature = self
+            .kernel_key_pair
+            .sign(&canonical_vaid_signing_bytes(&unsigned));
         let vaid = unsigned.with_kernel_signature(signature.as_ref().to_vec());
 
         // Record EVERY mint — roots as `None`, children as `Some(parent)` — so the
@@ -264,7 +321,12 @@ impl LineageResolver for ReferenceIssuer {
     /// reason an empty (post-restart) map yields `Unavailable` for a child rather
     /// than mistaking it for a root.
     fn resolve_parent(&self, vaid_id: &VaidId) -> ParentResolution {
-        match self.lineage.lock().expect("lineage lock not poisoned").get(vaid_id) {
+        match self
+            .lineage
+            .lock()
+            .expect("lineage lock not poisoned")
+            .get(vaid_id)
+        {
             Some(Some(parent)) => ParentResolution::Parent(*parent),
             Some(None) => ParentResolution::Root,
             None => ParentResolution::Unknown,
@@ -322,7 +384,7 @@ impl VaidIssuer for ReferenceIssuer {
     }
 
     fn verify_vaid(&self, vaid: &Vaid) -> bool {
-        if vaid.sig_version() != VAID_SIG_VERSION_V2 {
+        if vaid.sig_version() != VAID_SIG_VERSION_V3 {
             return false;
         }
         // TTL is now enforced as a hard reject, not merely reported: an expired
@@ -350,7 +412,7 @@ mod tests {
 
     #[test]
     fn issued_root_vaid_verifies_against_its_issuer() {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let vaid = issuer
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -361,14 +423,17 @@ mod tests {
                 vec![],
             )
             .unwrap();
-        assert!(issuer.verify_vaid(&vaid), "a freshly issued VAID must verify");
+        assert!(
+            issuer.verify_vaid(&vaid),
+            "a freshly issued VAID must verify"
+        );
         assert_eq!(vaid.parent_vaid(), None);
-        assert_eq!(vaid.sig_version(), VAID_SIG_VERSION_V2);
+        assert_eq!(vaid.sig_version(), VAID_SIG_VERSION_V3);
     }
 
     #[test]
     fn a_tampered_field_fails_verification() {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let vaid = issuer
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -384,13 +449,16 @@ mod tests {
         let mut val = serde_json::to_value(&vaid).unwrap();
         val["scope_boundary"] = serde_json::json!(["data.x", "data.everything"]);
         let forged: Vaid = serde_json::from_value(val).unwrap();
-        assert!(!issuer.verify_vaid(&forged), "a rewritten scope must break the signature");
+        assert!(
+            !issuer.verify_vaid(&forged),
+            "a rewritten scope must break the signature"
+        );
     }
 
     #[test]
     fn a_different_issuer_does_not_verify() {
-        let a = ReferenceIssuer::ephemeral(1).unwrap();
-        let b = ReferenceIssuer::ephemeral(1).unwrap();
+        let a = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let b = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let vaid = a
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -402,12 +470,15 @@ mod tests {
             )
             .unwrap();
         assert!(a.verify_vaid(&vaid));
-        assert!(!b.verify_vaid(&vaid), "another issuer's key must not verify this VAID");
+        assert!(
+            !b.verify_vaid(&vaid),
+            "another issuer's key must not verify this VAID"
+        );
     }
 
     #[test]
     fn revocation_fails_verification() {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let vaid = issuer
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -427,7 +498,7 @@ mod tests {
     fn expired_vaid_fails_verification() {
         // A negative TTL issues a VAID whose `expires_at` is already in the past;
         // its kernel signature is valid but verification must now hard-reject it.
-        let issuer = ReferenceIssuer::ephemeral(-1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(-1, "vaid.example").unwrap();
         let vaid = issuer
             .issue_vaid_with_lineage(
                 AgentClass::new("root"),
@@ -450,7 +521,7 @@ mod tests {
         // An assume-nothing-revoked injected store: verifies until something is
         // revoked through it.
         let store = Arc::new(InMemoryRevocationList::assume_nothing_revoked());
-        let issuer = ReferenceIssuer::ephemeral(1)
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
             .unwrap()
             .with_revocation_check(store.clone());
         let vaid = issuer
@@ -475,7 +546,7 @@ mod tests {
     fn injected_unavailable_store_fails_closed() {
         // A store whose state is absent (e.g. a durable backend that is
         // unreachable) reports Unavailable, and verification fails closed (R.4.5).
-        let issuer = ReferenceIssuer::ephemeral(1)
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
             .unwrap()
             .with_revocation_check(Arc::new(InMemoryRevocationList::unavailable()));
         let vaid = issuer
@@ -488,7 +559,10 @@ mod tests {
                 vec![],
             )
             .unwrap();
-        assert_eq!(issuer.revocation_status(&vaid), RevocationStatus::Unavailable);
+        assert_eq!(
+            issuer.revocation_status(&vaid),
+            RevocationStatus::Unavailable
+        );
         assert!(
             !issuer.verify_vaid(&vaid),
             "a VAID whose revocation store is unavailable must fail closed"
@@ -499,8 +573,8 @@ mod tests {
     fn same_seed_issuer_produces_the_same_kernel_public_key() {
         // Determinism the frozen conformance vector will depend on.
         let seed = [7u8; 32];
-        let a = ReferenceIssuer::from_seed(&seed, 1).unwrap();
-        let b = ReferenceIssuer::from_seed(&seed, 1).unwrap();
+        let a = ReferenceIssuer::from_seed(&seed, 1, "vaid.example").unwrap();
+        let b = ReferenceIssuer::from_seed(&seed, 1, "vaid.example").unwrap();
         assert_eq!(a.kernel_public_key(), b.kernel_public_key());
     }
 }

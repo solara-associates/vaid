@@ -17,9 +17,10 @@
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use uuid::Uuid;
 
+use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
-    VAID_SIG_VERSION_V2,
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
+    VaidId, VAID_SIG_VERSION_V3,
 };
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -50,6 +51,20 @@ fn main() {
     let public_key_der: Vec<u8> = (0u8..32).collect();
     let scope_boundary = vec!["data.aifactory.sub".to_string()];
     let capability_set = vec!["read".to_string()];
+    // v3 (ADR-0004). RESERVED BY DESIGN: this vector publishes its own kernel
+    // private seed below, so anyone can produce validly-signed documents under
+    // it. A real trust domain here would be a published forgery generator for
+    // that deployment. `vaid.example` is reserved by RFC 2606, and a conforming
+    // verifier SHOULD refuse to bind a trust bundle to a special-use name — so
+    // the vector's issuer is unbindable by rule, not by convention.
+    let trust_domain = "vaid.example";
+
+    // The deterministic kernel key is derived HERE, before the document is
+    // built, because v3 stamps its thumbprint INTO the document. Deriving it
+    // afterwards would mean signing a document that names a different key.
+    let kernel_kp = Ed25519KeyPair::from_seed_unchecked(&unhex(KERNEL_SEED_HEX)).unwrap();
+    let kernel_pub = kernel_kp.public_key().as_ref().to_vec();
+    let kernel_thumbprint = kernel_key_thumbprint(&kernel_pub);
 
     // Derived: lineage_hash (proves the derivation is cross-language identical).
     let lineage_hash = compute_lineage_hash(parent_vaid, &agent_id);
@@ -72,19 +87,22 @@ fn main() {
         scope_boundary.clone(),
         lineage_hash.clone(),
         capability_set.clone(),
+        trust_domain.to_string(),
+        // Derived from the kernel key this vector signs with, so the vector
+        // exercises the v3 key-commitment check end-to-end rather than pinning
+        // an arbitrary string.
+        kernel_thumbprint.clone(),
     );
 
     // Canonical digest (nulls kernel_signature internally).
     let digest = canonical_vaid_signing_bytes(&unsigned);
 
-    // Sign the digest with the deterministic kernel key.
-    let kernel_kp = Ed25519KeyPair::from_seed_unchecked(&unhex(KERNEL_SEED_HEX)).unwrap();
-    let kernel_pub = kernel_kp.public_key().as_ref().to_vec();
+    // Sign the digest with the deterministic kernel key (derived above).
     let signature = kernel_kp.sign(&digest);
 
     // The `input` is the unsigned document, snake_case, kernel_signature = [].
     let input = serde_json::json!({
-        "sig_version": VAID_SIG_VERSION_V2,
+        "sig_version": VAID_SIG_VERSION_V3,
         "vaid_id": agent_uuid.to_string(),
         "agent_id": agent_uuid.to_string(),
         "agent_class": agent_class,
@@ -98,6 +116,8 @@ fn main() {
         "scope_boundary": scope_boundary,
         "lineage_hash": lineage_hash,
         "capability_set": capability_set,
+        "trust_domain": trust_domain,
+        "kernel_key_thumbprint": kernel_thumbprint,
     });
 
     let vector = serde_json::json!({
