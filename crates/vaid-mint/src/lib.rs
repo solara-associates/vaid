@@ -63,7 +63,7 @@
 //! use vaid_mint::mint_types::{MintVaidRequest, VaidSeed};
 //!
 //! # tokio_test_block(async {
-//! let issuer = Arc::new(ReferenceIssuer::ephemeral(24).unwrap());
+//! let issuer = Arc::new(ReferenceIssuer::ephemeral(24, "vaid.example").unwrap());
 //! let audit = Arc::new(InMemoryAudit::new());
 //! let mint = MintService::new(issuer.clone(), audit);
 //!
@@ -95,22 +95,23 @@ pub mod authz;
 pub mod document;
 pub mod error;
 pub mod issuer;
+pub mod issuer_identity;
 pub mod mint;
 pub mod mint_types;
 pub mod revocation;
 pub mod verify;
 
-pub use document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
-    VAID_SIG_VERSION_V2,
-};
 pub use authz::{AuthorizationGate, PermitAll};
+pub use document::{
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
+    VaidId, VAID_SIG_VERSION_V3,
+};
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
+pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
+pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{
     assemble_lineage, InMemoryRevocationList, LineageAssembly, LineageResolver, ParentResolution,
     RevocationCheck, RevocationStatus,
 };
-pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
-pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use verify::{verify_lineage_hash, verify_vaid_authenticity};

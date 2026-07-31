@@ -26,7 +26,10 @@ fn vstr(v: &Value, key: &str) -> String {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -41,7 +44,10 @@ fn client_reproduces_frozen_pathquery_digest() {
     let payload: RequestAuthPayload = serde_json::from_value(v["input"].clone())
         .expect("vector input must deserialize into a real RequestAuthPayload (camelCase)");
     // Sanity: the pinned path really does include a query string.
-    assert!(payload.path.contains('?'), "the pathquery vector's path must include a query");
+    assert!(
+        payload.path.contains('?'),
+        "the pathquery vector's path must include a query"
+    );
     let digest = canonical_request_signing_bytes(&payload);
     assert_eq!(
         to_hex(&digest),

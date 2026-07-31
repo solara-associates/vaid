@@ -59,7 +59,11 @@ fn mint_reproduces_frozen_kernel_signature() {
     let vaid = input_vaid(&v);
     let digest = canonical_vaid_signing_bytes(&vaid);
 
-    let seed = unhex(v["ed25519"]["kernel_private_key_seed_hex"].as_str().unwrap());
+    let seed = unhex(
+        v["ed25519"]["kernel_private_key_seed_hex"]
+            .as_str()
+            .unwrap(),
+    );
     let kp = Ed25519KeyPair::from_seed_unchecked(&seed).expect("valid 32-byte kernel seed");
 
     // Kernel public key derives to the frozen value.

@@ -54,11 +54,14 @@ fn issue_child(
 /// lineage checking exists.
 #[test]
 fn test1_bypass_revoking_parent_rejects_child() {
-    let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
     let root = issue_root(&issuer, "root");
     let child = issue_child(&issuer, &root, "child");
 
-    assert!(issuer.verify_vaid(&child), "child verifies before revocation");
+    assert!(
+        issuer.verify_vaid(&child),
+        "child verifies before revocation"
+    );
 
     issuer.revoke(root.vaid_id());
 
@@ -79,7 +82,7 @@ fn test1_bypass_revoking_parent_rejects_child() {
 /// the case a boolean interface cannot represent.
 #[test]
 fn test2_restart_truncation_is_unavailable_not_notrevoked() {
-    let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
     let root = issue_root(&issuer, "root");
     let child = issue_child(&issuer, &root, "child");
     issuer.revoke(root.vaid_id());
@@ -98,14 +101,17 @@ fn test2_restart_truncation_is_unavailable_not_notrevoked() {
         RevocationStatus::NotRevoked,
         "it must NOT silently pass as not-revoked — the whole point of R.4.2"
     );
-    assert!(!issuer.verify_vaid(&child), "fails closed on Unavailable (R.4.5)");
+    assert!(
+        !issuer.verify_vaid(&child),
+        "fails closed on Unavailable (R.4.5)"
+    );
 }
 
 /// TEST 3 — STORE FAILURE. When the revocation store cannot be consulted, the
 /// status is `Unavailable` and verification fails closed (R.4.3/R.4.5).
 #[test]
 fn test3_store_failure_is_unavailable_and_rejects() {
-    let issuer = ReferenceIssuer::ephemeral(1)
+    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
         .unwrap()
         .with_revocation_check(Arc::new(InMemoryRevocationList::unavailable()));
     let vaid = issue_root(&issuer, "root");
@@ -115,7 +121,10 @@ fn test3_store_failure_is_unavailable_and_rejects() {
         RevocationStatus::Unavailable,
         "an unreachable store yields Unavailable, not NotRevoked"
     );
-    assert!(!issuer.verify_vaid(&vaid), "fails closed when the store is unavailable");
+    assert!(
+        !issuer.verify_vaid(&vaid),
+        "fails closed when the store is unavailable"
+    );
 }
 
 /// TEST 4 — ROOTLESS. A rootless VAID with nothing revoked is `NotRevoked` and
@@ -123,7 +132,7 @@ fn test3_store_failure_is_unavailable_and_rejects() {
 /// assembly (test 2) and a genuine root (here) must land on different states.
 #[test]
 fn test4_rootless_clean_is_notrevoked_and_verifies() {
-    let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
     let vaid = issue_root(&issuer, "root");
 
     assert_eq!(
@@ -142,20 +151,23 @@ fn test4_rootless_clean_is_notrevoked_and_verifies() {
 fn cross_language_scenarios() {
     // clean_root: rootless, nothing revoked        -> NotRevoked
     {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let root = issue_root(&issuer, "root");
-        assert_eq!(issuer.revocation_status(&root), RevocationStatus::NotRevoked);
+        assert_eq!(
+            issuer.revocation_status(&root),
+            RevocationStatus::NotRevoked
+        );
     }
     // revoked_root: rootless, itself revoked        -> Revoked
     {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let root = issue_root(&issuer, "root");
         issuer.revoke(root.vaid_id());
         assert_eq!(issuer.revocation_status(&root), RevocationStatus::Revoked);
     }
     // child_parent_revoked: child of a revoked root -> Revoked (R.4.4)
     {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let root = issue_root(&issuer, "root");
         let child = issue_child(&issuer, &root, "child");
         issuer.revoke(root.vaid_id());
@@ -163,25 +175,34 @@ fn cross_language_scenarios() {
     }
     // child_clean: child of a clean root            -> NotRevoked
     {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let root = issue_root(&issuer, "root");
         let child = issue_child(&issuer, &root, "child");
-        assert_eq!(issuer.revocation_status(&child), RevocationStatus::NotRevoked);
+        assert_eq!(
+            issuer.revocation_status(&child),
+            RevocationStatus::NotRevoked
+        );
     }
     // child_parent_unresolvable: restart truncation -> Unavailable (R.4.2)
     {
-        let issuer = ReferenceIssuer::ephemeral(1).unwrap();
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
         let root = issue_root(&issuer, "root");
         let child = issue_child(&issuer, &root, "child");
         issuer.clear_lineage();
-        assert_eq!(issuer.revocation_status(&child), RevocationStatus::Unavailable);
+        assert_eq!(
+            issuer.revocation_status(&child),
+            RevocationStatus::Unavailable
+        );
     }
     // store_unavailable: store unreachable          -> Unavailable (R.4.3)
     {
-        let issuer = ReferenceIssuer::ephemeral(1)
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
             .unwrap()
             .with_revocation_check(Arc::new(InMemoryRevocationList::unavailable()));
         let root = issue_root(&issuer, "root");
-        assert_eq!(issuer.revocation_status(&root), RevocationStatus::Unavailable);
+        assert_eq!(
+            issuer.revocation_status(&root),
+            RevocationStatus::Unavailable
+        );
     }
 }

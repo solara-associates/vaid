@@ -22,7 +22,10 @@ use vaid_pop::vaid_pop::canonical_request_signing_bytes;
 const VECTOR_JSON: &str = include_str!("../tests/vectors/operator_pop_v1.json");
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 fn to_hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -53,7 +56,9 @@ fn main() {
     let now_dt = chrono::DateTime::parse_from_rfc3339(timestamp)
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let headers = signer.sign_headers_at(method, path, body, now_dt, nonce).unwrap();
+    let headers = signer
+        .sign_headers_at(method, path, body, now_dt, nonce)
+        .unwrap();
 
     // Canonical payload/digest for the vector `input`.
     let payload = RequestAuthPayload {
