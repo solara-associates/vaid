@@ -17,6 +17,12 @@
 //   - Python (pyproject [project]):  classifier "Private :: Do Not Upload"
 //   - npm (package.json):            "private": true            (npm-native)
 //
+// A WAIVER (see WAIVERS below) is a different thing from an opt-out, and mixing
+// them up would be a lie in the repository: an opt-out says "never publishing
+// this", a waiver says "publishing this is the plan, and the block is a decision
+// no pull request can make." Marking the TypeScript packages `"private": true`
+// to get a green tick would delete the intent to publish them from the repo.
+//
 // Fails LOUD, fails CLOSED on network — same posture as verify-capabilities.mjs.
 //
 // Run: node scripts/verify-package-versions.mjs   (also wired into CI)
@@ -26,8 +32,54 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = new URL('../', import.meta.url);
 const UA = { 'User-Agent': 'solara-vaid-registry-parity-check' };
+const TODAY = new Date().toISOString().slice(0, 10);
+
+/* -------------------------------- waivers -------------------------------- */
+//
+// POSTURE, same as the substrate's `.cargo/audit.toml`: a waiver states what
+// blocks it, who can unblock it, and what makes it VOID. It is never "this does
+// not matter" — it is "this is red for a stated reason, and here is the reason."
+//
+// Enforced in BOTH directions, so a waiver cannot rot quietly:
+//   · waived + not published  -> WAIVED   (the expected state)
+//   · waived + PUBLISHED      -> FAILURE  (stale waiver; delete it)
+//   · waiver past `expires`   -> FAILURE  (re-decide, do not drift)
+//   · waiver matching nothing -> FAILURE  (dead waiver; delete it)
+const WAIVERS = [
+  {
+    // ── The TypeScript implementation, awaiting its first npm release ────────
+    // The third conforming implementation is complete and vector-green in-repo;
+    // what is missing is the release, not the code. These are deliberately NOT
+    // `"private": true` — publishing them is the plan.
+    //
+    // BLOCKED ON: the publishing-identity decision (which npm account/org owns
+    // the namespace, under what name). The owner's decision alone; not a code
+    // change, and no PR against this repository can clear it. The same decision
+    // blocks crates.io and PyPI in the `synthera` repo, where an
+    // identically-shaped waiver exists.
+    //
+    // VOID WHEN: any of them is published (the waiver then fails and must be
+    // deleted — that is the success path), or on the expiry below.
+    names: ['vaid-client', 'vaid-mint', 'vaid-pop'],
+    registry: 'npm',
+    reason: 'third conforming implementation, complete and vector-green, awaiting first npm release',
+    blockedOn: 'publishing identity (owner decision — not clearable by any PR)',
+    // Aligned with the substrate's .cargo/audit.toml waivers so the whole
+    // estate's waivers come up for re-decision on one date.
+    expires: '2026-10-30',
+  },
+];
+
+// Keyed by name+registry: `vaid-pop` also exists as a crate and a PyPI package,
+// and this waiver is about the npm ones only. Keying on the bare name would
+// silently waive the published Rust and Python packages too.
+const WAIVED = new Map();
+for (const w of WAIVERS) for (const n of w.names) WAIVED.set(`${w.registry}:${n}`, w);
+
 const failures = [];
 const notes = [];
+const waived = [];
+const waiversHit = new Set();
 
 const sectionText = (toml, header) => {
   const m = toml.match(new RegExp(`\\[${header}\\]([\\s\\S]*?)(?=\\n\\[|$)`));
@@ -107,17 +159,50 @@ if (existsSync(tsDir)) for (const d of readdirSync(tsDir)) {
 for (const p of pkgs) {
   if (p.skip) { notes.push(`  · [${p.dir}] ${p.name} — opt-out marker present, not checked`); continue; }
   if (!p.version) { failures.push(`  ✗ [${p.dir}] ${p.name}: could not read a literal version (dynamic/unresolved) — cannot verify parity (failing closed)`); continue; }
+  const waiver = WAIVED.get(`${p.registry}:${p.name}`);
   try {
-    if (!(await isPublished(p.registry, p.name, p.version)))
+    const live = await isPublished(p.registry, p.name, p.version);
+    if (waiver) {
+      waiversHit.add(waiver);
+      // A waiver that has come true is a waiver that must go.
+      if (live) {
+        failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} IS published on ${p.registry}, but is still waived — the waiver is stale, DELETE it from WAIVERS (this is the success path)`);
+      } else if (TODAY > waiver.expires) {
+        failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} is waived, but the waiver EXPIRED on ${waiver.expires} — re-decide and renew or resolve, do not drift`);
+      } else {
+        waived.push({ ...p, waiver });
+      }
+      continue;
+    }
+    if (!live)
       failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} is NOT published on ${p.registry} — repo bumped but not released`);
   } catch (e) {
     failures.push(`  ✗ [${p.dir}] could not verify (failing closed): ${e.message}`);
   }
 }
 
+// A waiver naming a package that no longer exists is dead text asserting
+// something about nothing. Fail, so it gets deleted rather than read as cover.
+for (const w of WAIVERS) {
+  if (!waiversHit.has(w)) {
+    failures.push(`  ✗ waiver [${w.registry}: ${w.names.join(', ')}] matched no package in the tree — dead waiver, DELETE it`);
+  }
+}
+
 if (notes.length) console.log('Notes:\n' + notes.join('\n'));
+
+// Waivers print in full, every run, with reason and expiry. A waiver nobody
+// reads is a waiver nobody re-decides.
+console.log(`\nWAIVED — ${waived.length} package(s) red for a stated reason no PR can clear:`);
+if (waived.length === 0) console.log('  (none)');
+for (const p of waived.sort((a, b) => a.dir.localeCompare(b.dir))) {
+  console.log(`  ! [${p.dir}] ${p.name} ${p.version} — ${p.registry} — ${p.waiver.reason}`);
+  console.log(`      blocked on: ${p.waiver.blockedOn}`);
+  console.log(`      expires:    ${p.waiver.expires} (void early if published)`);
+}
+
 if (failures.length) {
   console.error(`\n✗ REGISTRY PARITY FAILED — an in-repo version is not on its registry:\n${failures.join('\n')}\n`);
   process.exit(1);
 }
-console.log(`\n✓ registry parity — ${pkgs.filter((p) => !p.skip).length} package(s), every in-repo version is published on its registry.`);
+console.log(`\n✓ registry parity — ${pkgs.filter((p) => !p.skip).length} package(s) checked: ${pkgs.filter((p) => !p.skip).length - waived.length} published, ${waived.length} waived.`);
