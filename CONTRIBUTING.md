@@ -84,6 +84,40 @@ crates.io/PyPI/npm → then the manifest-flip PR.** (This is not hypothetical �
 [ADR-0002](docs/adr/0002-capabilities-manifest.md): the check caught a
 shipped-but-unpublished flip on its first real use.)
 
+**Verify the published artifact from a clean install — not from the source tree.**
+After publishing and before flipping the manifest, install the package **fresh, in
+an empty environment, from the registry** and run its entry points:
+
+```sh
+python3 -m venv /tmp/verify && /tmp/verify/bin/pip install vaid-mint==X.Y.Z
+/tmp/verify/bin/vaid-mint-conformance     # must PASS and print the frozen digest
+
+cargo new /tmp/verify-rs && cd /tmp/verify-rs
+cargo add vaid-mint@X.Y.Z && cargo build
+```
+
+**Testing the source tree cannot catch this class of defect.** In the repo, sibling
+packages resolve by path and the developer's environment already has every
+dependency at a working version. A consumer gets neither. The two differ in ways
+the repo is structurally blind to:
+
+- **Dependency floors.** `vaid-mint` 0.3.0 declared `vaid-pop>=0.1.0` while
+  `vaid_mint/conformance.py` — the `vaid-mint-conformance` console script, the
+  published-first evaluation path — imports `verify_signed_payload`, which does not
+  exist until `vaid-pop` 0.2.0. Every test passed in-repo. A fresh install
+  resolving 0.1.0 would have produced a console script that died on `ImportError`.
+  Caught 2026-08-03 by a clean-venv install, **before** publishing.
+- **Packaging exclusions.** A file present in the tree but missing from the sdist
+  or wheel is invisible to any test run against the tree.
+- **Entry points.** Console scripts are declared in the manifest and only actually
+  wired at install time.
+
+This is the second time a published artifact differed from what the repository
+implied. The other was `forge-agents`, whose Dockerfile ignored `uv.lock` — so the
+image shipped a dependency set the lockfile did not describe, and again nothing
+that read the repo could see it. **The general rule: an artifact's properties must
+be verified on the artifact, never inferred from the source it was built from.**
+
 The `capabilities` CI job (`scripts/verify-capabilities.mjs`) enforces it: a
 `shipped` version must be published on its registry, and a `roadmap`/`planned`
 capability blocked on a merged PR fails — its status should have flipped. See
@@ -116,12 +150,27 @@ deliberately not published to a public registry opts out via Cargo
 `publish = false`, the `Private :: Do Not Upload` classifier in `pyproject`, or
 `"private": true` in `package.json`.
 
-> **Currently red, deliberately.** `typescript/vaid-pop`, `typescript/vaid-mint`
-> and `typescript/vaid-client` sit at `0.2.0` in-repo and are not yet on npm, so
-> this check fails for those three until they are published. That is the gate
-> doing its job — the packages exist and the registry does not have them. The
-> conformance and drift jobs are green; only parity is red, and `npm publish`
-> turns it green.
+**Waivers (a red that no pull request can clear).** A package that is neither
+published nor opted out is normally a failure. Where the *reason* it is unpublished
+is a decision outside the repository, it goes in the `WAIVERS` list in
+`scripts/verify-package-versions.mjs` instead — with what blocks it, who can
+unblock it, and an expiry.
+
+A waiver is **not** the opt-out marker, and confusing the two would put a false
+statement in the repo: `"private": true` means *never publishing this*, while a
+waiver means *publishing this is the plan and the block is not a code change*.
+Marking a package private to get a green tick deletes the intent to publish it.
+
+Waivers are enforced in both directions, so they cannot rot: a waiver fails if it
+expires, if it matches no package, **and if the package it waives is actually
+published** — at which point the waiver is stale and deleting it is the fix. The
+success path announces itself.
+
+> **Currently waived.** `typescript/vaid-pop`, `typescript/vaid-mint` and
+> `typescript/vaid-client` sit at `0.3.0` in-repo and are not on npm, blocked on
+> the npm publishing-identity decision. Expires 2026-10-30. Everything else —
+> including `vaid-mint` 0.3.0 on both crates.io and PyPI — is published, and
+> `main` is fully green.
 
 ## Proposing a change
 
