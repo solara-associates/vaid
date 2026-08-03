@@ -216,10 +216,10 @@
       "status": "planned",
       "landed_in": null,
       "packages": [],
-      "status_text": "Verifying a VAID issued by one deployment from another. v3 (ADR-0004) supplies the missing identifier \u2014 the document now names its issuing trust domain and commits to the key that signed it \u2014 but two things remain: a publication route for a deployment's kernel public key, and convergence of the SYNTHERA substrate's document on this format. Until both land, a VAID issued by one deployment cannot be verified by another.",
+      "status_text": "Verifying a VAID issued by one deployment from another. v3 (ADR-0004) supplies the missing identifier \u2014 the document names its issuing trust domain and commits to the key that signed it \u2014 and the publication route now exists: the SYNTHERA substrate's kernel public key is published, with its RFC 7638 thumbprint in three independent channels, so a third party can obtain the key and confirm it is the right one (see /trust-anchor). One thing remains: the substrate's deployed image predates ADR-0034 and so emits neither v3 identity field, meaning live-issued documents do not yet carry the issuer identity this capability reads. Until that deploy lands, a VAID issued by one deployment cannot be verified by another.",
       "blocked_on": {
         "type": "decision",
-        "ref": "kernel public key publication route (synthera#16) + substrate adoption of the v3 identity fields (synthera ADR-0034)"
+        "ref": "substrate adoption of the v3 identity fields (synthera ADR-0034) \u2014 the kernel public key publication route (synthera#16) is CLEARED, published 2026-08-03"
       }
     }
   ]
