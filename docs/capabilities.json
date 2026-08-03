@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for VAID capability STATUS. Prose (the marketing site, docs) renders status FROM this file rather than asserting it, so a sentence can never carry a stale status. Guarded by TWO CI checks: (1) a DRIFT check — every vendored copy (e.g. the site's) must byte-match this file; (2) a VERIFICATION check (scripts/verify-capabilities.mjs) — status must match reality: a `shipped` capability's package version must be published on its registry (or its repo_ref must resolve), and a `roadmap`/`planned` capability blocked on a PR must have that PR still OPEN (a capability blocked on a merged PR is a status that should have flipped). See docs/adr/0002-capabilities-manifest.md. NOTE: `status_text` is the one hand-written field — a review item at release, not generated.",
+  "_comment": "Single source of truth for VAID capability STATUS. Prose (the marketing site, docs) renders status FROM this file rather than asserting it, so a sentence can never carry a stale status. Guarded by TWO CI checks: (1) a DRIFT check \u2014 every vendored copy (e.g. the site's) must byte-match this file; (2) a VERIFICATION check (scripts/verify-capabilities.mjs) \u2014 status must match reality: a `shipped` capability's package version must be published on its registry (or its repo_ref must resolve), and a `roadmap`/`planned` capability blocked on a PR must have that PR still OPEN (a capability blocked on a merged PR is a status that should have flipped). See docs/adr/0002-capabilities-manifest.md. NOTE: `status_text` is the one hand-written field \u2014 a review item at release, not generated.",
   "version": 1,
   "capabilities": [
     {
@@ -21,7 +21,7 @@
           "version": "0.1.0"
         }
       ],
-      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key — offline, no service.",
+      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key \u2014 offline, no service.",
       "blocked_on": null
     },
     {
@@ -43,7 +43,7 @@
           "version": "0.1.3"
         }
       ],
-      "status_text": "A reference mint issues VAIDs and mints attenuated child VAIDs; published and installable. Rust and Python version independently — Python 0.1.3 is a docs-only PyPI re-release over the same 0.1.2 behaviour — so byte-for-byte agreement is asserted at the conformance-vector level, not the version number.",
+      "status_text": "A reference mint issues VAIDs and mints attenuated child VAIDs; published and installable. Rust and Python version independently \u2014 Python 0.1.3 is a docs-only PyPI re-release over the same 0.1.2 behaviour \u2014 so byte-for-byte agreement is asserted at the conformance-vector level, not the version number.",
       "blocked_on": null
     },
     {
@@ -103,7 +103,7 @@
           "version": "0.2.0"
         }
       ],
-      "status_text": "Verifying a VAID document's authenticity from the issuer's public key alone — no issuer instance.",
+      "status_text": "Verifying a VAID document's authenticity from the issuer's public key alone \u2014 no issuer instance.",
       "blocked_on": null
     },
     {
@@ -125,20 +125,36 @@
           "version": "0.2.0"
         }
       ],
-      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, failing closed.",
+      "status_text": "Revocation checked over a VAID's full lineage \u2014 three-state, revoking a parent revokes its children, failing closed.",
       "blocked_on": null
     },
     {
       "id": "typescript-implementation",
       "title": "TypeScript implementation (third conforming language)",
-      "status": "planned",
-      "landed_in": null,
-      "packages": [],
-      "status_text": "A third conforming implementation in TypeScript — minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. The packages (vaid-pop, vaid-mint, vaid-client, all 0.2.0) are in-repo and NOT yet on npm, so this is not shipped; on publish, flip this to shipped and add the npm package entries to the capabilities above, per the ADR-0002 release order.",
-      "blocked_on": {
-        "type": "decision",
-        "ref": "npm publish of vaid-pop / vaid-mint / vaid-client 0.3.0 (owner: A. Smeyatsky)"
-      }
+      "status": "shipped",
+      "landed_in": "vaid-pop / vaid-mint / vaid-client 0.3.0 (npm)",
+      "packages": [
+        {
+          "language": "typescript",
+          "registry": "npm",
+          "package": "vaid-pop",
+          "version": "0.3.0"
+        },
+        {
+          "language": "typescript",
+          "registry": "npm",
+          "package": "vaid-mint",
+          "version": "0.3.0"
+        },
+        {
+          "language": "typescript",
+          "registry": "npm",
+          "package": "vaid-client",
+          "version": "0.3.0"
+        }
+      ],
+      "status_text": "A third conforming implementation in TypeScript \u2014 minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. Published on npm at 0.3.0 (vaid-pop, vaid-mint, vaid-client); each ships a packaged conformance firewall \u2014 `npx -p vaid-mint vaid-mint-conformance` and the two siblings \u2014 which reproduces the frozen digests from the INSTALLED package, so a consumer can check the artifact they actually received rather than trusting this claim.",
+      "blocked_on": null
     },
     {
       "id": "attenuation-verification",
@@ -170,7 +186,7 @@
       "status": "planned",
       "landed_in": null,
       "packages": [],
-      "status_text": "Verifying a VAID issued by one deployment from another. v3 (ADR-0004) supplies the missing identifier — the document now names its issuing trust domain and commits to the key that signed it — but two things remain: a publication route for a deployment's kernel public key, and convergence of the SYNTHERA substrate's document on this format. Until both land, a VAID issued by one deployment cannot be verified by another.",
+      "status_text": "Verifying a VAID issued by one deployment from another. v3 (ADR-0004) supplies the missing identifier \u2014 the document now names its issuing trust domain and commits to the key that signed it \u2014 but two things remain: a publication route for a deployment's kernel public key, and convergence of the SYNTHERA substrate's document on this format. Until both land, a VAID issued by one deployment cannot be verified by another.",
       "blocked_on": {
         "type": "decision",
         "ref": "kernel public key publication route (synthera#16) + substrate adoption of the v3 identity fields (synthera ADR-0034)"
