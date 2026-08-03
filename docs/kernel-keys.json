@@ -1,0 +1,16 @@
+{
+  "$comment": "CANONICAL. The Solara substrate's kernel signing keys, published as an out-of-band trust anchor. Keyed by RFC 9278 thumbprint URI so rotation is an added entry, never a format change. THE ORIGIN SERVING THIS FILE IS UNTRUSTED BY DESIGN: do not trust it because it arrived over HTTPS from a domain you recognise. Recompute the RFC 7638 JWK thumbprint of each key below and check it equals the map key you looked it up under, and check that map key against a thumbprint you obtained from a DIFFERENT channel (docs, release notes, this repo). The hash is what makes the fetch safe; the transport is not. See docs/trust-anchor.md.",
+  "version": 1,
+  "keys": {
+    "urn:ietf:params:oauth:jwk-thumbprint:sha-256:VwvbN9yIguAset99AdeZyud7ZBHV5CcQa7zZML5ZQds": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "INjJhHXQUsJyHMJn1uObwqoskkZjMy8WDWeRAM6xRmc",
+      "key_id": "6cd3ef32-1712-4d87-84e0-ff88927c5556",
+      "created_at": "2026-06-23T08:16:41Z",
+      "status": "current",
+      "deployment": "Solara production substrate (synthera-substrate-prod, europe-west1)",
+      "$note": "trust_domain is deliberately absent. The production substrate predates ADR-0034 and emits neither trust_domain nor kernel_key_thumbprint in the documents it mints, so asserting one here would publish a fact that is not yet true. It is added when the substrate is redeployed."
+    }
+  }
+}
