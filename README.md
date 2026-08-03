@@ -1,17 +1,17 @@
 # Synthera VAID
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![SDKs: Rust + Python](https://img.shields.io/badge/SDKs-Rust%20%2B%20Python-orange.svg)](#what-this-is)
+[![SDKs: Rust + Python + TypeScript](https://img.shields.io/badge/SDKs-Rust%20%2B%20Python%20%2B%20TypeScript-orange.svg)](#what-this-is)
 [![Conformance: byte-for-byte](https://img.shields.io/badge/conformance-byte--for--byte-brightgreen.svg)](#two-languages-one-vector)
 
 The open standard layer for verifiable agent-action identity (VAID).
 
 A VAID is a portable identity bound to an action that an autonomous agent takes.
 This repository defines how a VAID-bound request is canonicalized and signed, and
-ships reference SDKs — in **Rust and Python** — that produce and verify those
+ships reference SDKs — in **Rust, Python and TypeScript** — that produce and verify those
 signatures. It is the interoperability contract: any client that follows it
 produces bytes that any conforming verifier accepts, with no shared runtime and
-no network service in between. Both reference SDKs reproduce the same frozen
+no network service in between. All three reference SDKs reproduce the same frozen
 conformance vector byte-for-byte — that is the cross-language proof, made
 concrete (see [Two languages, one vector](#two-languages-one-vector)).
 
@@ -74,14 +74,23 @@ The byte-level standard, reference implementations in two languages, a reference
   third conforming implementation: the same PoP primitive, the same reference mint
   with attenuated delegation and the three-state revocation seam, and the same
   request signer. They reproduce **all five** frozen vectors byte-for-byte, in the
-  same CI drift jobs as Rust and Python. ⚠️ **Not yet published to npm** — they are
-  in-repo only, so `npm install vaid-pop` does not work today. See
-  [`docs/capabilities.json`](docs/capabilities.json).
+  same CI drift jobs as Rust and Python. Published on npm at **0.3.0**:
+
+  ```sh
+  npm install vaid-pop vaid-mint vaid-client
+  ```
+
+  Each ships a packaged conformance firewall, so you can check the artifact you
+  actually received rather than taking this README's word for it:
+
+  ```sh
+  npx -p vaid-mint vaid-mint-conformance     # and vaid-pop / vaid-client
+  ```
 
 - **completion records** (`vaid-pop`, `completion_v1.json` vector) — a self-reported provenance record for what an agent claims it did. Single-tier assurance today: self-reported only, and the type's own documentation says so.
 
 That is the entire open scope. There is no server, no database, and no runtime to
-stand up beyond the mint if you choose to self-host it. You add the Rust crates to a Cargo project, or `pip install` the Python packages, and call them.
+stand up beyond the mint if you choose to self-host it. You add the Rust crates to a Cargo project, `pip install` the Python packages, or `npm install` the TypeScript ones, and call them.
 
 The vectors are the byte-level specification; the prose beside them says where the
 conformance surface starts and stops. Two documents, taking opposite postures:
