@@ -3,6 +3,64 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Changed — VAID v3: the document names its issuer and commits to its key (BREAKING)
+
+ADR-0004. `sig_version` 2 → 3. A v2 document does not verify under this release
+and a v3 document does not verify under 0.2.0; this is a clean break, not a
+migration, and there is no dual-version path.
+
+- **`trust_domain`** — the issuing deployment's DNS-shaped name. Constrains *who
+  claims to have issued* a document, so a verifier has something to look the
+  thumbprint up under. Validated at issuer construction, so an issuer whose every
+  output would fail verification cannot be built. Compared by byte equality and
+  never normalized: the value is inside the signed bytes, so a verifier that
+  "corrects" it recomputes different bytes from the ones the signer covered.
+- **`kernel_key_thumbprint`** — RFC 9278 thumbprint URI over the RFC 7638 JWK
+  thumbprint of the signing key. **Derived at mint from the signing key, never
+  supplied**, so it cannot disagree with the key that signs.
+- **`VAID_SIG_VERSION_V2` is REMOVED**, not retained. Every use site became a
+  compile error, so none could be missed.
+- **`verify_vaid_authenticity` now also checks key commitment** — that
+  `kernel_key_thumbprint` corresponds to the key it was handed. Without it a
+  caller could verify against a key the document never named, and "verified under
+  some key we hold" is a verdict nobody can audit. Ordered *before* the signature
+  check: one hash is cheaper than an Ed25519 verification already known to fail.
+
+RFC 7638 is not hand-rolled and no JOSE dependency is added. Its substance is the
+canonicalization — required members only, lexicographic, no whitespace — and for
+an OKP key those are exactly `crv`/`kty`/`x` (RFC 8037 §2), which is byte-identical
+to what RFC 8785 (JCS) emits. The risky half is delegated to `serde_jcs`, the same
+implementation the signing path already uses and the frozen vectors already prove.
+
+Correctness is pinned against the **published RFC 8037 Appendix A.3 vector**, so
+this is checked against the standard rather than only against itself.
+
+### Changed — `mint_v1` re-frozen at v3 (BREAKING for anyone pinning the digest)
+
+    old digest a5d73cf487b4eade190acdae31e61322a83dae5639b6891ede3a8d32af0bbf86
+    new digest eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0
+
+Generated from Rust, then Python and TypeScript were each proven to reproduce the
+digest and signature from the vector's `input` **before** it was written to any
+vector file — the `mint_pop_v1` discipline.
+
+The vector's `trust_domain` is `vaid.example`, **reserved by design**. The vector
+publishes its own kernel private seed, so anyone can produce validly-signed
+documents under it. That is harmless while the document names no issuer; the
+moment it carries a trust domain, a real name would be a published, working
+forgery generator for that deployment. RFC 2606 reserves `.example`, and a
+conforming verifier SHOULD refuse to bind a trust bundle to a special-use name,
+so the vector's issuer is unbindable by rule rather than by convention.
+
+### Added — `has_conforming_timestamps`
+
+`is_expired` stays **total** and never panics. `has_conforming_timestamps` is the
+new explicit `encoding.md` E.6 profile check, so a caller wanting strictness asks
+for it and can tell the two failures apart (issue #10, settled by splitting the
+surface rather than picking a winner).
+
 ## [0.2.0]
 
 ### Added — public-key-only document verification (additive, non-breaking)
