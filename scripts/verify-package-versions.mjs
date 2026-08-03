@@ -45,30 +45,12 @@ const TODAY = new Date().toISOString().slice(0, 10);
 //   · waived + PUBLISHED      -> FAILURE  (stale waiver; delete it)
 //   · waiver past `expires`   -> FAILURE  (re-decide, do not drift)
 //   · waiver matching nothing -> FAILURE  (dead waiver; delete it)
-const WAIVERS = [
-  {
-    // ── The TypeScript implementation, awaiting its first npm release ────────
-    // The third conforming implementation is complete and vector-green in-repo;
-    // what is missing is the release, not the code. These are deliberately NOT
-    // `"private": true` — publishing them is the plan.
-    //
-    // BLOCKED ON: the publishing-identity decision (which npm account/org owns
-    // the namespace, under what name). The owner's decision alone; not a code
-    // change, and no PR against this repository can clear it. The same decision
-    // blocks crates.io and PyPI in the `synthera` repo, where an
-    // identically-shaped waiver exists.
-    //
-    // VOID WHEN: any of them is published (the waiver then fails and must be
-    // deleted — that is the success path), or on the expiry below.
-    names: ['vaid-client', 'vaid-mint', 'vaid-pop'],
-    registry: 'npm',
-    reason: 'third conforming implementation, complete and vector-green, awaiting first npm release',
-    blockedOn: 'publishing identity (owner decision — not clearable by any PR)',
-    // Aligned with the substrate's .cargo/audit.toml waivers so the whole
-    // estate's waivers come up for re-decision on one date.
-    expires: '2026-10-30',
-  },
-];
+// No waivers. The TypeScript packages were waived here from 2026-08-03 until they
+// were published to npm later the same day; the waiver's published-but-waived
+// check fired on the next run and named itself as stale, which is what removed it.
+// Keep the empty list rather than deleting the mechanism — the enforcement below
+// is what makes a future waiver honest.
+const WAIVERS = [];
 
 // Keyed by name+registry: `vaid-pop` also exists as a crate and a PyPI package,
 // and this waiver is about the npm ones only. Keying on the bare name would
