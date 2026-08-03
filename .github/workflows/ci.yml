@@ -293,6 +293,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # verify-vector-freeze.mjs compares each vector against the release TAG
+          # for its current version, so tags and history must be present. The
+          # default shallow, tagless checkout would make it fail closed.
+          fetch-depth: 0
       # node is preinstalled on ubuntu-latest; the checks use only built-ins + fetch.
       - name: Verify docs/capabilities.json matches reality (registries + blocker PR state)
         run: node scripts/verify-capabilities.mjs
@@ -305,3 +310,10 @@ jobs:
         run: node scripts/verify-internal-versions.mjs
       - name: Verify in-repo package versions are published (registry parity)
         run: node scripts/verify-package-versions.mjs
+      # The only check here that compares the frozen WIRE CONTRACT to the version
+      # it shipped under, rather than comparing declarations to each other. Closes
+      # the hole that let VAID v3 sit in crates/vaid-mint under an unchanged
+      # 0.2.0: Rust has no second declaration to disagree with its manifest, so
+      # every declaration-based check passed. See the script header.
+      - name: Verify frozen vectors have not moved under a released version
+        run: node scripts/verify-vector-freeze.mjs
