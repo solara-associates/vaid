@@ -9,6 +9,50 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.3.0]
+
+### Changed — VAID v3: the document names its issuer and commits to its key (BREAKING)
+
+ADR-0004. `VAID_SIG_VERSION_V3 = 3`. A v2 document does not verify under this
+release and a v3 document does not verify under 0.2.0; a clean break, not a
+migration.
+
+- **`trust_domain`** — the issuing deployment's DNS-shaped name, validated at
+  issuer construction. Compared by byte equality and never normalized: the value
+  is inside the signed bytes, so a verifier that "corrects" it recomputes
+  different bytes from the ones the signer covered.
+- **`kernel_key_thumbprint`** — RFC 9278 thumbprint URI over the RFC 7638 JWK
+  thumbprint of the signing key. **Derived at mint, never supplied.**
+- **`verify_vaid_authenticity` now also checks key commitment**, ordered before
+  the signature check.
+
+Pinned against the **published RFC 8037 Appendix A.3 vector**, and proven to
+produce a thumbprint byte-identical to the Rust and TypeScript implementations
+before the conformance vector was re-frozen.
+
+### Changed — `mint_v1` re-frozen at v3 (BREAKING for anyone pinning the digest)
+
+    old digest a5d73cf487b4eade190acdae31e61322a83dae5639b6891ede3a8d32af0bbf86
+    new digest eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0
+
+### Fixed — `is_expired` no longer raises from a function that promises a `bool`
+
+`is_expired` is now **total** and never raises. It previously raised `ValueError`
+from a function whose signature promises a `bool`, with no mention in the
+docstring, so callers did not guard against it.
+
+`has_conforming_timestamps` is the new explicit `encoding.md` E.6 profile check,
+so a caller wanting strictness asks for it and can distinguish the two failures
+(issue #10).
+
+### Note on the 0.2.0 → 0.3.0 gap
+
+This package's manifest sat at `0.2.0` while `__version__` already read `0.3.0`:
+the v3 work bumped the code and the TypeScript package but missed this manifest
+and this changelog. PyPI therefore served a v2 `vaid-mint` while the repository's
+code was v3. The `verify-internal-versions` gate caught the self-disagreement;
+this release resolves it in the honest direction, since the code really is v3.
+
 ## [0.2.0]
 
 ### Added — public-key-only document verification (additive, non-breaking)

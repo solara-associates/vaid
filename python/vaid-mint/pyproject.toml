@@ -7,7 +7,7 @@ name = "vaid-mint"
 # Independent semver. Additive-minor for new optional fields; MAJOR for any change
 # to the canonical VAID document shape / signing bytes (those break cross-language
 # byte-identity against mint_v1.json).
-version = "0.2.0"
+version = "0.3.0"
 description = "The open, self-hostable reference mint (Python) for the VAID standard: mint a root VAID and mint attenuated child VAIDs (scope/capability-contained delegation)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,7 +34,7 @@ classifiers = [
 # RFC 8785 JCS, byte-identical to the Rust serde_jcs path (locked by mint_v1.json).
 # Do NOT substitute another JCS library without re-proving byte-equality.
 dependencies = [
-    "vaid-pop>=0.1.0",
+    "vaid-pop>=0.2.0",
     "cryptography>=42.0",
     "rfc8785>=0.1.2",
 ]
