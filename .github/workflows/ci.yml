@@ -76,6 +76,9 @@ jobs:
         run: |
           cmp \
             crates/vaid-client/tests/vectors/operator_pop_v1.json \
+            crates/vaid-pop/tests/vectors/operator_pop_v1.json
+          cmp \
+            crates/vaid-client/tests/vectors/operator_pop_v1.json \
             python/vaid-pop/vaid_pop/vectors/operator_pop_v1.json
           cmp \
             crates/vaid-client/tests/vectors/operator_pop_v1.json \
@@ -92,6 +95,11 @@ jobs:
           toolchain: "1.88"
       - name: Rust conformance gate (cargo test -p vaid-client --test conformance)
         run: cargo test -p vaid-client --test conformance --locked
+      # The PACKAGED Rust firewall, the same executable a consumer gets from
+      # `cargo install vaid-pop`. The test gate above proves the source conforms;
+      # this proves the shipped binary does, which is the claim the site makes.
+      - name: Rust conformance gate (packaged firewall)
+        run: cargo run -p vaid-pop --bin vaid-pop-conformance --locked
       - name: Set up Python
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
