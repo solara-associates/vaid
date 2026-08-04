@@ -183,6 +183,7 @@
       "signature_hex": "0bc3dcf68478ad5e839c76328bece0d8de7e1c347ef41d955dd5afd76d1069610aa3c37b07d90f5041d73cd1c668627feb50038544ad762c6098215ff2159100"
     }
   ],
+  "digest_sha256_hex": "991e5e655b46a0e5274e053606497e116f0a9c4869142b9df4a702faa39ad607",
   "ed25519": {
     "_comment": "Deterministic kernel key (same RFC 8032 seed as mint_v1.json and operator_pop_v1.json). EVERY hop is signed by this ONE key: the chain is single-trust-domain, which is what the shipped verifier supports.",
     "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",

@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { ed25519PublicKey, ed25519Sign, fromHex, toHex } from 'vaid-pop';
+import { canonicalize, ed25519PublicKey, ed25519Sign, fromHex, sha256, toHex } from 'vaid-pop';
 
 import {
   canonicalVaidSigningBytes,
@@ -36,6 +36,12 @@ interface ChainEntry {
   document: Vaid;
 }
 
+interface ChainExpected {
+  _comment?: string;
+  assembled_lineage: string[];
+  verification: string;
+}
+
 interface ChainVector {
   ed25519: {
     kernel_private_key_seed_hex: string;
@@ -43,7 +49,8 @@ interface ChainVector {
     kernel_key_thumbprint: string;
   };
   chain: ChainEntry[];
-  expected: { assembled_lineage: string[]; verification: string };
+  expected: ChainExpected;
+  digest_sha256_hex: string;
 }
 
 /** The frozen chain vector, read from the package's `vectors/` directory. */
@@ -119,6 +126,22 @@ test('THE WALK part 2: reproduces the frozen verification verdict', () => {
 
   assert.equal(verdict, VECTOR.expected.verification, 'verification verdict drift');
   assert.equal(verdict, ChainVerification.Attenuated);
+});
+
+test('reproduces the frozen contract digest', () => {
+  // Without this the field would be decoration: present so
+  // scripts/verify-vector-freeze.mjs can pin the vector, but never checked against
+  // what it claims to summarise. The per-hop digests pin each document; this pins the
+  // SET of documents and the verdict.
+  const { _comment, ...expected } = VECTOR.expected;
+  void _comment; // prose is documentation, not contract; it is not digested
+  const contract = { chain: VECTOR.chain, expected };
+
+  assert.equal(
+    toHex(sha256(canonicalize(contract))),
+    VECTOR.digest_sha256_hex,
+    'contract digest drift — the chain or the expected outcome moved',
+  );
 });
 
 test('the frozen chain is three hops, single key, single tenant', () => {
