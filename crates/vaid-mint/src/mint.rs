@@ -42,7 +42,7 @@ pub const MINT_POP_FRESHNESS_SECS: i64 = 300;
 /// would mint an unrestricted child under a *restricted* parent — broader than
 /// the parent. Fail closed: an empty child scope is permitted ONLY when the
 /// parent is itself unrestricted (empty).
-fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
+pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
     if child_scope.is_empty() {
         // Child wants ⊤; allowed only if the parent is also ⊤.
         parent.scope_boundary().is_empty()
@@ -59,7 +59,7 @@ fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
 /// is safe by construction; and an empty *parent* set holds nothing, so every
 /// requested child capability is rejected. This is the deliberate scope/caps
 /// asymmetry — scope empty = ⊤ needs a guard, caps empty = ∅ does not.
-fn caps_attenuate(parent: &Vaid, child_caps: &[String]) -> bool {
+pub(crate) fn caps_attenuate(parent: &Vaid, child_caps: &[String]) -> bool {
     child_caps.iter().all(|c| parent.has_capability(c))
 }
 
