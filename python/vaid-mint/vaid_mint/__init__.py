@@ -52,6 +52,7 @@ from vaid_mint.mint import (
     MintService,
     caps_attenuate,
     scope_attenuates,
+    tenant_attenuates,
 )
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
 from vaid_mint.verify import verify_lineage_hash, verify_vaid_authenticity
@@ -79,6 +80,7 @@ __all__ = [
     "has_capability",
     "scope_attenuates",
     "caps_attenuate",
+    "tenant_attenuates",
     "VAID_SIG_VERSION_V3",
     "MINT_POP_FRESHNESS_SECS",
     "DEFAULT_VAID_TTL_HOURS",

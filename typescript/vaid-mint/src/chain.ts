@@ -52,7 +52,7 @@
  */
 
 import { type Vaid } from './document.js';
-import { capsAttenuate, scopeAttenuates } from './mint.js';
+import { capsAttenuate, scopeAttenuates, tenantAttenuates } from './mint.js';
 import {
   assembleLineage,
   parentResolutionOf,
@@ -251,9 +251,19 @@ export function verifyChain(
   }
 
   // Step 4 — containment at every hop, root first, using the mint-time matchers.
+  //
+  // Tenant is checked as the qualified `(trust_domain, tenant_id)` pair. The mint
+  // refuses cross-tenant delegation, so a conforming chain cannot change tenant
+  // mid-walk; checking it here means a verifier does not have to take the mint's
+  // word for that — the same reasoning that puts scope and capabilities here. See
+  // `tenantAttenuates` for what the guarantee is worth: defence against operator
+  // error, not against a hostile issuer.
   for (let i = 0; i + 1 < chainDocs.length; i += 1) {
     const parent = chainDocs[i]!;
     const child = chainDocs[i + 1]!;
+    if (!tenantAttenuates(parent, child.trust_domain, child.tenant_id)) {
+      return ChainVerification.NotAttenuated;
+    }
     if (!scopeAttenuates(parent, child.scope_boundary)) {
       return ChainVerification.NotAttenuated;
     }

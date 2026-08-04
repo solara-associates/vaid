@@ -24,8 +24,8 @@ use uuid::Uuid;
 
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
-    VAID_SIG_VERSION_V3,
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
+    VaidId, VAID_SIG_VERSION_V3,
 };
 
 fn to_hex(bytes: &[u8]) -> String {

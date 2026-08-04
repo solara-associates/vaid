@@ -54,7 +54,7 @@
 use std::collections::HashMap;
 
 use crate::document::{Vaid, VaidId};
-use crate::mint::{caps_attenuate, scope_attenuates};
+use crate::mint::{caps_attenuate, scope_attenuates, tenant_attenuates};
 use crate::revocation::{assemble_lineage, LineageAssembly, LineageResolver, ParentResolution};
 use crate::verify::verify_vaid_authenticity;
 
@@ -173,9 +173,10 @@ impl ChainVerification {
 /// 3. **Fail closed on an incomplete chain** — a `parent_vaid` that is present but
 ///    not resolvable, a cycle, or an implausible depth all yield
 ///    [`ChainVerification::Unverifiable`].
-/// 4. **Check containment** — `scope_L ⊆ scope_P1 ⊆ … ⊆ scope_root`, and the same
-///    for capabilities, using the **mint-time** matchers so the verify-time check
-///    cannot drift from the one that gated issuance.
+/// 4. **Check containment** — `scope_L ⊆ scope_P1 ⊆ … ⊆ scope_root`, the same for
+///    capabilities, and the qualified `(trust_domain, tenant_id)` pair equal at
+///    every hop, using the **mint-time** matchers so the verify-time check cannot
+///    drift from the one that gated issuance.
 ///
 /// ## What this does not check
 ///
@@ -241,8 +242,18 @@ pub fn verify_chain(
     }
 
     // Step 4 — containment at every hop, root first, using the mint-time matchers.
+    //
+    // Tenant is checked as the qualified `(trust_domain, tenant_id)` pair. The mint
+    // refuses cross-tenant delegation, so a conforming chain cannot change tenant
+    // mid-walk; checking it here means a verifier does not have to take the mint's
+    // word for that — the same reasoning that puts scope and capabilities here.
+    // See `tenant_attenuates` for what the guarantee is actually worth: it is
+    // defence against operator error, not against a hostile issuer.
     for pair in chain_docs.windows(2) {
         let (parent, child) = (pair[0], pair[1]);
+        if !tenant_attenuates(parent, child.trust_domain(), child.tenant_id().as_str()) {
+            return ChainVerification::NotAttenuated;
+        }
         if !scope_attenuates(parent, child.scope_boundary()) {
             return ChainVerification::NotAttenuated;
         }

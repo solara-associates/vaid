@@ -64,7 +64,8 @@ impl LocalMint {
         &self.public_key
     }
 
-    /// Build and kernel-sign a VAID with a caller-chosen id, parent and authority.
+    /// Build and kernel-sign a VAID with a caller-chosen id, parent and authority,
+    /// in the default tenant and trust domain.
     fn sign(
         &self,
         agent_id: AgentId,
@@ -72,12 +73,29 @@ impl LocalMint {
         scope: &[&str],
         caps: &[&str],
     ) -> Vaid {
+        // RFC 2606 reserved, matching the frozen vector's reasoning: a suite that
+        // publishes signable keys must not name a bindable domain.
+        self.sign_as(agent_id, parent_vaid, scope, caps, "vaid.example", "t")
+    }
+
+    /// As [`LocalMint::sign`], with the `(trust_domain, tenant_id)` pair under the
+    /// test's control, so tenant containment can be exercised at verify time.
+    #[allow(clippy::too_many_arguments)]
+    fn sign_as(
+        &self,
+        agent_id: AgentId,
+        parent_vaid: Option<VaidId>,
+        scope: &[&str],
+        caps: &[&str],
+        trust_domain: &str,
+        tenant: &str,
+    ) -> Vaid {
         let now = Utc::now();
         let unsigned = Vaid::with_lineage(
             agent_id,
             AgentClass::new("test"),
             "1.0.0".to_string(),
-            TenantId::new("t"),
+            TenantId::new(tenant),
             now,
             now + Duration::hours(1),
             (0u8..32).collect(),
@@ -86,9 +104,7 @@ impl LocalMint {
             scope.iter().map(|s| s.to_string()).collect(),
             compute_lineage_hash(parent_vaid, &agent_id),
             caps.iter().map(|c| c.to_string()).collect(),
-            // RFC 2606 reserved, matching the frozen vector's reasoning: a suite
-            // that publishes signable keys must not name a bindable domain.
-            "vaid.example".to_string(),
+            trust_domain.to_string(),
             kernel_key_thumbprint(&self.public_key),
         );
         let signature = self.key_pair.sign(&canonical_vaid_signing_bytes(&unsigned));
@@ -370,6 +386,71 @@ fn empty_child_scope_under_restricted_parent_is_not_attenuated() {
         verify_chain(mint.public_key(), &leaf, &bundle),
         ChainVerification::NotAttenuated,
         "an empty (unrestricted) child scope under a restricted parent is an escalation"
+    );
+}
+
+/// CROSS-TENANT. The mint refuses to delegate across a tenant boundary; a
+/// verifier must not have to take its word for that. Every document is authentic
+/// and scope/caps are properly contained — only the tenant differs.
+#[test]
+fn cross_tenant_child_is_not_attenuated() {
+    let mint = LocalMint::new(1);
+
+    let root_id = id(1);
+    let root = mint.sign_as(
+        root_id,
+        None,
+        &["data.tenant"],
+        &["read"],
+        "vaid.example",
+        "acme",
+    );
+    let leaf = mint.sign_as(
+        id(2),
+        Some(vid(&root_id)),
+        &["data.tenant.sub"],
+        &["read"],
+        "vaid.example",
+        "other",
+    );
+
+    assert_eq!(
+        verify_chain(mint.public_key(), &leaf, &PresentedBundle::new(vec![root])),
+        ChainVerification::NotAttenuated,
+        "cross-tenant delegation is denied at mint and must not verify at a third party"
+    );
+}
+
+/// CROSS-TRUST-DOMAIN, same tenant name. This is the case bare `tenant_id`
+/// equality would wave through: two deployments both using the tenant name
+/// `acme` are indistinguishable on that field alone (ADR-0004). Qualifying the
+/// check by `trust_domain` is what catches it.
+#[test]
+fn same_tenant_name_in_a_different_trust_domain_is_not_attenuated() {
+    let mint = LocalMint::new(1);
+
+    let root_id = id(1);
+    let root = mint.sign_as(
+        root_id,
+        None,
+        &["data.tenant"],
+        &["read"],
+        "one.example",
+        "acme",
+    );
+    let leaf = mint.sign_as(
+        id(2),
+        Some(vid(&root_id)),
+        &["data.tenant.sub"],
+        &["read"],
+        "two.example",
+        "acme",
+    );
+
+    assert_eq!(
+        verify_chain(mint.public_key(), &leaf, &PresentedBundle::new(vec![root])),
+        ChainVerification::NotAttenuated,
+        "the same tenant NAME in a different trust domain is a different tenant"
     );
 }
 

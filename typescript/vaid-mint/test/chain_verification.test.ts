@@ -62,19 +62,25 @@ class LocalMint {
     this.publicKey = ed25519PublicKey(this.#seed);
   }
 
-  /** Build and kernel-sign a VAID with a caller-chosen id, parent and authority. */
+  /**
+   * Build and kernel-sign a VAID with a caller-chosen id, parent and authority.
+   * `trustDomain`/`tenant` default to the common case and are overridable so
+   * tenant containment can be exercised at verify time.
+   */
   sign(
     agentId: string,
     parentVaid: VaidId | null,
     scope: readonly string[],
     caps: readonly string[],
+    trustDomain = 'vaid.example',
+    tenant = 't',
   ): Vaid {
     const unsigned = buildUnsignedVaidDocument({
       vaidId: agentId as VaidId,
       agentId,
       agentClass: 'test',
       version: '1.0.0',
-      tenantId: 't' as Vaid['tenant_id'],
+      tenantId: tenant as Vaid['tenant_id'],
       issuedAt: '2026-06-04T12:00:00Z' as Vaid['issued_at'],
       expiresAt: '2026-06-05T12:00:00Z' as Vaid['expires_at'],
       publicKeyDer: Array.from({ length: 32 }, (_, i) => i),
@@ -84,7 +90,7 @@ class LocalMint {
       capabilitySet: caps,
       // RFC 2606 reserved, matching the frozen vector's reasoning: a suite that
       // publishes signable keys must not name a bindable domain.
-      trustDomain: 'vaid.example',
+      trustDomain,
       kernelKeyThumbprint: kernelKeyThumbprint(this.publicKey),
     });
     const signature = ed25519Sign(canonicalVaidSigningBytes(unsigned), this.#seed);
@@ -259,6 +265,52 @@ test('an empty child scope under a restricted parent is not attenuated', () => {
     verifyChain(mint.publicKey, leaf, new PresentedBundle([root])),
     ChainVerification.NotAttenuated,
     'an empty (unrestricted) child scope under a restricted parent is an escalation',
+  );
+});
+
+test('a cross-tenant child is not attenuated', () => {
+  // The mint refuses to delegate across a tenant boundary; a verifier must not have
+  // to take its word for that. Every document is authentic and scope/caps are
+  // properly contained — only the tenant differs.
+  const mint = new LocalMint();
+
+  const root = mint.sign(vid(1), null, ['data.tenant'], ['read'], 'vaid.example', 'acme');
+  const leaf = mint.sign(
+    vid(2),
+    vid(1),
+    ['data.tenant.sub'],
+    ['read'],
+    'vaid.example',
+    'other',
+  );
+
+  assert.equal(
+    verifyChain(mint.publicKey, leaf, new PresentedBundle([root])),
+    ChainVerification.NotAttenuated,
+    'cross-tenant delegation is denied at mint and must not verify at a third party',
+  );
+});
+
+test('the same tenant name in a different trust domain is not attenuated', () => {
+  // The case bare `tenant_id` equality would wave through: two deployments both
+  // using the tenant name `acme` are indistinguishable on that field alone
+  // (ADR-0004). Qualifying by `trust_domain` is what catches it.
+  const mint = new LocalMint();
+
+  const root = mint.sign(vid(1), null, ['data.tenant'], ['read'], 'one.example', 'acme');
+  const leaf = mint.sign(
+    vid(2),
+    vid(1),
+    ['data.tenant.sub'],
+    ['read'],
+    'two.example',
+    'acme',
+  );
+
+  assert.equal(
+    verifyChain(mint.publicKey, leaf, new PresentedBundle([root])),
+    ChainVerification.NotAttenuated,
+    'the same tenant NAME in a different trust domain is a different tenant',
   );
 });
 
