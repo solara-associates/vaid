@@ -92,6 +92,7 @@
 
 pub mod audit;
 pub mod authz;
+pub mod chain;
 pub mod document;
 pub mod error;
 pub mod issuer;
@@ -102,6 +103,7 @@ pub mod revocation;
 pub mod verify;
 
 pub use authz::{AuthorizationGate, PermitAll};
+pub use chain::{verify_chain, ChainVerification, PresentedBundle};
 pub use document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
     VaidId, VAID_SIG_VERSION_V3,
