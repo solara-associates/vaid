@@ -154,6 +154,56 @@ jobs:
       - name: TypeScript mint conformance gate (packaged firewall)
         run: node typescript/vaid-mint/dist/bin/conformance.js
 
+  chain-conformance-drift:
+    name: Chain-presentation drift-check (Rust == Python == TypeScript == vector, byte-identical)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # (a) All three vendored copies of the chain vector MUST be identical.
+      # ADR-0003 §3: this vector is ADDITIVE. It introduces no new signed field and
+      # does NOT re-freeze mint_v1 or mint_pop_v1 — every document inside it is an
+      # ordinary v3 VAID over the existing canonicalization. What it pins that no
+      # other vector does is the WALK: the assembled lineage order and the
+      # verification verdict. Two implementations can agree on every digest and
+      # still disagree there, which is exactly the gap this closes.
+      - name: Cross-language chain-vector byte-identity (cmp)
+        run: |
+          cmp \
+            crates/vaid-mint/tests/vectors/chain_v1.json \
+            python/vaid-mint/vaid_mint/vectors/chain_v1.json
+          cmp \
+            crates/vaid-mint/tests/vectors/chain_v1.json \
+            typescript/vaid-mint/vectors/chain_v1.json
+      # (b) Re-run all three gates against their vendored copies ⇒ each language's
+      # walk == vector, and (via cmp) the vectors are the same bytes ⇒ all three
+      # implementations assemble and adjudicate identically.
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: Rust chain conformance gate (cargo test -p vaid-mint --test chain_conformance)
+        run: cargo test -p vaid-mint --test chain_conformance --locked
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install vaid-pop + vaid-mint + test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python/vaid-pop[test]"
+          python -m pip install "./python/vaid-mint[test]"
+      - name: Python chain conformance gate (pytest)
+        run: python -m pytest python/vaid-mint/tests/test_chain_conformance.py
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install + build TypeScript workspace
+        run: npm ci --prefix typescript && npm run build --prefix typescript
+      - name: TypeScript chain conformance gate (node --test)
+        run: npm test --prefix typescript/vaid-mint
+
   mint-pop-conformance-drift:
     name: Mint-PoP drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
