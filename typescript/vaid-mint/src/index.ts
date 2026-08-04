@@ -84,6 +84,7 @@ export {
   MintService,
   mintPopTimestamp,
   scopeAttenuates,
+  tenantAttenuates,
 } from './mint.js';
 
 export {

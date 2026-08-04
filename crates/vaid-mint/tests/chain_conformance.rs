@@ -67,7 +67,11 @@ fn reproduces_every_frozen_hop_digest() {
 #[test]
 fn reproduces_every_frozen_hop_signature() {
     let v = vector();
-    let seed = unhex(v["ed25519"]["kernel_private_key_seed_hex"].as_str().unwrap());
+    let seed = unhex(
+        v["ed25519"]["kernel_private_key_seed_hex"]
+            .as_str()
+            .unwrap(),
+    );
     let kp = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
 
     assert_eq!(

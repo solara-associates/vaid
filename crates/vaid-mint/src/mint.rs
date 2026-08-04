@@ -51,6 +51,49 @@ pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
     }
 }
 
+/// Tenant containment, as the **qualified pair** `(trust_domain, tenant_id)`.
+/// Both components must match the parent's.
+///
+/// # Why the pair, and not `tenant_id` alone
+///
+/// `tenant_id` is not globally meaningful. It names a tenant *within an unnamed
+/// deployment* and is namespaced by nothing: two self-hosters both minting
+/// `tenant_id: "acme"` produce documents that are indistinguishable on that field
+/// (ADR-0004). Comparing it alone is safe only while every document on a chain
+/// came from one issuer — which is exactly the assumption that stops holding the
+/// moment chains cross kernel keys. Qualifying it by `trust_domain` makes the
+/// check mean the same thing in both worlds, so this does not need redoing later.
+///
+/// # What `trust_domain` is, and what it is therefore worth
+///
+/// **It is issuer-stamped, not holder-supplied.** It is not a field of
+/// [`crate::mint_types::VaidSeed`]; the issuer holds it, validates it at
+/// construction, and stamps it into every document it mints. It is inside the
+/// canonical signing bytes, so it cannot be altered without breaking the kernel
+/// signature.
+///
+/// **But it is self-asserted.** Nothing forces an issuer to stamp a domain it
+/// actually controls, and neither `trust_domain` nor `kernel_key_thumbprint`
+/// establishes attribution on its own — a self-signed document whose thumbprint
+/// matches its own key is internally consistent and entirely unauthorized. The
+/// binding from a trust domain to an authorized key set is out-of-band, static
+/// and cached (ADR-0004, `docs/trust-anchor.md`).
+///
+/// **So state the guarantee honestly: this is defence against operator error, not
+/// against a hostile issuer.** It catches a misconfigured or buggy mint that
+/// delegates across a tenant boundary, and a chain assembled from documents that
+/// were never meant to be in one chain. It does not constrain an issuer whose key
+/// the verifier already trusts: such an issuer can stamp whatever pair it likes
+/// and this check will pass. Only the out-of-band trust-domain-to-key binding
+/// constrains that, and it lives outside this crate.
+pub(crate) fn tenant_attenuates(
+    parent: &Vaid,
+    child_trust_domain: &str,
+    child_tenant: &str,
+) -> bool {
+    parent.trust_domain() == child_trust_domain && parent.tenant_id().as_str() == child_tenant
+}
+
 /// Capability attenuation: is every entry of `child_caps` held by `parent`? Uses
 /// ONLY [`Vaid::has_capability`] (exact membership).
 ///
@@ -248,7 +291,16 @@ impl MintService {
         let seed = &request.seed;
 
         // (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.
-        if seed.tenant_id != parent.tenant_id().as_str() {
+        //
+        // Shares `tenant_attenuates` with verify-time chain walking, so the two
+        // cannot drift. The `trust_domain` component is passed as the parent's
+        // own: at mint time the child's document does not exist yet, and the
+        // domain it will carry is this issuer's, so that component is trivially
+        // satisfied here and the only free variable is the tenant. Behaviour is
+        // unchanged from the inline comparison this replaces — the pair does real
+        // work at verify time, where both documents are already built and may not
+        // share an issuer.
+        if !tenant_attenuates(parent, parent.trust_domain(), &seed.tenant_id) {
             return Err(MintError::Unauthorized(format!(
                 "child tenant '{}' != authenticated parent tenant '{}' — \
                  cross-tenant delegation is denied",

@@ -58,7 +58,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Iterable
 
-from vaid_mint.mint import caps_attenuate, scope_attenuates
+from vaid_mint.mint import caps_attenuate, scope_attenuates, tenant_attenuates
 from vaid_mint.revocation import ParentResolution, assemble_lineage
 from vaid_mint.verify import verify_vaid_authenticity
 
@@ -222,7 +222,16 @@ def verify_chain(
         chain_docs.append(doc)
 
     # Step 4 — containment at every hop, root first, using the mint-time matchers.
+    #
+    # Tenant is checked as the qualified ``(trust_domain, tenant_id)`` pair. The
+    # mint refuses cross-tenant delegation, so a conforming chain cannot change
+    # tenant mid-walk; checking it here means a verifier does not have to take the
+    # mint's word for that — the same reasoning that puts scope and capabilities
+    # here. See ``tenant_attenuates`` for what the guarantee is worth: defence
+    # against operator error, not against a hostile issuer.
     for parent, child in zip(chain_docs, chain_docs[1:]):
+        if not tenant_attenuates(parent, child["trust_domain"], child["tenant_id"]):
+            return ChainVerification.NOT_ATTENUATED
         if not scope_attenuates(parent, child["scope_boundary"]):
             return ChainVerification.NOT_ATTENUATED
         if not caps_attenuate(parent, child["capability_set"]):

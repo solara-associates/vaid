@@ -55,15 +55,18 @@ class LocalMint:
         parent_vaid: str | None,
         scope: list[str],
         caps: list[str],
+        trust_domain: str = "vaid.example",
+        tenant: str = "t",
     ) -> dict:
         """Build and kernel-sign a VAID with a caller-chosen id, parent and
-        authority."""
+        authority. ``trust_domain``/``tenant`` default to the common case and are
+        overridable so tenant containment can be exercised at verify time."""
         unsigned = build_unsigned_vaid_document(
             vaid_id=agent_id,
             agent_id=agent_id,
             agent_class="test",
             version="1.0.0",
-            tenant_id="t",
+            tenant_id=tenant,
             issued_at="2026-06-04T12:00:00Z",
             expires_at="2026-06-05T12:00:00Z",
             public_key_der=list(range(32)),
@@ -73,7 +76,7 @@ class LocalMint:
             capability_set=caps,
             # RFC 2606 reserved, matching the frozen vector's reasoning: a suite
             # that publishes signable keys must not name a bindable domain.
-            trust_domain="vaid.example",
+            trust_domain=trust_domain,
             kernel_key_thumbprint=kernel_key_thumbprint(self.public_key),
         )
         signature = self._key.sign(canonical_vaid_signing_bytes(unsigned))
@@ -238,6 +241,48 @@ def test_empty_child_scope_under_restricted_parent_is_not_attenuated() -> None:
         verify_chain(mint.public_key, leaf, PresentedBundle([root]))
         is ChainVerification.NOT_ATTENUATED
     ), "an empty (unrestricted) child scope under a restricted parent is an escalation"
+
+
+def test_cross_tenant_child_is_not_attenuated() -> None:
+    """CROSS-TENANT. The mint refuses to delegate across a tenant boundary; a
+    verifier must not have to take its word for that. Every document is authentic
+    and scope/caps are properly contained — only the tenant differs."""
+    mint = LocalMint()
+
+    root = mint.sign(vid(1), None, ["data.tenant"], ["read"], tenant="acme")
+    leaf = mint.sign(
+        vid(2), vid(1), ["data.tenant.sub"], ["read"], tenant="other"
+    )
+
+    assert (
+        verify_chain(mint.public_key, leaf, PresentedBundle([root]))
+        is ChainVerification.NOT_ATTENUATED
+    ), "cross-tenant delegation is denied at mint and must not verify at a third party"
+
+
+def test_same_tenant_name_in_a_different_trust_domain_is_not_attenuated() -> None:
+    """CROSS-TRUST-DOMAIN, same tenant name. The case bare ``tenant_id`` equality
+    would wave through: two deployments both using the tenant name ``acme`` are
+    indistinguishable on that field alone (ADR-0004). Qualifying by
+    ``trust_domain`` is what catches it."""
+    mint = LocalMint()
+
+    root = mint.sign(
+        vid(1), None, ["data.tenant"], ["read"], trust_domain="one.example", tenant="acme"
+    )
+    leaf = mint.sign(
+        vid(2),
+        vid(1),
+        ["data.tenant.sub"],
+        ["read"],
+        trust_domain="two.example",
+        tenant="acme",
+    )
+
+    assert (
+        verify_chain(mint.public_key, leaf, PresentedBundle([root]))
+        is ChainVerification.NOT_ATTENUATED
+    ), "the same tenant NAME in a different trust domain is a different tenant"
 
 
 def test_cycle_is_unverifiable() -> None:
