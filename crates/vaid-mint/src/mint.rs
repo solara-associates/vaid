@@ -42,13 +42,68 @@ pub const MINT_POP_FRESHNESS_SECS: i64 = 300;
 /// would mint an unrestricted child under a *restricted* parent — broader than
 /// the parent. Fail closed: an empty child scope is permitted ONLY when the
 /// parent is itself unrestricted (empty).
-fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
+pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
+    scope_attenuates_within(parent.scope_boundary(), child_scope)
+}
+
+/// The same predicate over a bare boundary rather than a document.
+///
+/// A consent attestation carries a `scope_boundary` that belongs to no document,
+/// and the child's authority must be contained by it under EXACTLY this rule —
+/// including the empty-child guard, which is the subtle half. Reimplementing the
+/// rule for the detached case is how the guard would be lost in one of them.
+pub(crate) fn scope_attenuates_within(parent_scope: &[String], child_scope: &[String]) -> bool {
     if child_scope.is_empty() {
         // Child wants ⊤; allowed only if the parent is also ⊤.
-        parent.scope_boundary().is_empty()
+        parent_scope.is_empty()
     } else {
-        child_scope.iter().all(|s| parent.is_in_scope(s))
+        child_scope
+            .iter()
+            .all(|s| crate::document::scope_contains(parent_scope, s))
     }
+}
+
+/// Tenant containment, as the **qualified pair** `(trust_domain, tenant_id)`.
+/// Both components must match the parent's.
+///
+/// # Why the pair, and not `tenant_id` alone
+///
+/// `tenant_id` is not globally meaningful. It names a tenant *within an unnamed
+/// deployment* and is namespaced by nothing: two self-hosters both minting
+/// `tenant_id: "acme"` produce documents that are indistinguishable on that field
+/// (ADR-0004). Comparing it alone is safe only while every document on a chain
+/// came from one issuer — which is exactly the assumption that stops holding the
+/// moment chains cross kernel keys. Qualifying it by `trust_domain` makes the
+/// check mean the same thing in both worlds, so this does not need redoing later.
+///
+/// # What `trust_domain` is, and what it is therefore worth
+///
+/// **It is issuer-stamped, not holder-supplied.** It is not a field of
+/// [`crate::mint_types::VaidSeed`]; the issuer holds it, validates it at
+/// construction, and stamps it into every document it mints. It is inside the
+/// canonical signing bytes, so it cannot be altered without breaking the kernel
+/// signature.
+///
+/// **But it is self-asserted.** Nothing forces an issuer to stamp a domain it
+/// actually controls, and neither `trust_domain` nor `kernel_key_thumbprint`
+/// establishes attribution on its own — a self-signed document whose thumbprint
+/// matches its own key is internally consistent and entirely unauthorized. The
+/// binding from a trust domain to an authorized key set is out-of-band, static
+/// and cached (ADR-0004, `docs/trust-anchor.md`).
+///
+/// **So state the guarantee honestly: this is defence against operator error, not
+/// against a hostile issuer.** It catches a misconfigured or buggy mint that
+/// delegates across a tenant boundary, and a chain assembled from documents that
+/// were never meant to be in one chain. It does not constrain an issuer whose key
+/// the verifier already trusts: such an issuer can stamp whatever pair it likes
+/// and this check will pass. Only the out-of-band trust-domain-to-key binding
+/// constrains that, and it lives outside this crate.
+pub(crate) fn tenant_attenuates(
+    parent: &Vaid,
+    child_trust_domain: &str,
+    child_tenant: &str,
+) -> bool {
+    parent.trust_domain() == child_trust_domain && parent.tenant_id().as_str() == child_tenant
 }
 
 /// Capability attenuation: is every entry of `child_caps` held by `parent`? Uses
@@ -59,8 +114,16 @@ fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
 /// is safe by construction; and an empty *parent* set holds nothing, so every
 /// requested child capability is rejected. This is the deliberate scope/caps
 /// asymmetry — scope empty = ⊤ needs a guard, caps empty = ∅ does not.
-fn caps_attenuate(parent: &Vaid, child_caps: &[String]) -> bool {
-    child_caps.iter().all(|c| parent.has_capability(c))
+pub(crate) fn caps_attenuate(parent: &Vaid, child_caps: &[String]) -> bool {
+    caps_attenuate_within(parent.capability_set(), child_caps)
+}
+
+/// The same predicate over a bare capability set rather than a document — the
+/// attestation counterpart of [`scope_attenuates_within`].
+pub(crate) fn caps_attenuate_within(parent_caps: &[String], child_caps: &[String]) -> bool {
+    child_caps
+        .iter()
+        .all(|c| crate::document::caps_contain(parent_caps, c))
 }
 
 /// The mint service. Holds the issuer (kernel signer) and the audit sink, plus
@@ -248,7 +311,16 @@ impl MintService {
         let seed = &request.seed;
 
         // (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.
-        if seed.tenant_id != parent.tenant_id().as_str() {
+        //
+        // Shares `tenant_attenuates` with verify-time chain walking, so the two
+        // cannot drift. The `trust_domain` component is passed as the parent's
+        // own: at mint time the child's document does not exist yet, and the
+        // domain it will carry is this issuer's, so that component is trivially
+        // satisfied here and the only free variable is the tenant. Behaviour is
+        // unchanged from the inline comparison this replaces — the pair does real
+        // work at verify time, where both documents are already built and may not
+        // share an issuer.
+        if !tenant_attenuates(parent, parent.trust_domain(), &seed.tenant_id) {
             return Err(MintError::Unauthorized(format!(
                 "child tenant '{}' != authenticated parent tenant '{}' — \
                  cross-tenant delegation is denied",

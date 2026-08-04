@@ -33,6 +33,23 @@ Usage::
 """
 
 from vaid_mint.audit import AuditEntry, AuditSink, InMemoryAudit, NoopAudit
+from vaid_mint.attestation import (
+    ATTESTATION_VERSION,
+    AttestationBundle,
+    build_unsigned_attestation,
+    canonical_attestation_signing_bytes,
+    verify_attestation_authenticity,
+)
+from vaid_mint.chain import (
+    ChainVerification,
+    KernelKeyMap,
+    KernelKeyResolver,
+    PresentedBundle,
+    SingleKernelKey,
+    verify_chain,
+    verify_chain_at,
+    verify_chain_with,
+)
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
 from vaid_mint.document import (
     VAID_SIG_VERSION_V3,
@@ -51,6 +68,7 @@ from vaid_mint.mint import (
     MintService,
     caps_attenuate,
     scope_attenuates,
+    tenant_attenuates,
 )
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
 from vaid_mint.verify import verify_lineage_hash, verify_vaid_authenticity
@@ -78,6 +96,7 @@ __all__ = [
     "has_capability",
     "scope_attenuates",
     "caps_attenuate",
+    "tenant_attenuates",
     "VAID_SIG_VERSION_V3",
     "MINT_POP_FRESHNESS_SECS",
     "DEFAULT_VAID_TTL_HOURS",
@@ -89,6 +108,19 @@ __all__ = [
     "assemble_lineage",
     "verify_vaid_authenticity",
     "verify_lineage_hash",
+    "verify_chain",
+    "ChainVerification",
+    "PresentedBundle",
+    "verify_chain_with",
+    "verify_chain_at",
+    "KernelKeyResolver",
+    "SingleKernelKey",
+    "KernelKeyMap",
+    "AttestationBundle",
+    "ATTESTATION_VERSION",
+    "build_unsigned_attestation",
+    "canonical_attestation_signing_bytes",
+    "verify_attestation_authenticity",
     "AuditSink",
     "AuditEntry",
     "InMemoryAudit",

@@ -84,6 +84,7 @@ export {
   MintService,
   mintPopTimestamp,
   scopeAttenuates,
+  tenantAttenuates,
 } from './mint.js';
 
 export {
@@ -109,6 +110,28 @@ export {
 } from './revocation.js';
 
 export { verifyLineageHash, verifyVaidAuthenticity } from './verify.js';
+
+export {
+  ChainVerification,
+  KernelKeyMap,
+  PresentedBundle,
+  SingleKernelKey,
+  isAttenuated,
+  verifyChain,
+  verifyChainAt,
+  verifyChainWith,
+  type KernelKeyResolver,
+} from './chain.js';
+
+export {
+  ATTESTATION_VERSION,
+  AttestationBundle,
+  buildUnsignedAttestation,
+  canonicalAttestationSigningBytes,
+  isCurrent,
+  verifyAttestationAuthenticity,
+  type ConsentAttestation,
+} from './attestation.js';
 
 export {
   kernelKeyThumbprint,

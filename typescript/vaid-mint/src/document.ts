@@ -232,9 +232,36 @@ export function hasConformingTimestamps(vaid: Vaid): boolean {
  * This is the SINGLE scope matcher — the mint-time attenuation check and any
  * runtime scope check both call it, so they cannot drift.
  */
+/**
+ * Is `resource` within `boundary`? An empty boundary means unrestricted (⊤).
+ *
+ * THE scope matcher. {@link isInScope} delegates here rather than implementing it,
+ * so a caller holding a bare boundary — a consent attestation's `scope_boundary`,
+ * which is attached to no document — is matched by exactly the same rule as a
+ * document's own. Duplicating the rule for the detached case is how the two would
+ * drift.
+ */
+export function scopeContains(
+  boundary: readonly string[],
+  resource: string,
+): boolean {
+  if (boundary.length === 0) return true;
+  return boundary.some((scope) => resource.startsWith(scope));
+}
+
+/**
+ * Does `capabilities` hold `capability` (exact membership)? THE capability matcher;
+ * {@link hasCapability} delegates here, for the same reason.
+ */
+export function capsContain(
+  capabilities: readonly string[],
+  capability: string,
+): boolean {
+  return capabilities.includes(capability);
+}
+
 export function isInScope(vaid: Vaid, resource: string): boolean {
-  if (vaid.scope_boundary.length === 0) return true;
-  return vaid.scope_boundary.some((scope) => resource.startsWith(scope));
+  return scopeContains(vaid.scope_boundary, resource);
 }
 
 /**
@@ -242,5 +269,5 @@ export function isInScope(vaid: Vaid, resource: string): boolean {
  * capability-membership predicate.
  */
 export function hasCapability(vaid: Vaid, capability: string): boolean {
-  return vaid.capability_set.includes(capability);
+  return capsContain(vaid.capability_set, capability);
 }
