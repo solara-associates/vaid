@@ -19,17 +19,41 @@ import {
   checkVaidIdEqualsAgentId,
   ConformanceError,
   loadVector,
+  bundledVectorNames,
   run,
+  VECTOR_CHECKS,
 } from '../src/conformance.js';
 
-test('the packaged firewall passes against both bundled vectors', () => {
-  const { document, mintPop } = run();
-  assert.equal(document.digest_sha256_hex.length, 64);
-  assert.equal(document.ed25519.signature_hex.length, 128);
-  // The mint-PoP vector must actually be reached — a firewall that silently
-  // checked only the document would still pass every assertion above it.
-  assert.equal(mintPop.digest_sha256_hex.length, 64);
-  assert.notEqual(mintPop.digest_sha256_hex, document.digest_sha256_hex);
+test('the packaged firewall passes against EVERY bundled vector', () => {
+  const result = run();
+  const covered = Object.keys(result).sort();
+
+  // Every vector that ships is reached — not a fixed list this test also has to
+  // remember. That duplication is precisely what let a new vector ship unchecked.
+  assert.deepEqual(covered, bundledVectorNames());
+
+  // Each one produced a real digest, and no two are the same — a firewall that
+  // silently checked one vector four times would pass a count assertion.
+  const digests = covered.map((n) => result[n]!.digest_sha256_hex);
+  for (const d of digests) assert.equal(d.length, 64);
+  assert.equal(new Set(digests).size, digests.length);
+});
+
+test('a vector shipped with no check is a BLOCKER, not a silent pass', () => {
+  // The defect this change exists to close, asserted directly: the firewall must
+  // refuse a vector it does not know how to check rather than ignoring it.
+  const present = bundledVectorNames();
+  const known = Object.keys(VECTOR_CHECKS);
+  assert.deepEqual(
+    present.filter((n) => !known.includes(n)),
+    [],
+    'a bundled vector has no entry in VECTOR_CHECKS',
+  );
+  assert.deepEqual(
+    known.filter((n) => !present.includes(n)),
+    [],
+    'VECTOR_CHECKS names a vector that is not bundled',
+  );
 });
 
 test('a divergent digest is reported as a BLOCKER, not swallowed', () => {

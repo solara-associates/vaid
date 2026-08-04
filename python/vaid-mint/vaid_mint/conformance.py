@@ -26,8 +26,11 @@ against the managed authority's VAID format.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from importlib.resources import files
+
+import rfc8785
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -36,6 +39,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from vaid_pop import canonical_request_signing_bytes, verify_signed_payload
 
+from vaid_mint.attestation import (
+    canonical_attestation_signing_bytes,
+    verify_attestation_authenticity,
+)
+from vaid_mint.chain import PresentedBundle, verify_chain
 from vaid_mint.document import canonical_vaid_signing_bytes, compute_lineage_hash
 from vaid_mint.mint_types import VaidSeed, build_mint_pop_payload
 
@@ -192,41 +200,155 @@ def check_mint_pop(v: dict) -> None:
         )
 
 
+def load_named_vector(name: str) -> dict:
+    """Read one bundled vector by filename."""
+    return json.loads(files("vaid_mint").joinpath(f"vectors/{name}").read_text())
+
+
+def check_chain(v: dict) -> None:
+    """`chain_v1.json` — the WALK. Per-hop digests and signatures, the contract
+    digest over the whole frozen chain, and the verdict a third party reaches."""
+    seed = bytes.fromhex(v["ed25519"]["kernel_private_key_seed_hex"])
+    key = Ed25519PrivateKey.from_private_bytes(seed)
+
+    for entry in v["chain"]:
+        digest = canonical_vaid_signing_bytes(entry["document"])
+        if digest.hex() != entry["digest_sha256_hex"]:
+            raise ConformanceError(
+                f"chain hop {entry['_role']}: document digest != frozen vector"
+            )
+        if key.sign(digest).hex() != entry["signature_hex"]:
+            raise ConformanceError(
+                f"chain hop {entry['_role']}: kernel signature != frozen vector"
+            )
+
+    expected = {k: val for k, val in v["expected"].items() if k != "_comment"}
+    contract = rfc8785.dumps({"chain": v["chain"], "expected": expected})
+    if hashlib.sha256(contract).hexdigest() != v["digest_sha256_hex"]:
+        raise ConformanceError("chain contract digest != frozen vector")
+
+    docs = [
+        {**e["document"], "kernel_signature": list(bytes.fromhex(e["signature_hex"]))}
+        for e in v["chain"]
+    ]
+    verdict = verify_chain(
+        bytes.fromhex(v["ed25519"]["kernel_public_key_hex"]), docs[-1], PresentedBundle(docs)
+    )
+    if verdict.value != v["expected"]["verification"]:
+        raise ConformanceError(
+            f"chain verdict {verdict.value!r} != frozen {v['expected']['verification']!r} "
+            "— the installed verifier disagrees with the frozen walk"
+        )
+
+
+def check_attestation(v: dict) -> None:
+    """`attestation_v1.json` — the consent attestation: canonicalization,
+    signature, and that the frozen signature verifies as authentic."""
+    a = v["attestation"]
+    digest = canonical_attestation_signing_bytes(a)
+    if digest.hex() != v["digest_sha256_hex"]:
+        raise ConformanceError("attestation digest != frozen vector")
+
+    seed = bytes.fromhex(v["ed25519"]["kernel_private_key_seed_hex"])
+    if Ed25519PrivateKey.from_private_bytes(seed).sign(digest).hex() != v["signature_hex"]:
+        raise ConformanceError("attestation signature != frozen vector")
+
+    signed = {**a, "signature": list(bytes.fromhex(v["signature_hex"]))}
+    if not verify_attestation_authenticity(
+        bytes.fromhex(v["ed25519"]["kernel_public_key_hex"]), signed
+    ):
+        raise ConformanceError("the frozen attestation must verify as authentic")
+
+
+#: Every vector this firewall knows how to check, by filename.
+#:
+#: The firewall ENUMERATES what actually ships and dispatches through this table
+#: rather than naming a fixed set, and it fails in BOTH directions — see
+#: :func:`run`. Adding a vector to the package without adding it here is a hard
+#: failure, by design.
+VECTOR_CHECKS = {
+    "mint_v1.json": [
+        check_document_digest,
+        check_kernel_signature,
+        check_lineage_hash,
+        check_vaid_id_equals_agent_id,
+    ],
+    "mint_pop_v1.json": [check_mint_pop],
+    "chain_v1.json": [check_chain],
+    "attestation_v1.json": [check_attestation],
+}
+
+
+def bundled_vector_names() -> list[str]:
+    """Every `.json` vector actually present in the INSTALLED package.
+
+    Read from the package rather than from a list in this file: a list is what
+    silently stops matching reality.
+    """
+    return sorted(
+        p.name
+        for p in files("vaid_mint").joinpath("vectors").iterdir()
+        if p.name.endswith(".json")
+    )
+
+
 def run() -> dict:
-    """Run all firewall checks against the bundled vector. Raises
-    ConformanceError on any divergence; returns the vector on PASS."""
-    v = load_vector()
-    check_document_digest(v)
-    check_kernel_signature(v)
-    check_lineage_hash(v)
-    check_vaid_id_equals_agent_id(v)
-    pop = load_mint_pop_vector()
-    check_mint_pop(pop)
-    return {"document": v, "mint_pop": pop}
+    """Run the firewall over every vector the installed package ships.
+
+    Fails in BOTH directions, because each direction hides a different defect:
+
+    - a vector PRESENT in the package with no entry in :data:`VECTOR_CHECKS` is a
+      hard failure. This is the defect that motivated the change: the firewall
+      named a fixed set, so a release whose entire purpose was a new vector passed
+      a check that never looked at it. Silence there is indistinguishable from
+      coverage.
+    - a vector NAMED in :data:`VECTOR_CHECKS` but ABSENT from the package is also a
+      hard failure — a checker that quietly checks nothing is the same masked-green
+      defect wearing the other hat.
+
+    Note what this does and does not buy. It cannot verify a vector nobody has
+    written a checker for; nothing can. What it guarantees is that such a vector
+    cannot ship *quietly* — the firewall goes red until someone says what the
+    vector means.
+    """
+    present = set(bundled_vector_names())
+    known = set(VECTOR_CHECKS)
+
+    unchecked = sorted(present - known)
+    if unchecked:
+        raise ConformanceError(
+            "vector(s) ship in this package but no firewall check covers them: "
+            + ", ".join(unchecked)
+            + " — add a checker to VECTOR_CHECKS. A shipped-but-unchecked vector "
+            "makes a PASS mean less than it appears to."
+        )
+
+    missing = sorted(known - present)
+    if missing:
+        raise ConformanceError(
+            "firewall expects vector(s) that are not in this package: "
+            + ", ".join(missing)
+            + " — the packaging dropped them, or the check is stale."
+        )
+
+    results = {}
+    for name in sorted(present):
+        vector = load_named_vector(name)
+        for check in VECTOR_CHECKS[name]:
+            check(vector)
+        results[name] = vector
+    return results
 
 
-# --- pytest discovery ---
-
-
-def test_packaged_document_digest_matches_frozen_vector() -> None:
-    check_document_digest(load_vector())
-
-
-def test_packaged_kernel_signature_matches_frozen_vector() -> None:
-    check_kernel_signature(load_vector())
-
-
-def test_packaged_lineage_hash_matches_frozen_vector() -> None:
-    check_lineage_hash(load_vector())
-
-
-def test_packaged_vaid_id_equals_agent_id() -> None:
-    check_vaid_id_equals_agent_id(load_vector())
-
-
-def test_packaged_mint_pop_matches_frozen_vector() -> None:
-    check_mint_pop(load_mint_pop_vector())
-
+# NOTE: this module deliberately contains no `test_` functions.
+#
+# It used to. They were never collected: pytest's default `python_files` glob is
+# `test_*.py`, which `conformance.py` does not match, so five functions that looked
+# like coverage were run by nothing in CI. That is the same defect this module now
+# guards against — something that reads as checked and is not — one level up.
+#
+# The real tests live in `tests/test_packaged_conformance.py`, which pytest does
+# collect and which CI runs.
 
 def main() -> int:
     try:
@@ -234,14 +356,15 @@ def main() -> int:
     except ConformanceError as exc:
         print(f"CROSS-LANGUAGE MINT FIREWALL: MISMATCH — BLOCKER\n{exc}")
         return 1
-    doc, pop = result["document"], result["mint_pop"]
     print(
-        "CROSS-LANGUAGE MINT FIREWALL: PASS — installed mint == frozen vectors, "
-        "byte-for-byte\n"
-        f"  document digest    = {doc['digest_sha256_hex']}\n"
-        f"  document signature = {doc['ed25519']['signature_hex']}\n"
-        f"  mint-PoP digest    = {pop['digest_sha256_hex']}"
+        f"CROSS-LANGUAGE MINT FIREWALL: PASS — installed mint == {len(result)} frozen "
+        "vector(s), byte-for-byte"
     )
+    # Every vector is named with its digest. The COUNT is the point: a release
+    # that adds a vector visibly adds a line here, so "did the firewall look at
+    # the thing this release was about" is answerable from the output alone.
+    for name in sorted(result):
+        print(f"  {name:22} {result[name]['digest_sha256_hex']}")
     return 0
 
 
