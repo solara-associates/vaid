@@ -9,6 +9,46 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.4.1]
+
+### Fixed — the packaged firewall checked two of four vectors and printed PASS
+
+`vaid-mint-conformance` is what the quickstart tells a consumer to run. In 0.4.0 it
+named a fixed set of vectors — `mint_v1` and `mint_pop_v1` — so it verified neither
+`chain_v1` nor `attestation_v1`, the two vectors 0.4.0 existed to ship, and printed
+PASS regardless. **The artifact was correct; the check that vouched for it was not.**
+A consumer-facing check that overstates what it verified is worse than no check,
+because it is indistinguishable from coverage.
+
+The firewall now **enumerates the vectors actually present in the installed
+package** and dispatches through a filename → checker table, failing in BOTH
+directions:
+
+- a vector present with no registered checker is a hard failure — the defect above;
+- a registered checker whose vector is absent is a hard failure — a checker that
+  quietly checks nothing is the same defect wearing the other hat.
+
+It cannot verify a vector nobody has written a checker for; nothing can. What it
+guarantees is that such a vector cannot ship *quietly*.
+
+The output now names every vector with its digest and states the count, so what was
+actually checked is answerable from the output rather than from the source:
+
+```
+CROSS-LANGUAGE MINT FIREWALL: PASS — installed mint == 4 frozen vector(s), byte-for-byte
+  attestation_v1.json    50c20577...
+  chain_v1.json          991e5e65...
+  mint_pop_v1.json       5360ff1f...
+  mint_v1.json           eef6c92f...
+```
+
+`chain_v1` and `attestation_v1` gain real packaged checks, including the chain
+**walk verdict** — a third party's actual answer, not only its bytes.
+
+**Patch release. No format change and no vector change:** every frozen vector is
+byte-identical to 0.4.0, `sig_version` and `att_version` are unchanged, and no
+public API moved. Only the packaged conformance check differs.
+
 ## [0.4.0]
 
 ### Added — third-party end-to-end lineage verification (ADR-0003)
