@@ -27,6 +27,7 @@
 //
 // Run: node scripts/verify-package-versions.mjs   (also wired into CI)
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -57,6 +58,81 @@ const WAIVERS = [];
 // silently waive the published Rust and Python packages too.
 const WAIVED = new Map();
 for (const w of WAIVERS) for (const n of w.names) WAIVED.set(`${w.registry}:${n}`, w);
+
+/* --------------------------- release tag parity --------------------------- */
+//
+// The SECOND assertion this script makes, and the one that closes a blind spot in
+// verify-vector-freeze.mjs rather than duplicating it.
+//
+// That check compares each vector against the release tag FOR THE PACKAGE'S CURRENT
+// VERSION. It therefore protects only the version the repo sits at right now: a
+// release that ships untagged and is then superseded is never checked by it, and the
+// gap closes silently when the next release is tagged. That is not hypothetical —
+// vaid-pop 0.2.0 shipped untagged, its vectors sat in that check's "NOT CHECKED"
+// list, and the gap was closed by 0.2.1 being tagged rather than by anyone noticing.
+//
+// The failure mode is an UNTAGGED PUBLISH, not an unchecked history, so this asserts
+// exactly that: every version on the registry has a tag. It fires at the moment the
+// publish happens, when the commit is still obvious. Recovering it afterwards means
+// archaeology — reading .cargo_vcs_info.json out of a .crate, or matching an sdist's
+// bytes against every commit, which is what backfilling the six pre-0.2 releases took.
+//
+// Deciding NOT to enumerate tags in verify-vector-freeze.mjs instead was deliberate:
+// that check is offline by design ("cannot be affected by an outage"), and comparing
+// today's vector against every historical tag would fail on legitimate re-freezes —
+// mint_v1.json moved at the ADR-0004 v3 break, correctly.
+//
+// YANKED VERSIONS STILL REQUIRE A TAG. Yanked means "exists but must not resolve",
+// not "never happened"; the tag is what makes it auditable afterwards.
+
+/** Every tag in the repository. Fails CLOSED: without tags this cannot assert. */
+let TAGS;
+try {
+  TAGS = new Set(
+    execFileSync('git', ['tag', '--list'], { cwd: fileURLToPath(ROOT), encoding: 'utf8' })
+      .split('\n').map((s) => s.trim()).filter(Boolean),
+  );
+} catch (e) {
+  console.error(`✗ RELEASE TAG PARITY FAILED — cannot list git tags (failing closed): ${e.message}`);
+  console.error('  In CI this usually means a shallow checkout. Use `fetch-depth: 0`.');
+  process.exit(1);
+}
+
+const ECO = { 'crates.io': 'rust', pypi: 'python', npm: 'npm' };
+
+/**
+ * The release tag for one published version, using the same three forms
+ * verify-vector-freeze.mjs resolves — most specific first, ecosystem form as the
+ * fallback. Kept identical on purpose: two checks disagreeing about what a release
+ * tag looks like would be worse than either being absent.
+ */
+function releaseTagFor(eco, name, version) {
+  for (const t of [`${eco}-${name}-v${version}`, `${eco}-v${version}`, `v${version}`]) {
+    if (TAGS.has(t)) return t;
+  }
+  return null;
+}
+
+/** Every version published on a registry, newest-first order not guaranteed. */
+async function publishedVersions(registry, name) {
+  const url =
+    registry === 'crates.io' ? `https://crates.io/api/v1/crates/${name}`
+    : registry === 'pypi'    ? `https://pypi.org/pypi/${name}/json`
+    : registry === 'npm'     ? `https://registry.npmjs.org/${name}`
+    : null;
+  if (!url) throw new Error(`unknown registry '${registry}'`);
+  let res;
+  try { res = await fetch(url, { headers: UA }); }
+  catch (e) { throw new Error(`network error fetching ${url}: ${e.message}`); }
+  // A package with nothing published yet is not an error here; the parity check
+  // above is what reports "bumped but not released".
+  if (res.status === 404) return [];
+  if (res.status !== 200) throw new Error(`unexpected HTTP ${res.status} from ${registry} for ${name}`);
+  const j = await res.json();
+  if (registry === 'crates.io') return j.versions.map((v) => v.num);
+  if (registry === 'pypi') return Object.keys(j.releases);
+  return Object.keys(j.versions);
+}
 
 const failures = [];
 const notes = [];
@@ -163,6 +239,28 @@ for (const p of pkgs) {
   }
 }
 
+// ── release tag parity ──────────────────────────────────────────────────────
+for (const p of pkgs) {
+  if (p.skip) continue;
+  const eco = ECO[p.registry];
+  try {
+    const versions = await publishedVersions(p.registry, p.name);
+    const untagged = versions.filter((v) => releaseTagFor(eco, p.name, v) === null).sort();
+    if (untagged.length) {
+      failures.push(
+        `  ✗ [${p.dir}] ${p.name}: published on ${p.registry} but NOT TAGGED: ${untagged.join(', ')}` +
+        ` — tag the release commit as ${eco}-${p.name}-v<version> (or ${eco}-v<version>).` +
+        ` An untagged release cannot be frozen, diffed or audited, and the commit gets` +
+        ` harder to identify the longer it waits.`,
+      );
+    } else if (versions.length) {
+      notes.push(`  · [${p.dir}] ${p.name} — ${versions.length} published version(s), all tagged`);
+    }
+  } catch (e) {
+    failures.push(`  ✗ [${p.dir}] could not verify release tags (failing closed): ${e.message}`);
+  }
+}
+
 // A waiver naming a package that no longer exists is dead text asserting
 // something about nothing. Fail, so it gets deleted rather than read as cover.
 for (const w of WAIVERS) {
@@ -184,7 +282,8 @@ for (const p of waived.sort((a, b) => a.dir.localeCompare(b.dir))) {
 }
 
 if (failures.length) {
-  console.error(`\n✗ REGISTRY PARITY FAILED — an in-repo version is not on its registry:\n${failures.join('\n')}\n`);
+  console.error(`\n✗ REGISTRY PARITY FAILED — an in-repo version is not on its registry, or a published release has no tag:\n${failures.join('\n')}\n`);
   process.exit(1);
 }
 console.log(`\n✓ registry parity — ${pkgs.filter((p) => !p.skip).length} package(s) checked: ${pkgs.filter((p) => !p.skip).length - waived.length} published, ${waived.length} waived.`);
+console.log('✓ release tag parity — every published version has a release tag.');
