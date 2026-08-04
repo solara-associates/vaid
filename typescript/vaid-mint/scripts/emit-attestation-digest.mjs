@@ -54,6 +54,10 @@ const unsigned = buildUnsignedAttestation({
   childVaid: CHILD_UUID,
   childTrustDomain: 'b.example',
   childTenantId: 'aifactory',
+  // Fixed instants: a probe that depends on the wall clock cannot be diffed across
+  // three processes.
+  issuedAt: '2026-06-04T12:00:00Z',
+  expiresAt: '2026-06-05T12:00:00Z',
   scopeBoundary: ['data.aifactory.sub'],
   capabilitySet: ['read'],
   trustDomain: 'a.example',

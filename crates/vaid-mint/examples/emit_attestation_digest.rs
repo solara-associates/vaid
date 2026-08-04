@@ -49,6 +49,14 @@ fn main() {
         VaidId::from_uuid(Uuid::parse_str(CHILD_UUID).unwrap()),
         "b.example".to_string(),
         "aifactory".to_string(),
+        // Fixed instants, as elsewhere in the vectors: a probe that depends on the
+        // wall clock cannot be diffed across three processes.
+        chrono::DateTime::parse_from_rfc3339("2026-06-04T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        chrono::DateTime::parse_from_rfc3339("2026-06-05T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
         vec!["data.aifactory.sub".to_string()],
         vec!["read".to_string()],
         "a.example".to_string(),

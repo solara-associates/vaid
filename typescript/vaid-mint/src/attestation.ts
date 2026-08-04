@@ -54,18 +54,31 @@
  * a deployment needs to tell the two apart, the right fix is a *diagnostic* that
  * reports which hops lacked consent — not a rejection branch in the verifier.
  *
- * ## What is deliberately absent
+ * ## A time bound is a mitigation, not withdrawal
  *
- * **No timestamps.** An `expires_at` nobody consults is decoration, and chain
- * verification deliberately does not consult expiry for VAID documents either.
- * Replay is bound structurally instead: an attestation names both `parent_vaid` and
- * `child_vaid`, and both are fresh UUIDv4s, so it cannot be moved onto a different
- * pair.
+ * An attestation carries `issued_at` and `expires_at`, and {@link verifyChainAt}
+ * refuses one outside its window with `ChainVerification.ConsentExpired`.
+ *
+ * **This does not let a parent withdraw consent.** It bounds how long stale consent
+ * remains usable; it does nothing about consent an organisation wants to retract
+ * *inside* its window. Retraction needs durable revocation, and **durable revocation
+ * does not exist in this implementation** — the reference stores are in-memory and
+ * do not survive restart (`docs/spec/revocation.md` R.4.6). Until it does, the
+ * honest statement is that consent is time-bounded, not revocable.
+ *
+ * This is the same distinction R.5 draws for VAID time-to-live, and it is stated
+ * here for the same reason: a validity window is exactly the kind of field that gets
+ * read as solving withdrawal when it does not. Choosing a short `expires_at` is the
+ * whole of the mitigation.
+ *
+ * `expires_at` is **required and has no default**. Consent that outlives its purpose
+ * should be somebody's stated intention, never a value that arrived by omission.
  */
 
 import { canonicalize, ed25519Verify, sha256, type VaidId } from 'vaid-pop';
 
 import { isValidTrustDomain, kernelKeyThumbprint } from './issuerIdentity.js';
+import { MINT_POP_FRESHNESS_SECS } from './mint.js';
 
 /**
  * Attestation format discriminant. Independent of `sig_version`: this is a separate
@@ -102,6 +115,16 @@ export interface ConsentAttestation {
   child_trust_domain: string;
   /** The tenant the parent consents to the child claiming. MUST equal the child's. */
   child_tenant_id: string;
+  /** When this consent was issued. E.6 profile, as in the VAID document. */
+  issued_at: string;
+  /**
+   * When this consent lapses. **Required; there is no default.**
+   *
+   * Past this instant the attestation is `ChainVerification.ConsentExpired` —
+   * authentic, and no longer usable. See the module docs: this bounds stale consent,
+   * it does not provide withdrawal.
+   */
+  expires_at: string;
   /** The maximum scope consented to; the child's own must be contained by it. */
   scope_boundary: string[];
   /** The maximum capabilities consented to. */
@@ -127,6 +150,8 @@ export function buildUnsignedAttestation(fields: {
   childVaid: VaidId;
   childTrustDomain: string;
   childTenantId: string;
+  issuedAt: string;
+  expiresAt: string;
   scopeBoundary: readonly string[];
   capabilitySet: readonly string[];
   trustDomain: string;
@@ -138,6 +163,8 @@ export function buildUnsignedAttestation(fields: {
     child_vaid: fields.childVaid,
     child_trust_domain: fields.childTrustDomain,
     child_tenant_id: fields.childTenantId,
+    issued_at: fields.issuedAt,
+    expires_at: fields.expiresAt,
     scope_boundary: [...fields.scopeBoundary],
     capability_set: [...fields.capabilitySet],
     trust_domain: fields.trustDomain,
@@ -193,6 +220,50 @@ export function verifyAttestationAuthenticity(
   } catch {
     return false;
   }
+}
+
+/**
+ * Parse an E.6 timestamp (whole-second RFC 3339 UTC, literal `Z`) to epoch
+ * milliseconds, or `null` when unparseable.
+ *
+ * Every caller treats `null` as *outside the window*. That direction is deliberate:
+ * a timestamp that cannot be read is not a timestamp that can be shown to be
+ * current. `isExpired` had the opposite behaviour once — `Date.parse` yields `NaN`,
+ * every comparison against `NaN` is false, and an unreadable expiry silently read as
+ * "not expired". That fail-open is not repeated here.
+ */
+function parseE6(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Is this consent inside its validity window at `now`? Mirror of the Rust
+ * `ConsentAttestation::is_current`.
+ *
+ * Both directions are checked, asymmetrically on purpose:
+ *
+ * - **Expiry is exact.** `now > expires_at` is lapsed, with no grace. Being generous
+ *   at the end of a validity window is being generous in the one direction that
+ *   extends unauthorized access.
+ * - **Not-yet-valid tolerates skew**, by {@link MINT_POP_FRESHNESS_SECS} — the same
+ *   allowance the mint already makes for a proof-of-possession, reused rather than
+ *   reinvented.
+ *
+ * A window where `expires_at <= issued_at` is never current: it cannot be satisfied
+ * at any instant, and treating it as valid-forever would be the worst available
+ * reading of a malformed window. An unparseable timestamp is likewise never current.
+ */
+export function isCurrent(attestation: ConsentAttestation, now: Date): boolean {
+  const issued = parseE6(attestation.issued_at);
+  const expires = parseE6(attestation.expires_at);
+  if (issued === null || expires === null) return false;
+  if (expires <= issued) return false;
+  const at = now.getTime();
+  if (at > expires) return false;
+  return at >= issued - MINT_POP_FRESHNESS_SECS * 1000;
 }
 
 /**

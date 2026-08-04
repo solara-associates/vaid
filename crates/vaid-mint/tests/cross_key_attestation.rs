@@ -12,7 +12,7 @@
 //! Two organisations throughout: `A` (`a.example`) and `B` (`b.example`), each with
 //! its own kernel key. `A` is the delegating parent; `B` mints the child.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use uuid::Uuid;
 
@@ -20,9 +20,11 @@ use vaid_mint::attestation::{
     canonical_attestation_signing_bytes, AttestationBundle, ConsentAttestation,
 };
 use vaid_mint::chain::{
-    verify_chain_with, ChainVerification, KernelKeyMap, PresentedBundle, SingleKernelKey,
+    verify_chain_at, verify_chain_with, ChainVerification, KernelKeyMap, PresentedBundle,
+    SingleKernelKey,
 };
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
+use vaid_mint::MINT_POP_FRESHNESS_SECS;
 use vaid_mint::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
 };
@@ -85,7 +87,41 @@ impl Org {
         unsigned.with_kernel_signature(signature.as_ref().to_vec())
     }
 
-    /// Sign a consent attestation as the parent's issuer.
+    /// As [`Org::sign`], with the document's own validity window under the test's
+    /// control. Used only to prove document expiry stays unconsulted.
+    #[allow(clippy::too_many_arguments)]
+    fn sign_window(
+        &self,
+        agent_id: AgentId,
+        parent_vaid: Option<VaidId>,
+        tenant: &str,
+        scope: &[&str],
+        caps: &[&str],
+        issued_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Vaid {
+        let unsigned = Vaid::with_lineage(
+            agent_id,
+            AgentClass::new("test"),
+            "1.0.0".to_string(),
+            TenantId::new(tenant),
+            issued_at,
+            expires_at,
+            (0u8..32).collect(),
+            Vec::new(),
+            parent_vaid,
+            scope.iter().map(|s| s.to_string()).collect(),
+            compute_lineage_hash(parent_vaid, &agent_id),
+            caps.iter().map(|c| c.to_string()).collect(),
+            self.trust_domain.to_string(),
+            self.thumbprint(),
+        );
+        let signature = self.key_pair.sign(&canonical_vaid_signing_bytes(&unsigned));
+        unsigned.with_kernel_signature(signature.as_ref().to_vec())
+    }
+
+    /// Sign a consent attestation as the parent's issuer, inside a currently-valid
+    /// window. The window is wide enough that these tests never race the clock.
     #[allow(clippy::too_many_arguments)]
     fn attest(
         &self,
@@ -96,11 +132,39 @@ impl Org {
         scope: &[&str],
         caps: &[&str],
     ) -> ConsentAttestation {
+        let now = Utc::now();
+        self.attest_window(
+            parent_vaid,
+            child_vaid,
+            child_trust_domain,
+            child_tenant,
+            scope,
+            caps,
+            now - Duration::minutes(1),
+            now + Duration::hours(1),
+        )
+    }
+
+    /// As [`Org::attest`], with the validity window under the test's control.
+    #[allow(clippy::too_many_arguments)]
+    fn attest_window(
+        &self,
+        parent_vaid: VaidId,
+        child_vaid: VaidId,
+        child_trust_domain: &str,
+        child_tenant: &str,
+        scope: &[&str],
+        caps: &[&str],
+        issued_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> ConsentAttestation {
         let unsigned = ConsentAttestation::new(
             parent_vaid,
             child_vaid,
             child_trust_domain.to_string(),
             child_tenant.to_string(),
+            issued_at,
+            expires_at,
             scope.iter().map(|s| s.to_string()).collect(),
             caps.iter().map(|c| c.to_string()).collect(),
             self.trust_domain.to_string(),
@@ -724,5 +788,302 @@ fn tampered_attestation_is_inauthentic() {
         ),
         ChainVerification::Inauthentic,
         "widening consent after signing must break its signature"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSENT VALIDITY WINDOW
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fixtures for the window tests: a cross-key chain that is correct in every way
+/// except, in each test, the consent window. Returns the two orgs plus the root and
+/// child documents.
+fn window_fixture() -> (Org, Org, Vaid, Vaid) {
+    let a = Org::new(1, "a.example");
+    let b = Org::new(2, "b.example");
+    let root_id = id(1);
+    let child_id = id(2);
+    let root = a.sign(root_id, None, "acme", &["data.acme"], &["read"]);
+    let child = b.sign(
+        child_id,
+        Some(vid(&root_id)),
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+    );
+    (a, b, root, child)
+}
+
+/// EXPIRED consent is `ConsentExpired` — not `Inauthentic`, because the parent
+/// really did sign it, and not `NotAttenuated`, because the child did not overreach.
+/// The verdict has to say *renew this*, not *you were never authorized*.
+#[test]
+fn expired_consent_is_consent_expired() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    let lapsed = a.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now - Duration::hours(2),
+        now - Duration::hours(1), // expired an hour ago
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![lapsed]),
+            now,
+        ),
+        ChainVerification::ConsentExpired,
+        "lapsed consent is authentic and unusable, and the verdict must say so"
+    );
+}
+
+/// NOT-YET-VALID consent, beyond the permitted skew, is the same verdict — the
+/// window is refused in both directions.
+#[test]
+fn not_yet_valid_consent_is_consent_expired() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    let premature = a.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now + Duration::hours(1), // starts an hour from now, well beyond skew
+        now + Duration::hours(2),
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![premature]),
+            now,
+        ),
+        ChainVerification::ConsentExpired,
+        "consent that has not started is outside its window too"
+    );
+}
+
+/// CLOCK SKEW is tolerated on the not-yet-valid side only. An attestation issued
+/// slightly in the verifier's future — within `MINT_POP_FRESHNESS_SECS`, the
+/// allowance the mint already makes for a PoP — still verifies.
+#[test]
+fn clock_skew_is_tolerated_before_the_window_opens() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    let slightly_early = a.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now + Duration::seconds(MINT_POP_FRESHNESS_SECS - 5),
+        now + Duration::hours(2),
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![slightly_early]),
+            now,
+        ),
+        ChainVerification::Attenuated,
+        "a verifier a few seconds behind the issuer must not reject young consent"
+    );
+}
+
+/// ...and NOT on the expiry side. One second past `expires_at` is lapsed. Being
+/// generous at the end of a window is being generous in the one direction that
+/// extends unauthorized access.
+#[test]
+fn no_skew_is_granted_after_the_window_closes() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    let just_lapsed = a.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now - Duration::hours(1),
+        now - Duration::seconds(1), // one second ago
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![just_lapsed]),
+            now,
+        ),
+        ChainVerification::ConsentExpired,
+        "expiry is exact: no grace period on the closing edge"
+    );
+}
+
+/// The exact boundary: `now == expires_at` is still inside the window. Stated as a
+/// test so the inclusive/exclusive choice is pinned rather than incidental.
+#[test]
+fn the_closing_instant_itself_is_still_valid() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    let closing = a.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now - Duration::hours(1),
+        now, // expires exactly now
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![closing]),
+            now,
+        ),
+        ChainVerification::Attenuated,
+        "the closing instant is inside the window; the instant after it is not"
+    );
+}
+
+/// An INVERTED window (`expires_at <= issued_at`) can never be satisfied. Treating
+/// it as valid would be the worst available reading of a malformed window.
+#[test]
+fn an_inverted_window_is_never_current() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    let inverted = a.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now + Duration::hours(1),
+        now - Duration::hours(1), // expires before it was issued
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![inverted]),
+            now,
+        ),
+        ChainVerification::ConsentExpired,
+        "a window that cannot be satisfied at any instant is not satisfied at this one"
+    );
+}
+
+/// An expired attestation that is ALSO forged reports `Inauthentic`, not
+/// `ConsentExpired`. Authenticity is checked first on purpose: "this is not from
+/// who it claims" is the stronger and more actionable statement.
+#[test]
+fn a_forged_and_expired_attestation_reports_inauthentic() {
+    let (a, b, root, child) = window_fixture();
+    let now = Utc::now();
+
+    // B signs its own permission slip, AND it is already expired.
+    let forged_and_lapsed = b.attest_window(
+        vid(&id(1)),
+        vid(&id(2)),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+        now - Duration::hours(2),
+        now - Duration::hours(1),
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![root]),
+            &AttestationBundle::new(vec![forged_and_lapsed]),
+            now,
+        ),
+        ChainVerification::Inauthentic,
+        "forgery outranks staleness in the verdict"
+    );
+}
+
+/// Document expiry stays UNCONSULTED. An attestation may outlive the parent VAID it
+/// delegates from, and this pass deliberately does not change that: the chain
+/// verifier has never consulted document expiry, and whether it should is a separate
+/// decision. Pinned as a test so the property is not lost by accident.
+#[test]
+fn an_expired_parent_document_does_not_affect_the_verdict() {
+    let a = Org::new(1, "a.example");
+    let b = Org::new(2, "b.example");
+    let now = Utc::now();
+
+    // A root whose own VAID expired an hour ago.
+    let root_id = id(1);
+    let child_id = id(2);
+    let expired_root = a.sign_window(
+        root_id,
+        None,
+        "acme",
+        &["data.acme"],
+        &["read"],
+        now - Duration::hours(2),
+        now - Duration::hours(1),
+    );
+    let child = b.sign(
+        child_id,
+        Some(vid(&root_id)),
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+    );
+    let consent = a.attest(
+        vid(&root_id),
+        vid(&child_id),
+        "b.example",
+        "acme",
+        &["data.acme.sub"],
+        &["read"],
+    );
+
+    assert_eq!(
+        verify_chain_at(
+            &both_keys(&a, &b),
+            &child,
+            &PresentedBundle::new(vec![expired_root]),
+            &AttestationBundle::new(vec![consent]),
+            now,
+        ),
+        ChainVerification::Attenuated,
+        "document expiry is not consulted by chain verification, and did not become \
+         consulted when attestation expiry landed"
     );
 }

@@ -53,6 +53,7 @@
 
 import {
   AttestationBundle,
+  isCurrent,
   verifyAttestationAuthenticity,
 } from './attestation.js';
 import { type Vaid } from './document.js';
@@ -106,6 +107,17 @@ export const ChainVerification = {
    * does not hold.
    */
   NotAttenuated: 'not_attenuated',
+  /**
+   * A cross-key hop's consent attestation is **authentic but outside its validity
+   * window** — lapsed, or not yet valid beyond the permitted clock skew.
+   *
+   * Kept distinct on purpose. An expired attestation is not forged: the parent
+   * really did sign it, so `Inauthentic` would misdescribe it. Nor did the child
+   * overreach, so `NotAttenuated` would be wrong too. The operational difference is
+   * the point — this says *renew the attestation*, the other two say *you were never
+   * authorized*. **Not withdrawal:** see the `attestation` module.
+   */
+  ConsentExpired: 'consent_expired',
 } as const;
 
 export type ChainVerification =
@@ -329,16 +341,40 @@ export function verifyChain(
  * inside A's, and have it verify as `Attenuated` — while A delegated nothing.
  *
  * **Verdict mapping.** Authenticity failures (missing consent, signed by a key that
- * did not issue the parent, naming another hop) are `Inauthentic`. Authority
- * failures (consent narrower than the child claims, or broader than the parent
- * holds) are `NotAttenuated`. No cross-key hop reaches `Attenuated` without valid
+ * did not issue the parent, naming another hop) are `Inauthentic`. Consent that is
+ * authentic but outside its validity window is `ConsentExpired`. Authority failures
+ * (consent narrower than the child claims, or broader than the parent holds) are
+ * `NotAttenuated`. No cross-key hop reaches `Attenuated` without valid, current
  * consent.
+ *
+ * This overload uses the **system clock**; {@link verifyChainAt} takes an explicit
+ * instant, and anything needing a reproducible verdict must use that.
  */
 export function verifyChainWith(
   keys: KernelKeyResolver,
   leaf: Vaid,
   bundle: PresentedBundle,
   attestations: AttestationBundle,
+): ChainVerification {
+  return verifyChainAt(keys, leaf, bundle, attestations, new Date());
+}
+
+/**
+ * Verify a full delegation chain end to end at an explicit instant, selecting a
+ * kernel key per document and requiring parental consent for any hop that crosses
+ * one. See {@link verifyChainWith} for the system-clock convenience wrapper and the
+ * full procedure.
+ *
+ * `now` is explicit because expiry makes the verdict time-dependent. Anything that
+ * needs a reproducible result — a conformance vector, a boundary test, replaying a
+ * historical decision — must pass an instant rather than let the wall clock decide.
+ */
+export function verifyChainAt(
+  keys: KernelKeyResolver,
+  leaf: Vaid,
+  bundle: PresentedBundle,
+  attestations: AttestationBundle,
+  now: Date,
 ): ChainVerification {
   // Step 1 — authenticate the leaf and EVERY presented document, before any of them
   // is allowed to influence assembly.
@@ -416,6 +452,18 @@ export function verifyChainWith(
     const attKey = keys.resolveKey(attestation.kernel_key_thumbprint);
     if (attKey === undefined || !verifyAttestationAuthenticity(attKey, attestation)) {
       return ChainVerification.Inauthentic;
+    }
+
+    // The consent must be current. Checked AFTER authenticity, so a forged
+    // attestation is reported as forged rather than as merely stale — the stronger
+    // statement is the more useful one.
+    //
+    // NOTE: this consults the ATTESTATION's window only. Document expiry is
+    // deliberately not consulted here, exactly as elsewhere in this module; an
+    // attestation may outlive the parent VAID it delegates from, and whether that
+    // should change is a separate decision.
+    if (!isCurrent(attestation, now)) {
+      return ChainVerification.ConsentExpired;
     }
 
     // The consent must name the identity the child actually claims, or an

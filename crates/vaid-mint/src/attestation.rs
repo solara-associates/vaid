@@ -61,16 +61,30 @@
 //! *diagnostic* that reports which hops lacked consent — not a rejection branch in
 //! the verifier.
 //!
-//! # What is deliberately absent
+//! # A time bound is a mitigation, not withdrawal
 //!
-//! **No timestamps.** An `expires_at` nobody consults is decoration, and chain
-//! verification deliberately does not consult expiry for VAID documents either
-//! ([`crate::chain::verify_chain`]). Replay is bound structurally instead: an
-//! attestation names both `parent_vaid` and `child_vaid`, and both are fresh
-//! UUIDv4s, so it cannot be moved onto a different pair. If a deployment needs
-//! time-bounded consent, that is a real requirement and it needs a field plus a
-//! verifier that checks it — not a field that only looks like one.
+//! An attestation carries `issued_at` and `expires_at`, and
+//! [`crate::chain::verify_chain_at`] refuses one outside its window with
+//! [`ChainVerification::ConsentExpired`](crate::chain::ChainVerification::ConsentExpired).
+//!
+//! **This does not let a parent withdraw consent.** It bounds how long stale
+//! consent remains usable; it does nothing about consent an organisation wants to
+//! retract *inside* its window. Retraction needs durable revocation, and **durable
+//! revocation does not exist in this implementation** — the reference stores are
+//! in-memory and do not survive restart (`docs/spec/revocation.md` R.4.6). Until it
+//! does, the honest statement is that consent is time-bounded, not revocable.
+//!
+//! This is the same distinction R.5 draws for VAID time-to-live, and it is stated
+//! here for the same reason: a validity window is exactly the kind of field that
+//! gets read as solving withdrawal when it does not. Choosing a short
+//! `expires_at` is the whole of the mitigation.
+//!
+//! `expires_at` is **required and has no default**. Consent that outlives its
+//! purpose should be somebody's stated intention, never a value that arrived by
+//! omission.
+//!
 
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -111,6 +125,16 @@ pub struct ConsentAttestation {
     /// The tenant the parent consents to the child claiming. MUST equal the child
     /// document's `tenant_id`. See [`ConsentAttestation::child_trust_domain`].
     pub child_tenant_id: String,
+    /// When this consent was issued. E.6 timestamp profile, as in the VAID
+    /// document.
+    pub issued_at: DateTime<Utc>,
+    /// When this consent lapses. **Required; there is no default.**
+    ///
+    /// Past this instant the attestation is
+    /// [`ChainVerification::ConsentExpired`](crate::chain::ChainVerification::ConsentExpired) —
+    /// authentic, and no longer usable. See the module docs: this bounds stale
+    /// consent, it does not provide withdrawal.
+    pub expires_at: DateTime<Utc>,
     /// The maximum scope the parent consents to. The child's own
     /// `scope_boundary` must be contained by this.
     pub scope_boundary: Vec<String>,
@@ -139,6 +163,8 @@ impl ConsentAttestation {
         child_vaid: VaidId,
         child_trust_domain: String,
         child_tenant_id: String,
+        issued_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
         trust_domain: String,
@@ -150,6 +176,8 @@ impl ConsentAttestation {
             child_vaid,
             child_trust_domain,
             child_tenant_id,
+            issued_at,
+            expires_at,
             scope_boundary,
             capability_set,
             trust_domain,
@@ -167,6 +195,34 @@ impl ConsentAttestation {
     /// The `(parent_vaid, child_vaid)` hop this attestation covers.
     pub fn hop(&self) -> (VaidId, VaidId) {
         (self.parent_vaid, self.child_vaid)
+    }
+
+    /// Is this consent inside its validity window at `now`?
+    ///
+    /// Both directions are checked, and they are treated asymmetrically on
+    /// purpose:
+    ///
+    /// - **Expiry is exact.** `now > expires_at` is lapsed, with no grace. Being
+    ///   generous at the end of a validity window is being generous in the one
+    ///   direction that extends unauthorized access.
+    /// - **Not-yet-valid tolerates skew**, by
+    ///   [`MINT_POP_FRESHNESS_SECS`](crate::mint::MINT_POP_FRESHNESS_SECS) — the
+    ///   same allowance the mint already makes for a proof-of-possession, reused
+    ///   rather than reinvented. A verifier whose clock is a few seconds behind the
+    ///   attesting issuer should not reject consent that is merely young.
+    ///
+    /// A window where `expires_at <= issued_at` is never current: it cannot be
+    /// satisfied at any instant, and treating it as valid-forever would be the
+    /// worst possible reading of a malformed window.
+    pub fn is_current(&self, now: DateTime<Utc>) -> bool {
+        if self.expires_at <= self.issued_at {
+            return false;
+        }
+        if now > self.expires_at {
+            return false;
+        }
+        let earliest = self.issued_at - Duration::seconds(crate::mint::MINT_POP_FRESHNESS_SECS);
+        now >= earliest
     }
 }
 

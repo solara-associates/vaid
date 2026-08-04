@@ -53,6 +53,10 @@ def main() -> None:
         child_vaid=CHILD_UUID,
         child_trust_domain="b.example",
         child_tenant_id="aifactory",
+        # Fixed instants: a probe that depends on the wall clock cannot be diffed
+        # across three processes.
+        issued_at="2026-06-04T12:00:00Z",
+        expires_at="2026-06-05T12:00:00Z",
         scope_boundary=["data.aifactory.sub"],
         capability_set=["read"],
         trust_domain="a.example",

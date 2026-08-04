@@ -109,8 +109,8 @@ pub use attestation::{
 };
 pub use authz::{AuthorizationGate, PermitAll};
 pub use chain::{
-    verify_chain, verify_chain_with, ChainVerification, KernelKeyMap, KernelKeyResolver,
-    PresentedBundle, SingleKernelKey,
+    verify_chain, verify_chain_at, verify_chain_with, ChainVerification, KernelKeyMap,
+    KernelKeyResolver, PresentedBundle, SingleKernelKey,
 };
 pub use document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,

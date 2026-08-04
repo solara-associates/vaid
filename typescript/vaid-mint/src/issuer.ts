@@ -248,11 +248,23 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
     childVaid: VaidId;
     childTrustDomain: string;
     childTenantId: string;
+    /**
+     * REQUIRED, with no default and no derived fallback: consent that outlives its
+     * purpose must be somebody's stated intention, never a value that arrived by
+     * omission. A time bound is a **mitigation, not withdrawal** — it limits how
+     * long stale consent stays usable and does nothing about consent retracted
+     * inside its window, which needs durable revocation, and durable revocation does
+     * not exist here (R.4.6).
+     */
+    expiresAt: string;
     scopeBoundary: readonly string[];
     capabilitySet: readonly string[];
   }): ConsentAttestation {
     const unsigned = buildUnsignedAttestation({
       ...fields,
+      // The issuing instant, as it is for a minted document.
+      issuedAt: utcWholeSecondRfc3339(new Date()),
+      expiresAt: fields.expiresAt,
       trustDomain: this.#trustDomain,
       kernelKeyThumbprint: kernelKeyThumbprint(this.kernelPublicKey()),
     });
