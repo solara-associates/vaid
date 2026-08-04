@@ -167,6 +167,30 @@ fn main() {
         }));
     }
 
+    // A single top-level digest over the whole frozen contract: the chain and the
+    // expected outcome, JCS-canonicalized and SHA-256'd.
+    //
+    // Every other vector in this repo carries `digest_sha256_hex`, and
+    // `scripts/verify-vector-freeze.mjs` requires it — a vector without one cannot
+    // be frozen, and the checker fails closed rather than skipping it. A chain
+    // vector's per-hop digests are not a substitute: they pin each document, but
+    // nothing pins the SET of documents or the verdict, which is exactly what this
+    // vector exists to freeze. If this value moves, the contract moved.
+    let contract = serde_json::json!({
+        "chain": chain_json,
+        "expected": {
+            "assembled_lineage": [ROOT_UUID, MID_UUID, LEAF_UUID],
+            "verification": "attenuated",
+        },
+    });
+    let contract_digest = {
+        use sha2::{Digest, Sha256};
+        let canonical = serde_jcs::to_vec(&contract).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&canonical);
+        to_hex(&hasher.finalize())
+    };
+
     let vector = serde_json::json!({
         "_comment": "Chain-presentation conformance vector (v1), per ADR-0003 §3. ADDITIVE: it \
                      introduces no new signed field and no new encoding rule inside signed bytes. \
@@ -197,6 +221,7 @@ fn main() {
             "kernel_public_key_hex": to_hex(&kernel_pub),
             "kernel_key_thumbprint": kernel_thumbprint,
         },
+        "digest_sha256_hex": contract_digest,
         "chain": chain_json,
         "expected": {
             "_comment": "`assembled_lineage` is the output of assembling the leaf's ancestry \

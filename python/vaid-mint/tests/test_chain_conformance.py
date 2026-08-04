@@ -100,6 +100,27 @@ def test_reproduces_the_frozen_verification_verdict() -> None:
     assert verdict is ChainVerification.ATTENUATED
 
 
+def test_reproduces_the_frozen_contract_digest() -> None:
+    """The top-level contract digest is reproducible from the vector's own contents.
+
+    Without this the field would be decoration: present so
+    ``scripts/verify-vector-freeze.mjs`` can pin the vector, but never checked
+    against what it claims to summarise. The per-hop digests pin each document; this
+    pins the SET of documents and the verdict.
+    """
+    import hashlib
+
+    import rfc8785
+
+    expected = {k: v for k, v in VECTOR["expected"].items() if k != "_comment"}
+    contract = {"chain": VECTOR["chain"], "expected": expected}
+    digest = hashlib.sha256(rfc8785.dumps(contract)).hexdigest()
+
+    assert digest == VECTOR["digest_sha256_hex"], (
+        "contract digest drift — the chain or the expected outcome moved"
+    )
+
+
 def test_the_frozen_chain_is_three_hops_single_key_and_single_tenant() -> None:
     """The vector's own shape, so a regenerated vector that quietly lost a hop
     cannot still pass. Three hops is the smallest chain that exercises a
