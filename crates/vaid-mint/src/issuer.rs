@@ -224,6 +224,56 @@ impl ReferenceIssuer {
         self.kernel_key_pair.public_key().as_ref()
     }
 
+    /// Sign a **detached consent attestation**: this issuer, as the party that
+    /// issued `parent_vaid`, consents to `child_vaid` holding at most `scope` and
+    /// `capability_set` under it.
+    ///
+    /// This is the signer half of
+    /// [`crate::attestation::ConsentAttestation`]. It exists because consent is
+    /// otherwise a property of the mint's *session* — `mint_child` enforces it
+    /// in-process and nothing about that enforcement lands in the child document.
+    /// A cross-issuer verifier has no way to see it. This makes it a signed object
+    /// the presenter can carry.
+    ///
+    /// The trust domain and thumbprint come from this issuer's own key and
+    /// configuration, never from a parameter, so an attestation cannot name a key
+    /// or a domain other than the one about to sign it.
+    ///
+    /// **This does not check that `parent_vaid` was actually minted here.** The
+    /// reference issuer's lineage map is in-memory and empty after restart
+    /// (R.4.6), so a check against it would fail closed on legitimate attestations
+    /// after any restart, which is worse than not checking. A verifier does not
+    /// rely on this: it independently requires the attestation's thumbprint to
+    /// equal the parent document's, so an attestation signed by the wrong issuer is
+    /// rejected at verification regardless of what was checked here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn attest_delegation(
+        &self,
+        parent_vaid: VaidId,
+        child_vaid: VaidId,
+        child_trust_domain: String,
+        child_tenant_id: String,
+        scope_boundary: Vec<String>,
+        capability_set: Vec<String>,
+    ) -> crate::attestation::ConsentAttestation {
+        let unsigned = crate::attestation::ConsentAttestation::new(
+            parent_vaid,
+            child_vaid,
+            child_trust_domain,
+            child_tenant_id,
+            scope_boundary,
+            capability_set,
+            self.trust_domain.clone(),
+            crate::issuer_identity::kernel_key_thumbprint(self.kernel_public_key()),
+        );
+        let signature =
+            self.kernel_key_pair
+                .sign(&crate::attestation::canonical_attestation_signing_bytes(
+                    &unsigned,
+                ));
+        unsigned.with_signature(signature.as_ref().to_vec())
+    }
+
     /// Revoke a VAID in the built-in in-memory store. A revoked VAID — and every
     /// VAID attenuated from it (R.4.4) — fails [`VaidIssuer::verify_vaid`]. Does not
     /// survive restart. Has no effect on verification if a custom [`RevocationCheck`]

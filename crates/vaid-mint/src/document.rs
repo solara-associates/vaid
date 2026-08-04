@@ -233,19 +233,34 @@ impl Vaid {
     /// attenuation check and any runtime scope check both call it, so they cannot
     /// drift.
     pub fn is_in_scope(&self, resource: &str) -> bool {
-        if self.scope_boundary.is_empty() {
-            return true;
-        }
-        self.scope_boundary
-            .iter()
-            .any(|scope| resource.starts_with(scope))
+        scope_contains(&self.scope_boundary, resource)
     }
 
     /// Does this VAID hold `capability` (exact membership)? The single
     /// capability-membership predicate.
     pub fn has_capability(&self, capability: &str) -> bool {
-        self.capability_set.iter().any(|c| c == capability)
+        caps_contain(&self.capability_set, capability)
     }
+}
+
+/// Is `resource` within `boundary`? An empty boundary means unrestricted (⊤).
+///
+/// This is THE scope matcher. [`Vaid::is_in_scope`] delegates here rather than
+/// implementing it, so a caller holding a bare boundary — a consent attestation's
+/// `scope_boundary`, which is not attached to any document — is matched by exactly
+/// the same rule as a document's own. Duplicating the rule for the detached case is
+/// how the two would drift.
+pub fn scope_contains(boundary: &[String], resource: &str) -> bool {
+    if boundary.is_empty() {
+        return true;
+    }
+    boundary.iter().any(|scope| resource.starts_with(scope))
+}
+
+/// Does `capabilities` hold `capability` (exact membership)? THE capability
+/// matcher; [`Vaid::has_capability`] delegates here, for the same reason.
+pub fn caps_contain(capabilities: &[String], capability: &str) -> bool {
+    capabilities.iter().any(|c| c == capability)
 }
 
 /// Compute the canonical 32-byte SHA-256 digest of a [`Vaid`] for Ed25519
