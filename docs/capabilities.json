@@ -189,26 +189,58 @@
     {
       "id": "attenuation-verification",
       "title": "Third-party attenuation (authority) verification",
-      "status": "planned",
-      "landed_in": null,
-      "packages": [],
-      "status_text": "Verifying, as a third party, that a child's authority is within its parent's.",
-      "blocked_on": {
-        "type": "decision",
-        "ref": "ADR-0003 decided the construction (detached chain presentation); blocked on implementing the resolver, the four-step verification and a chain-presentation vector"
-      }
+      "status": "shipped",
+      "landed_in": "vaid-mint 0.4.0",
+      "packages": [
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-mint",
+          "version": "0.4.0"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-mint",
+          "version": "0.4.0"
+        },
+        {
+          "language": "typescript",
+          "registry": "npm",
+          "package": "vaid-mint",
+          "version": "0.4.0"
+        }
+      ],
+      "status_text": "A third party holding the issuer's kernel PUBLIC key and the ancestor documents a presenter supplies can verify that a child's authority is within its parent's, at every hop \u2014 scope, capabilities, and the qualified (trust_domain, tenant_id) pair. Containment reuses the mint-time matchers, so verify-time cannot drift from the check that gated issuance. Achieved by detached chain presentation (ADR-0003) with NO change to the VAID document: no new field, no sig_version bump, no mint_v1 re-freeze. Pinned cross-language by chain_v1.json. LIMITS, stated because they are load-bearing: the presenter must retain and present the ancestors, so a leaf whose ancestor documents were discarded has unverifiable attenuation; and full-chain verification requires full-chain disclosure.",
+      "blocked_on": null
     },
     {
       "id": "lineage-chain-verification",
       "title": "Third-party end-to-end lineage verification",
-      "status": "planned",
-      "landed_in": null,
-      "packages": [],
-      "status_text": "Verifying a VAID's full ancestor chain from the leaf alone, as a third party.",
-      "blocked_on": {
-        "type": "decision",
-        "ref": "ADR-0003 decided the construction (detached chain presentation); blocked on implementing the resolver, the four-step verification and a chain-presentation vector"
-      }
+      "status": "shipped",
+      "landed_in": "vaid-mint 0.4.0",
+      "packages": [
+        {
+          "language": "rust",
+          "registry": "crates.io",
+          "package": "vaid-mint",
+          "version": "0.4.0"
+        },
+        {
+          "language": "python",
+          "registry": "pypi",
+          "package": "vaid-mint",
+          "version": "0.4.0"
+        },
+        {
+          "language": "typescript",
+          "registry": "npm",
+          "package": "vaid-mint",
+          "version": "0.4.0"
+        }
+      ],
+      "status_text": "A third party can walk a full delegation chain from a presented bundle: every document authenticated, every hop pinned against the signed parent_vaid, and any gap \u2014 an unpresented ancestor, a cycle, an implausible depth \u2014 failing closed as attenuation-unverifiable rather than attenuation-satisfied. Chains that cross kernel keys additionally require a detached consent attestation from the issuer that minted the parent (attestation_v1.json), because nothing in a VAID document otherwise proves the parent consented; a cross-key hop without valid consent never verifies. LIMITS: revocation and expiry are NOT consulted by chain verification, and consent is time-bounded rather than revocable \u2014 retraction inside an attestation's window needs durable revocation, which this implementation does not provide (docs/spec/revocation.md R.4.6, docs/spec/consent-attestation.md C.6).",
+      "blocked_on": null
     },
     {
       "id": "cross-deployment-verification",
