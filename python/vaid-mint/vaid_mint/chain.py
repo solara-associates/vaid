@@ -57,8 +57,17 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterable
+from typing import Protocol
 
-from vaid_mint.mint import caps_attenuate, scope_attenuates, tenant_attenuates
+from vaid_mint.attestation import AttestationBundle, verify_attestation_authenticity
+from vaid_mint.issuer_identity import kernel_key_thumbprint
+from vaid_mint.mint import (
+    caps_attenuate,
+    caps_attenuate_within,
+    scope_attenuates,
+    scope_attenuates_within,
+    tenant_attenuates,
+)
 from vaid_mint.revocation import ParentResolution, assemble_lineage
 from vaid_mint.verify import verify_vaid_authenticity
 
@@ -145,72 +154,128 @@ class PresentedBundle:
         return ParentResolution.of_parent(parent)
 
 
+class KernelKeyResolver(Protocol):
+    """Resolves the kernel public key that signed a document, by its
+    ``kernel_key_thumbprint``.
+
+    **Why a seam and not a parameter.** A single-issuer chain needs one key and
+    could take it as an argument — which is what :func:`verify_chain` does. A chain
+    that crosses organisations needs the key that signed *each* document, selected
+    by the thumbprint the document commits to (ADR-0004). That selection is the
+    verifier's trust decision and belongs to the caller.
+
+    **Returning a key is an assertion of trust.** A resolver that answers for a
+    thumbprint is saying "I accept documents signed by this key". Resolving it from
+    the document itself, or any source the presenter controls, verifies that a
+    number equals itself — see ``docs/trust-anchor.md``.
+    """
+
+    def resolve_key(self, thumbprint: str) -> bytes | None:
+        """The raw 32-byte Ed25519 public key for ``thumbprint``, or ``None`` if
+        this verifier does not accept that key. ``None`` fails closed."""
+        ...
+
+
+class SingleKernelKey:
+    """A resolver holding exactly one kernel key: the single-trust-domain case, and
+    what :func:`verify_chain` wraps."""
+
+    def __init__(self, public_key: bytes) -> None:
+        # Derived from the key rather than supplied, so the two cannot disagree.
+        self._thumbprint = kernel_key_thumbprint(bytes(public_key))
+        self._public_key = bytes(public_key)
+
+    def resolve_key(self, thumbprint: str) -> bytes | None:
+        return self._public_key if thumbprint == self._thumbprint else None
+
+
+class KernelKeyMap:
+    """A resolver over a map of accepted kernel keys, for chains that cross issuers.
+
+    Every key placed here is one this verifier accepts. The map is the trust bundle;
+    populating it from a channel the presenter controls defeats the purpose.
+    """
+
+    def __init__(self, public_keys: Iterable[bytes] = ()) -> None:
+        # Each key is filed under its OWN derived thumbprint, so a key cannot be
+        # registered under a thumbprint that is not its own.
+        self._keys = {kernel_key_thumbprint(bytes(k)): bytes(k) for k in public_keys}
+
+    def resolve_key(self, thumbprint: str) -> bytes | None:
+        return self._keys.get(thumbprint)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
 def verify_chain(
     kernel_public_key: bytes, leaf: dict, bundle: PresentedBundle
 ) -> ChainVerification:
-    """Verify a full delegation chain end to end, as a third party holding only the
-    issuer's kernel **public** key and the documents the presenter supplied.
+    """Verify a full delegation chain end to end against a **single** kernel key.
 
-    The procedure is ADR-0003's, in order:
-
-    1. **Authenticate every document** — the leaf and every presented ancestor, via
-       :func:`~vaid_mint.verify.verify_vaid_authenticity`. Any failure is
-       ``INAUTHENTIC``.
-    2. **Pin each hop** — :func:`~vaid_mint.revocation.assemble_lineage` requires a
-       presented document whose ``vaid_id`` equals the ``parent_vaid`` pinned inside
-       the child's signed bytes, and recurses until a document with no
-       ``parent_vaid`` is reached.
-    3. **Fail closed on an incomplete chain** — a ``parent_vaid`` that is present but
-       not resolvable, a cycle, or an implausible depth all yield ``UNVERIFIABLE``.
-    4. **Check containment** — ``scope_L ⊆ scope_P1 ⊆ … ⊆ scope_root``, and the same
-       for capabilities, using the **mint-time** matchers
-       (:func:`~vaid_mint.mint.scope_attenuates` /
-       :func:`~vaid_mint.mint.caps_attenuate`) so the verify-time check cannot drift
-       from the one that gated issuance.
-
-    What this does not check
-    ------------------------
-
-    Consistent with ``verify_vaid_authenticity``, this answers *authenticity and
-    attenuation*, not *standing*. It does not consult **expiry** (call
-    :func:`~vaid_mint.document.is_expired`) and does not consult **revocation**
-    (evaluate a :class:`~vaid_mint.revocation.RevocationCheck` separately). A third
-    party generally cannot assemble lineage for revocation from identifiers alone —
-    that is the R.4.2 constraint, and it is unchanged by this module.
-
-    Single trust domain
-    -------------------
-
-    All documents on the chain must be signed by ``kernel_public_key``. Each
-    document's ``kernel_key_thumbprint`` is checked against that key inside
-    ``verify_vaid_authenticity``, so a chain crossing issuers returns ``INAUTHENTIC``
-    rather than being accepted under a key that did not sign it. Verifying a chain
-    whose hops were signed by *different* kernel keys would need a key-lookup seam
-    keyed on ``kernel_key_thumbprint``; that is not built here, and until it is,
-    cross-issuer chains are out of scope rather than silently mis-verified.
+    Convenience over :func:`verify_chain_with` for the single-trust-domain case:
+    every document must be signed by ``kernel_public_key``. Because no hop can cross
+    a kernel key, no consent attestation is required or consulted.
     """
+    return verify_chain_with(
+        SingleKernelKey(kernel_public_key), leaf, bundle, AttestationBundle()
+    )
+
+
+def verify_chain_with(
+    keys: KernelKeyResolver,
+    leaf: dict,
+    bundle: PresentedBundle,
+    attestations: AttestationBundle,
+) -> ChainVerification:
+    """Verify a full delegation chain end to end, selecting a kernel key per
+    document and requiring parental consent for any hop that crosses one.
+
+    ADR-0003's procedure, extended at the two points where crossing a kernel key
+    changes what can be concluded:
+
+    1. **Authenticate every document** — key selected from ``keys`` by the
+       document's own ``kernel_key_thumbprint``. An unaccepted thumbprint or a
+       failed signature is ``INAUTHENTIC``.
+    2. **Pin each hop** against the signed ``parent_vaid``.
+    3. **Fail closed on an incomplete chain** — ``UNVERIFIABLE``.
+    4. **Check containment** — tenant (same-key hops), scope, capabilities.
+    5. **Require consent on a cross-key hop** — a valid
+       :func:`~vaid_mint.attestation.build_unsigned_attestation` object for exactly
+       that ``(parent, child)`` pair, signed by the issuer that minted the parent.
+       Same-key hops need none: the single issuer enforced consent at mint time.
+
+    **Why step 5 exists.** Without it, an issuer B holding its own kernel key could
+    mint a document naming issuer A's root ``vaid_id`` as ``parent_vaid``, with
+    authority inside A's, and have it verify as ``ATTENUATED`` — while A delegated
+    nothing. See :mod:`vaid_mint.attestation`.
+
+    **Verdict mapping.** Authenticity failures (missing consent, signed by a key
+    that did not issue the parent, naming another hop) are ``INAUTHENTIC``. Authority
+    failures (consent narrower than the child claims, or broader than the parent
+    holds) are ``NOT_ATTENUATED``. No cross-key hop reaches ``ATTENUATED`` without
+    valid consent.
+    """
+
     # Step 1 — authenticate the leaf and EVERY presented document, before any of
-    # them is allowed to influence assembly. Authenticating the whole bundle rather
-    # than only the documents that end up on the chain is the stricter reading of
-    # ADR-0003 step 1, and it means a presenter cannot mix an unauthenticated
-    # document into a bundle and have it ignored.
-    if not verify_vaid_authenticity(kernel_public_key, leaf):
+    # them is allowed to influence assembly.
+    def authenticate(doc: dict) -> bool:
+        key = keys.resolve_key(doc.get("kernel_key_thumbprint"))
+        # An unaccepted issuer is not a degraded issuer, it is somebody else.
+        return False if key is None else verify_vaid_authenticity(key, doc)
+
+    if not authenticate(leaf):
         return ChainVerification.INAUTHENTIC
     for doc in bundle.documents():
-        if not verify_vaid_authenticity(kernel_public_key, doc):
+        if not authenticate(doc):
             return ChainVerification.INAUTHENTIC
 
-    # Steps 2 and 3 — pin each hop against the signed ``parent_vaid``, failing
-    # closed on any gap. Cycle detection and MAX_LINEAGE_DEPTH come from
-    # ``assemble_lineage`` unchanged.
+    # Steps 2 and 3 — pin each hop, failing closed on any gap. Cycle detection and
+    # MAX_LINEAGE_DEPTH come from ``assemble_lineage`` unchanged.
     chain_ids = assemble_lineage(leaf, bundle)
     if chain_ids is None:
         return ChainVerification.UNVERIFIABLE
 
-    # Resolve each id on the chain back to its document, root first. The leaf is
-    # supplied separately and need not appear in the bundle, so it is matched first.
-    # Any id that cannot be resolved to a document is a gap, and a gap is
-    # UNVERIFIABLE — never a silently shortened chain.
     chain_docs: list[dict] = []
     for vaid_id in chain_ids:
         if vaid_id == leaf["vaid_id"]:
@@ -221,20 +286,74 @@ def verify_chain(
             return ChainVerification.UNVERIFIABLE
         chain_docs.append(doc)
 
-    # Step 4 — containment at every hop, root first, using the mint-time matchers.
-    #
-    # Tenant is checked as the qualified ``(trust_domain, tenant_id)`` pair. The
-    # mint refuses cross-tenant delegation, so a conforming chain cannot change
-    # tenant mid-walk; checking it here means a verifier does not have to take the
-    # mint's word for that — the same reasoning that puts scope and capabilities
-    # here. See ``tenant_attenuates`` for what the guarantee is worth: defence
-    # against operator error, not against a hostile issuer.
+    # Steps 4 and 5 — containment at every hop, root first, plus consent wherever a
+    # hop crosses a kernel key.
     for parent, child in zip(chain_docs, chain_docs[1:]):
-        if not tenant_attenuates(parent, child["trust_domain"], child["tenant_id"]):
+        same_key = parent["kernel_key_thumbprint"] == child["kernel_key_thumbprint"]
+
+        # Tenant as the qualified pair — on SAME-KEY hops. A CROSS-KEY hop crosses
+        # trust domains by definition, so requiring equality would forbid the very
+        # case attestations exist to enable; the crossing is instead named and
+        # signed in the attestation below. The pair is still checked on every hop —
+        # against a signed statement rather than the parent's own values.
+        if same_key and not tenant_attenuates(
+            parent, child["trust_domain"], child["tenant_id"]
+        ):
             return ChainVerification.NOT_ATTENUATED
         if not scope_attenuates(parent, child["scope_boundary"]):
             return ChainVerification.NOT_ATTENUATED
         if not caps_attenuate(parent, child["capability_set"]):
+            return ChainVerification.NOT_ATTENUATED
+
+        # Same kernel key: one issuer signed both ends and enforced consent at mint
+        # time. Behaviour unchanged from before cross-key support.
+        if same_key:
+            continue
+
+        # Cross-key hop. Consent must be presented, and must be the PARENT issuer's.
+        attestation = attestations.get(parent["vaid_id"], child["vaid_id"])
+        if attestation is None:
+            # Also the outcome for an attestation minted for a different hop: it is
+            # filed under that hop's pair and is simply not found here. Replay is
+            # inert rather than rejected.
+            return ChainVerification.INAUTHENTIC
+
+        # The consenting party must be the party that issued the parent. Without
+        # this, any accepted key could consent on any parent's behalf.
+        if (
+            attestation["kernel_key_thumbprint"] != parent["kernel_key_thumbprint"]
+            or attestation["trust_domain"] != parent["trust_domain"]
+        ):
+            return ChainVerification.INAUTHENTIC
+
+        key = keys.resolve_key(attestation["kernel_key_thumbprint"])
+        if key is None or not verify_attestation_authenticity(key, attestation):
+            return ChainVerification.INAUTHENTIC
+
+        # The consent must name the identity the child actually claims, or an
+        # attestation for a child in one tenant would authorize the same vaid_id
+        # claiming any other.
+        if (
+            attestation["child_trust_domain"] != child["trust_domain"]
+            or attestation["child_tenant_id"] != child["tenant_id"]
+        ):
+            return ChainVerification.NOT_ATTENUATED
+
+        # The child may hold no more than the parent consented to...
+        if not scope_attenuates_within(
+            attestation["scope_boundary"], child["scope_boundary"]
+        ) or not caps_attenuate_within(
+            attestation["capability_set"], child["capability_set"]
+        ):
+            return ChainVerification.NOT_ATTENUATED
+
+        # ...and the parent cannot consent to more than it holds. Checked separately
+        # from the hop containment above: that compares child to parent, this
+        # compares the ATTESTATION to parent — an over-broad attestation with a
+        # well-behaved child would otherwise pass.
+        if not scope_attenuates(
+            parent, attestation["scope_boundary"]
+        ) or not caps_attenuate(parent, attestation["capability_set"]):
             return ChainVerification.NOT_ATTENUATED
 
     return ChainVerification.ATTENUATED

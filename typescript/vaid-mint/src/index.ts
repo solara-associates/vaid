@@ -113,10 +113,23 @@ export { verifyLineageHash, verifyVaidAuthenticity } from './verify.js';
 
 export {
   ChainVerification,
+  KernelKeyMap,
   PresentedBundle,
+  SingleKernelKey,
   isAttenuated,
   verifyChain,
+  verifyChainWith,
+  type KernelKeyResolver,
 } from './chain.js';
+
+export {
+  ATTESTATION_VERSION,
+  AttestationBundle,
+  buildUnsignedAttestation,
+  canonicalAttestationSigningBytes,
+  verifyAttestationAuthenticity,
+  type ConsentAttestation,
+} from './attestation.js';
 
 export {
   kernelKeyThumbprint,

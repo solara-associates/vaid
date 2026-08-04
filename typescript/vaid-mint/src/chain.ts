@@ -51,8 +51,19 @@
  * {@link LineageResolver}, and the three-state shape is already correct.
  */
 
+import {
+  AttestationBundle,
+  verifyAttestationAuthenticity,
+} from './attestation.js';
 import { type Vaid } from './document.js';
-import { capsAttenuate, scopeAttenuates, tenantAttenuates } from './mint.js';
+import { kernelKeyThumbprint } from './issuerIdentity.js';
+import {
+  capsAttenuate,
+  capsAttenuateWithin,
+  scopeAttenuates,
+  scopeAttenuatesWithin,
+  tenantAttenuates,
+} from './mint.js';
 import {
   assembleLineage,
   parentResolutionOf,
@@ -206,37 +217,147 @@ export class PresentedBundle implements LineageResolver {
  * keyed on `kernel_key_thumbprint`; that is not built here, and until it is,
  * cross-issuer chains are out of scope rather than silently mis-verified.
  */
+/**
+ * Resolves the kernel public key that signed a document, by its
+ * `kernel_key_thumbprint`.
+ *
+ * **Why a seam and not a parameter.** A single-issuer chain needs one key and could
+ * take it as an argument — which is what {@link verifyChain} does. A chain that
+ * crosses organisations needs the key that signed *each* document, selected by the
+ * thumbprint the document commits to (ADR-0004). That selection is the verifier's
+ * trust decision and belongs to the caller.
+ *
+ * **Returning a key is an assertion of trust.** A resolver answering for a
+ * thumbprint is saying "I accept documents signed by this key". Resolving it from
+ * the document itself, or any source the presenter controls, verifies that a number
+ * equals itself — see `docs/trust-anchor.md`.
+ */
+export interface KernelKeyResolver {
+  /**
+   * The raw 32-byte Ed25519 public key for `thumbprint`, or `undefined` if this
+   * verifier does not accept that key. `undefined` fails closed.
+   */
+  resolveKey(thumbprint: string): Uint8Array | undefined;
+}
+
+/**
+ * A resolver holding exactly one kernel key: the single-trust-domain case, and what
+ * {@link verifyChain} wraps.
+ */
+export class SingleKernelKey implements KernelKeyResolver {
+  readonly #thumbprint: string;
+  readonly #publicKey: Uint8Array;
+
+  /** The thumbprint is derived from the key, so the two cannot disagree. */
+  constructor(publicKey: Uint8Array) {
+    this.#thumbprint = kernelKeyThumbprint(publicKey);
+    this.#publicKey = publicKey;
+  }
+
+  resolveKey(thumbprint: string): Uint8Array | undefined {
+    return thumbprint === this.#thumbprint ? this.#publicKey : undefined;
+  }
+}
+
+/**
+ * A resolver over a map of accepted kernel keys, for chains that cross issuers.
+ *
+ * Every key placed here is one this verifier accepts. The map is the trust bundle;
+ * populating it from a channel the presenter controls defeats the purpose.
+ */
+export class KernelKeyMap implements KernelKeyResolver {
+  readonly #keys = new Map<string, Uint8Array>();
+
+  /**
+   * Each key is filed under its OWN derived thumbprint, so a key cannot be
+   * registered under a thumbprint that is not its own.
+   */
+  constructor(publicKeys: Iterable<Uint8Array> = []) {
+    for (const key of publicKeys) {
+      this.#keys.set(kernelKeyThumbprint(key), key);
+    }
+  }
+
+  resolveKey(thumbprint: string): Uint8Array | undefined {
+    return this.#keys.get(thumbprint);
+  }
+
+  get size(): number {
+    return this.#keys.size;
+  }
+}
+
+/**
+ * Verify a full delegation chain end to end against a **single** kernel key.
+ *
+ * Convenience over {@link verifyChainWith} for the single-trust-domain case: every
+ * document must be signed by `kernelPublicKey`. Because no hop can cross a kernel
+ * key, no consent attestation is required or consulted.
+ */
 export function verifyChain(
   kernelPublicKey: Uint8Array,
   leaf: Vaid,
   bundle: PresentedBundle,
 ): ChainVerification {
+  return verifyChainWith(
+    new SingleKernelKey(kernelPublicKey),
+    leaf,
+    bundle,
+    new AttestationBundle(),
+  );
+}
+
+/**
+ * Verify a full delegation chain end to end, selecting a kernel key per document and
+ * requiring parental consent for any hop that crosses one.
+ *
+ * ADR-0003's procedure, extended at the two points where crossing a kernel key
+ * changes what can be concluded:
+ *
+ * 1. **Authenticate every document** — key selected from `keys` by the document's
+ *    own `kernel_key_thumbprint`. An unaccepted thumbprint or a failed signature is
+ *    `Inauthentic`.
+ * 2. **Pin each hop** against the signed `parent_vaid`.
+ * 3. **Fail closed on an incomplete chain** — `Unverifiable`.
+ * 4. **Check containment** — tenant (same-key hops), scope, capabilities.
+ * 5. **Require consent on a cross-key hop** — a valid {@link ConsentAttestation} for
+ *    exactly that `(parent, child)` pair, signed by the issuer that minted the
+ *    parent. Same-key hops need none: the single issuer enforced consent at mint.
+ *
+ * **Why step 5 exists.** Without it, an issuer B holding its own kernel key could
+ * mint a document naming issuer A's root `vaid_id` as `parent_vaid`, with authority
+ * inside A's, and have it verify as `Attenuated` — while A delegated nothing.
+ *
+ * **Verdict mapping.** Authenticity failures (missing consent, signed by a key that
+ * did not issue the parent, naming another hop) are `Inauthentic`. Authority
+ * failures (consent narrower than the child claims, or broader than the parent
+ * holds) are `NotAttenuated`. No cross-key hop reaches `Attenuated` without valid
+ * consent.
+ */
+export function verifyChainWith(
+  keys: KernelKeyResolver,
+  leaf: Vaid,
+  bundle: PresentedBundle,
+  attestations: AttestationBundle,
+): ChainVerification {
   // Step 1 — authenticate the leaf and EVERY presented document, before any of them
-  // is allowed to influence assembly. Authenticating the whole bundle rather than
-  // only the documents that end up on the chain is the stricter reading of ADR-0003
-  // step 1, and it means a presenter cannot mix an unauthenticated document into a
-  // bundle and have it ignored.
-  if (!verifyVaidAuthenticity(kernelPublicKey, leaf)) {
-    return ChainVerification.Inauthentic;
-  }
+  // is allowed to influence assembly.
+  const authenticate = (doc: Vaid): boolean => {
+    const key = keys.resolveKey(doc.kernel_key_thumbprint);
+    // An unaccepted issuer is not a degraded issuer, it is somebody else.
+    return key === undefined ? false : verifyVaidAuthenticity(key, doc);
+  };
+
+  if (!authenticate(leaf)) return ChainVerification.Inauthentic;
   for (const doc of bundle.documents()) {
-    if (!verifyVaidAuthenticity(kernelPublicKey, doc)) {
-      return ChainVerification.Inauthentic;
-    }
+    if (!authenticate(doc)) return ChainVerification.Inauthentic;
   }
 
-  // Steps 2 and 3 — pin each hop against the signed `parent_vaid`, failing closed on
-  // any gap. Cycle detection and MAX_LINEAGE_DEPTH come from `assembleLineage`
-  // unchanged.
+  // Steps 2 and 3 — pin each hop, failing closed on any gap. Cycle detection and
+  // MAX_LINEAGE_DEPTH come from `assembleLineage` unchanged.
   const chainIds = assembleLineage(leaf, bundle);
-  if (chainIds === null) {
-    return ChainVerification.Unverifiable;
-  }
+  if (chainIds === null) return ChainVerification.Unverifiable;
 
-  // Resolve each id on the chain back to its document, root first. The leaf is
-  // supplied separately and need not appear in the bundle, so it is matched first.
-  // Any id that cannot be resolved to a document is a gap, and a gap is
-  // `Unverifiable` — never a silently shortened chain.
   const chainDocs: Vaid[] = [];
   for (const id of chainIds) {
     if (id === leaf.vaid_id) {
@@ -244,30 +365,85 @@ export function verifyChain(
       continue;
     }
     const doc = bundle.get(id);
-    if (doc === undefined) {
-      return ChainVerification.Unverifiable;
-    }
+    if (doc === undefined) return ChainVerification.Unverifiable;
     chainDocs.push(doc);
   }
 
-  // Step 4 — containment at every hop, root first, using the mint-time matchers.
-  //
-  // Tenant is checked as the qualified `(trust_domain, tenant_id)` pair. The mint
-  // refuses cross-tenant delegation, so a conforming chain cannot change tenant
-  // mid-walk; checking it here means a verifier does not have to take the mint's
-  // word for that — the same reasoning that puts scope and capabilities here. See
-  // `tenantAttenuates` for what the guarantee is worth: defence against operator
-  // error, not against a hostile issuer.
+  // Steps 4 and 5 — containment at every hop, root first, plus consent wherever a
+  // hop crosses a kernel key.
   for (let i = 0; i + 1 < chainDocs.length; i += 1) {
     const parent = chainDocs[i]!;
     const child = chainDocs[i + 1]!;
-    if (!tenantAttenuates(parent, child.trust_domain, child.tenant_id)) {
+    const sameKey = parent.kernel_key_thumbprint === child.kernel_key_thumbprint;
+
+    // Tenant as the qualified pair — on SAME-KEY hops. A CROSS-KEY hop crosses trust
+    // domains by definition, so requiring equality would forbid the very case
+    // attestations exist to enable; the crossing is instead named and signed in the
+    // attestation below. The pair is still checked on every hop — against a signed
+    // statement rather than the parent's own values.
+    if (sameKey && !tenantAttenuates(parent, child.trust_domain, child.tenant_id)) {
       return ChainVerification.NotAttenuated;
     }
     if (!scopeAttenuates(parent, child.scope_boundary)) {
       return ChainVerification.NotAttenuated;
     }
     if (!capsAttenuate(parent, child.capability_set)) {
+      return ChainVerification.NotAttenuated;
+    }
+
+    // Same kernel key: one issuer signed both ends and enforced consent at mint
+    // time. Behaviour unchanged from before cross-key support.
+    if (sameKey) continue;
+
+    // Cross-key hop. Consent must be presented, and must be the PARENT issuer's.
+    const attestation = attestations.get(parent.vaid_id, child.vaid_id);
+    if (attestation === undefined) {
+      // Also the outcome for an attestation minted for a different hop: it is filed
+      // under that hop's pair and is simply not found here. Replay is inert rather
+      // than rejected.
+      return ChainVerification.Inauthentic;
+    }
+
+    // The consenting party must be the party that issued the parent. Without this,
+    // any accepted key could consent on any parent's behalf.
+    if (
+      attestation.kernel_key_thumbprint !== parent.kernel_key_thumbprint ||
+      attestation.trust_domain !== parent.trust_domain
+    ) {
+      return ChainVerification.Inauthentic;
+    }
+
+    const attKey = keys.resolveKey(attestation.kernel_key_thumbprint);
+    if (attKey === undefined || !verifyAttestationAuthenticity(attKey, attestation)) {
+      return ChainVerification.Inauthentic;
+    }
+
+    // The consent must name the identity the child actually claims, or an
+    // attestation for a child in one tenant would authorize the same vaid_id
+    // claiming any other.
+    if (
+      attestation.child_trust_domain !== child.trust_domain ||
+      attestation.child_tenant_id !== child.tenant_id
+    ) {
+      return ChainVerification.NotAttenuated;
+    }
+
+    // The child may hold no more than the parent consented to...
+    if (
+      !scopeAttenuatesWithin(attestation.scope_boundary, child.scope_boundary) ||
+      !capsAttenuateWithin(attestation.capability_set, child.capability_set)
+    ) {
+      return ChainVerification.NotAttenuated;
+    }
+
+    // ...and the parent cannot consent to more than it holds. Checked separately
+    // from the hop containment above: that compares child to parent, this compares
+    // the ATTESTATION to parent — an over-broad attestation with a well-behaved
+    // child would otherwise pass.
+    if (
+      !scopeAttenuates(parent, attestation.scope_boundary) ||
+      !capsAttenuate(parent, attestation.capability_set)
+    ) {
       return ChainVerification.NotAttenuated;
     }
   }

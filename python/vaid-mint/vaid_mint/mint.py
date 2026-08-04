@@ -27,7 +27,7 @@ from vaid_pop import canonical_request_signing_bytes
 
 from vaid_mint.audit import AuditSink
 from vaid_mint.authz import AuthorizationGate, PermitAll
-from vaid_mint.document import has_capability, is_in_scope
+from vaid_mint.document import caps_contain, has_capability, is_in_scope, scope_contains
 from vaid_mint.error import IdentityError, UnauthorizedError
 from vaid_mint.issuer import ReferenceIssuer
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
@@ -40,9 +40,20 @@ def scope_attenuates(parent: dict, child_scope: list[str]) -> bool:
     """Is every entry of ``child_scope`` within ``parent``'s scope? Uses only
     ``is_in_scope`` (the single matcher). Empty child scope = ⊤ is permitted only
     under an empty/⊤ parent (the escalation guard)."""
+    return scope_attenuates_within(parent["scope_boundary"], child_scope)
+
+
+def scope_attenuates_within(parent_scope: list[str], child_scope: list[str]) -> bool:
+    """The same predicate over a bare boundary rather than a document.
+
+    A consent attestation carries a ``scope_boundary`` belonging to no document, and
+    the child's authority must be contained by it under EXACTLY this rule —
+    including the empty-child ⊤ guard, which is the subtle half. Reimplementing the
+    rule for the detached case is how the guard would be lost in one of them.
+    """
     if not child_scope:
-        return not parent["scope_boundary"]
-    return all(is_in_scope(parent, s) for s in child_scope)
+        return not parent_scope
+    return all(scope_contains(parent_scope, s) for s in child_scope)
 
 
 def tenant_attenuates(parent: dict, child_trust_domain: str, child_tenant: str) -> bool:
@@ -82,7 +93,13 @@ def caps_attenuate(parent: dict, child_caps: list[str]) -> bool:
     """Is every entry of ``child_caps`` held by ``parent``? Uses only
     ``has_capability``. Empty child caps = ∅ is safe; empty parent caps holds
     nothing (the deliberate scope/caps asymmetry)."""
-    return all(has_capability(parent, c) for c in child_caps)
+    return caps_attenuate_within(parent["capability_set"], child_caps)
+
+
+def caps_attenuate_within(parent_caps: list[str], child_caps: list[str]) -> bool:
+    """The same predicate over a bare capability set — the attestation counterpart
+    of :func:`scope_attenuates_within`."""
+    return all(caps_contain(parent_caps, c) for c in child_caps)
 
 
 class MintService:

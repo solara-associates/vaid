@@ -21,7 +21,7 @@ import { utcWholeSecondRfc3339, verifySignedPayload, type Rfc3339Utc } from 'vai
 
 import type { AuditSink } from './audit.js';
 import { PermitAll, type AuthorizationGate } from './authz.js';
-import { hasCapability, isInScope, type Vaid } from './document.js';
+import { capsContain, hasCapability, isInScope, scopeContains, type Vaid } from './document.js';
 import { IdentityError, UnauthorizedError } from './error.js';
 import type { VaidIssuer } from './issuer.js';
 import {
@@ -50,23 +50,28 @@ export const MINT_POP_FRESHNESS_SECS = 300;
  * is itself unrestricted (empty).
  */
 export function scopeAttenuates(parent: Vaid, childScope: readonly string[]): boolean {
-  if (childScope.length === 0) {
-    // Child wants ⊤; allowed only if the parent is also ⊤.
-    return parent.scope_boundary.length === 0;
-  }
-  return childScope.every((scope) => isInScope(parent, scope));
+  return scopeAttenuatesWithin(parent.scope_boundary, childScope);
 }
 
 /**
- * Capability attenuation: is every entry of `childCaps` held by `parent`? Uses
- * ONLY {@link hasCapability} (exact membership).
+ * The same predicate over a bare boundary rather than a document.
  *
- * No empty-child guard is needed (and deliberately none is added): capabilities
- * are explicit grants where empty = ∅ (least privilege), so an empty child set is
- * safe by construction; and an empty *parent* set holds nothing, so every
- * requested child capability is rejected. This is the deliberate scope/caps
- * asymmetry — scope empty = ⊤ needs a guard, caps empty = ∅ does not.
+ * A consent attestation carries a `scope_boundary` belonging to no document, and the
+ * child's authority must be contained by it under EXACTLY this rule — including the
+ * empty-child ⊤ guard, which is the subtle half. Reimplementing the rule for the
+ * detached case is how the guard would be lost in one of them.
  */
+export function scopeAttenuatesWithin(
+  parentScope: readonly string[],
+  childScope: readonly string[],
+): boolean {
+  if (childScope.length === 0) {
+    // Child wants ⊤; allowed only if the parent is also ⊤.
+    return parentScope.length === 0;
+  }
+  return childScope.every((s) => scopeContains(parentScope, s));
+}
+
 /**
  * Tenant containment, as the **qualified pair** `(trust_domain, tenant_id)`. Both
  * components must match the parent's. Mirror of the Rust `tenant_attenuates`.
@@ -102,8 +107,29 @@ export function tenantAttenuates(
   );
 }
 
+/**
+ * Capability attenuation: is every entry of `childCaps` held by `parent`? Uses
+ * ONLY {@link hasCapability} (exact membership).
+ *
+ * No empty-child guard is needed (and deliberately none is added): capabilities
+ * are explicit grants where empty = ∅ (least privilege), so an empty child set is
+ * safe by construction; and an empty *parent* set holds nothing, so every
+ * requested child capability is rejected. This is the deliberate scope/caps
+ * asymmetry — scope empty = ⊤ needs a guard, caps empty = ∅ does not.
+ */
 export function capsAttenuate(parent: Vaid, childCaps: readonly string[]): boolean {
-  return childCaps.every((capability) => hasCapability(parent, capability));
+  return capsAttenuateWithin(parent.capability_set, childCaps);
+}
+
+/**
+ * The same predicate over a bare capability set — the attestation counterpart of
+ * {@link scopeAttenuatesWithin}.
+ */
+export function capsAttenuateWithin(
+  parentCaps: readonly string[],
+  childCaps: readonly string[],
+): boolean {
+  return childCaps.every((c) => capsContain(parentCaps, c));
 }
 
 /**
