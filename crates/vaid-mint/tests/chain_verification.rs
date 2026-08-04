@@ -17,7 +17,7 @@
 //! one. That is a security property, not an obstacle to route around — it is
 //! exactly what makes chain substitution infeasible.
 //!
-//! So the suite drives a local `TestMint`: a kernel keypair plus the same public
+//! So the suite drives a local `LocalMint`: a kernel keypair plus the same public
 //! document-building and canonical-signing calls the issuer itself makes
 //! (`Vaid::with_lineage` → `canonical_vaid_signing_bytes` → `with_kernel_signature`).
 //! Documents it produces are genuinely authentic under its own kernel key, which
@@ -42,12 +42,12 @@ use vaid_mint::{
 /// A kernel key plus the issuer's own document-building and signing calls.
 /// Produces authentic documents while leaving `agent_id`, lineage and authority
 /// under the test's control. Attenuation is NOT enforced here — see module docs.
-struct TestMint {
+struct LocalMint {
     key_pair: Ed25519KeyPair,
     public_key: Vec<u8>,
 }
 
-impl TestMint {
+impl LocalMint {
     /// A deterministic kernel key. `from_seed_unchecked` keeps the suite
     /// reproducible; nothing here depends on the seed's value.
     fn new(seed_byte: u8) -> Self {
@@ -115,7 +115,7 @@ fn vid(agent_id: &AgentId) -> VaidId {
 /// Without this the whole suite could pass by rejecting everything.
 #[test]
 fn positive_control_complete_attenuated_chain_verifies() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let mid_id = id(2);
@@ -147,7 +147,7 @@ fn positive_control_complete_attenuated_chain_verifies() {
 /// A rootless leaf is trivially complete: one hop, nothing to contain.
 #[test]
 fn positive_control_rootless_leaf_verifies_against_empty_bundle() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
     let root = mint.sign(id(1), None, &["data.tenant"], &["read"]);
 
     assert_eq!(
@@ -166,7 +166,7 @@ fn positive_control_rootless_leaf_verifies_against_empty_bundle() {
 /// shortened to the documents that happen to be present.
 #[test]
 fn missing_ancestor_is_unverifiable() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let mid_id = id(2);
@@ -195,7 +195,7 @@ fn missing_ancestor_is_unverifiable() {
 /// parent — the third-party analogue of a resolver that cannot be consulted.
 #[test]
 fn unreachable_resolver_empty_bundle_is_unverifiable() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let leaf = mint.sign(id(2), Some(vid(&root_id)), &["data.tenant"], &["read"]);
@@ -213,7 +213,7 @@ fn unreachable_resolver_empty_bundle_is_unverifiable() {
 /// signature; `lineage_hash` no longer matches either. Must be `Inauthentic`.
 #[test]
 fn tampered_parent_vaid_is_inauthentic() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let privileged_id = id(1);
     let restricted_id = id(2);
@@ -266,8 +266,8 @@ fn tampered_parent_vaid_is_inauthentic() {
 /// check rejects it before its signature is even considered.
 #[test]
 fn ancestor_signed_by_another_kernel_key_is_inauthentic() {
-    let mint = TestMint::new(1);
-    let other = TestMint::new(2);
+    let mint = LocalMint::new(1);
+    let other = LocalMint::new(2);
 
     let root_id = id(1);
     let root = other.sign(root_id, None, &["data"], &["read"]);
@@ -287,7 +287,7 @@ fn ancestor_signed_by_another_kernel_key_is_inauthentic() {
 /// what a third party could not previously check.
 #[test]
 fn child_exceeding_parent_scope_is_not_attenuated() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let root = mint.sign(root_id, None, &["data.tenant"], &["read"]);
@@ -308,7 +308,7 @@ fn child_exceeding_parent_scope_is_not_attenuated() {
 /// root, so the transitive subset relation is broken above the leaf.
 #[test]
 fn mid_chain_scope_escalation_is_not_attenuated() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let mid_id = id(2);
@@ -331,7 +331,7 @@ fn mid_chain_scope_escalation_is_not_attenuated() {
 /// A child claiming a CAPABILITY its parent never held.
 #[test]
 fn child_exceeding_parent_capabilities_is_not_attenuated() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let root = mint.sign(root_id, None, &["data.tenant"], &["read"]);
@@ -357,7 +357,7 @@ fn child_exceeding_parent_capabilities_is_not_attenuated() {
 /// this guard to verify time; reimplementing containment is how it would be lost.
 #[test]
 fn empty_child_scope_under_restricted_parent_is_not_attenuated() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let root = mint.sign(root_id, None, &["data.tenant"], &["read"]);
@@ -381,7 +381,7 @@ fn empty_child_scope_under_restricted_parent_is_not_attenuated() {
 /// every time. The test builds it directly to prove the verifier survives it.
 #[test]
 fn cycle_is_unverifiable() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let a_id = id(1);
     let b_id = id(2);
@@ -402,7 +402,7 @@ fn cycle_is_unverifiable() {
 /// the bound rather than being walked.
 #[test]
 fn depth_overflow_is_unverifiable() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     // Root at index 0, then MAX_LINEAGE_DEPTH more hops, so the leaf sits beyond
     // the bound. Authority is identical at every hop, so the ONLY reason this can
@@ -434,7 +434,7 @@ fn depth_overflow_is_unverifiable() {
 /// the bound rather than on some incidental property of a long chain.
 #[test]
 fn chain_at_the_depth_bound_still_verifies() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     // `assemble_lineage` admits a chain of up to MAX_LINEAGE_DEPTH entries: a
     // root plus MAX_LINEAGE_DEPTH - 1 hops.
@@ -466,7 +466,7 @@ fn chain_at_the_depth_bound_still_verifies() {
 /// ancestors were withheld pass as rootless.
 #[test]
 fn bundle_resolver_distinguishes_root_from_unknown() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let child_id = id(2);
@@ -497,7 +497,7 @@ fn bundle_resolver_distinguishes_root_from_unknown() {
 /// The bundle drives the existing `assemble_lineage` unchanged, root first.
 #[test]
 fn bundle_assembles_ordered_lineage_root_first() {
-    let mint = TestMint::new(1);
+    let mint = LocalMint::new(1);
 
     let root_id = id(1);
     let mid_id = id(2);
