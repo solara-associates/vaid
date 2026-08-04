@@ -111,6 +111,13 @@ export {
 export { verifyLineageHash, verifyVaidAuthenticity } from './verify.js';
 
 export {
+  ChainVerification,
+  PresentedBundle,
+  isAttenuated,
+  verifyChain,
+} from './chain.js';
+
+export {
   kernelKeyThumbprint,
   isValidTrustDomain,
   isSpecialUseTrustDomain,

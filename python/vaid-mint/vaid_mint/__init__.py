@@ -33,6 +33,7 @@ Usage::
 """
 
 from vaid_mint.audit import AuditEntry, AuditSink, InMemoryAudit, NoopAudit
+from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
 from vaid_mint.document import (
     VAID_SIG_VERSION_V3,
@@ -89,6 +90,9 @@ __all__ = [
     "assemble_lineage",
     "verify_vaid_authenticity",
     "verify_lineage_hash",
+    "verify_chain",
+    "ChainVerification",
+    "PresentedBundle",
     "AuditSink",
     "AuditEntry",
     "InMemoryAudit",
