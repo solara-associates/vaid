@@ -77,6 +77,44 @@ fn every_registered_gate_file_exists() {
     }
 }
 
+/// The PACKAGED FIREWALL must cover every vector too.
+///
+/// `tests/` gates and the shipped binary are different audiences: a `#[test]` needs
+/// a checkout, the binary is what a `cargo install` consumer runs. A vector gated by
+/// a test but absent from `src/bin/conformance.rs` would be verified by us and
+/// unverified by them — which is the exact asymmetry the binary was added to remove.
+///
+/// The binary also fails closed at runtime, but that fires only when someone runs
+/// it; this fires in `cargo test`.
+#[test]
+fn the_packaged_firewall_covers_every_vector() {
+    let source =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bin/conformance.rs"))
+            .expect("the packaged firewall source is readable");
+
+    let present: BTreeSet<String> = fs::read_dir(vectors_dir())
+        .expect("tests/vectors is readable")
+        .map(|e| {
+            e.expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|n| n.ends_with(".json"))
+        .collect();
+
+    let uncovered: Vec<_> = present
+        .iter()
+        .filter(|n| !source.contains(n.as_str()))
+        .cloned()
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "vector(s) not named in the packaged firewall's VECTOR_CHECKS: {uncovered:?} — a \
+         cargo-install consumer would not have them checked"
+    );
+}
+
 /// The gate named for a vector must actually reference it. A gate file that exists
 /// but never opens the vector it claims is the exact silent-coverage failure this
 /// module is about, one level in.

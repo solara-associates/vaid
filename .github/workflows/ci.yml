@@ -142,6 +142,12 @@ jobs:
           toolchain: "1.88"
       - name: Rust mint conformance gate (cargo test -p vaid-mint --test mint_conformance)
         run: cargo test -p vaid-mint --test mint_conformance --locked
+      # The PACKAGED firewall, not the test gate. Different audiences: the test
+      # needs a checkout, this is what a `cargo install vaid-mint` consumer runs.
+      # It also enumerates the embedded vectors and fails closed on any it cannot
+      # account for, in either direction.
+      - name: Rust mint conformance gate (packaged firewall)
+        run: cargo run -p vaid-mint --bin vaid-mint-conformance --locked
       - name: Set up Python
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:

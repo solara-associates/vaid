@@ -9,6 +9,42 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.4.2]
+
+### Added — `vaid-mint-conformance`, the packaged firewall as a Rust binary
+
+Python and TypeScript shipped an executable a consumer could run against the
+package they installed. Rust did not: its gates were `#[test]`s under `tests/`, and
+`cargo test` needs a checkout, so the only Rust answer was "clone our repository and
+trust that it is the source your crate was built from" — a strictly weaker claim
+than the other two languages make, and the quickstart's advice covered two
+languages out of three.
+
+```console
+$ cargo install vaid-mint
+$ vaid-mint-conformance      # exit 0 = PASS, 1 = BLOCKER
+```
+
+Because `cargo install` compiles from the crate tarball, the bytes checked are the
+bytes you received from crates.io.
+
+**It enumerates rather than naming a fixed set.** `build.rs` scans `tests/vectors/`
+at build time and emits one `include_str!` per file, which is the closest Rust gets
+to the runtime directory read Python and TypeScript do — an installed binary has no
+directory left to read. It fails in both directions: a vector embedded with no
+checker is a BLOCKER, a checker with no vector is a BLOCKER, and no embedded vectors
+at all is a BLOCKER, because a firewall that checked nothing must never report PASS.
+
+The build script never fails the build. It runs for every consumer who merely
+depends on the library, so a missing `tests/vectors/` emits an empty table instead of
+panicking, and the binary fails closed at runtime where it belongs.
+
+Output is byte-identical to the Python and TypeScript firewalls.
+
+**Patch release. No format change and no vector change:** every frozen vector is
+byte-identical to 0.4.1, `sig_version` and `att_version` are unchanged, and no
+existing public API moved.
+
 ## [0.4.1]
 
 ### Fixed — the packaged firewall checked two of four vectors and printed PASS
