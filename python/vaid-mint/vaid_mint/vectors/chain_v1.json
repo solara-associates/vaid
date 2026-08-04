@@ -1,0 +1,201 @@
+{
+  "_comment": "Chain-presentation conformance vector (v1), per ADR-0003 §3. ADDITIVE: it introduces no new signed field and no new encoding rule inside signed bytes. `mint_v1.json` and `mint_pop_v1.json` are untouched and are NOT re-frozen by this vector's existence. Each entry of `chain` is an ordinary v3 VAID document, UNSIGNED (`kernel_signature` empty); a conforming implementation MUST reproduce each `digest_sha256_hex` by nulling `kernel_signature`, canonicalizing per JCS (RFC 8785) and SHA-256, and MUST reproduce each `signature_hex` from the kernel seed. What this vector pins BEYOND mint_v1 is the walk: presented with these three documents (the leaf plus the two ancestors as a detached bundle), a conforming verifier MUST assemble exactly `expected.assembled_lineage` — ORDERED ROOT FIRST, LEAF LAST — and MUST reach `expected.verification`. Authority narrows strictly at every hop in BOTH dimensions (scope by prefix extension, capabilities by removal), and `tenant_id` and `trust_domain` are constant across the chain, because cross-tenant delegation is denied at mint. Revocation and expiry are NOT consulted by chain verification and are not represented here. `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this vector publishes its own kernel private seed, so anyone can sign documents under it — a real trust domain here would be a published forgery generator for that deployment. RFC 2606 reserves `.example`. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
+  "chain": [
+    {
+      "_role": "root",
+      "digest_sha256_hex": "47c7a18f97746cdf59f76622d3ae427e5ef9f90dd65d156e947794b2cb616746",
+      "document": {
+        "agent_class": "orchestrator",
+        "agent_id": "c0000000-0000-0000-0000-000000000001",
+        "capability_set": [
+          "read",
+          "write"
+        ],
+        "expires_at": "2026-06-05T12:00:00Z",
+        "issued_at": "2026-06-04T12:00:00Z",
+        "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+        "kernel_signature": [],
+        "lineage_hash": "c023e6dc001e16b3d4bfad86c65b3d16db0abf656051035595775ca322e56258",
+        "parent_vaid": null,
+        "public_key_der": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ],
+        "scope_boundary": [
+          "data.aifactory"
+        ],
+        "sig_version": 3,
+        "tenant_id": "aifactory",
+        "trust_domain": "vaid.example",
+        "vaid_id": "c0000000-0000-0000-0000-000000000001",
+        "version": "1.0.0"
+      },
+      "signature_hex": "bb8e196511079a43fdee34733bcbf4c75dfea2a0e26f6c6cf2febb540dae744c5720dfcd5c273657b3a3a91c52c136cc9f8a472f1a85d2785ef5e37f57872100"
+    },
+    {
+      "_role": "intermediate",
+      "digest_sha256_hex": "f6bacbfc8f15763eff02ed75012b9bcf5ed9e4349d7701fb033d9153f103b5f3",
+      "document": {
+        "agent_class": "planner",
+        "agent_id": "c0000000-0000-0000-0000-000000000002",
+        "capability_set": [
+          "read"
+        ],
+        "expires_at": "2026-06-05T12:00:00Z",
+        "issued_at": "2026-06-04T12:00:00Z",
+        "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+        "kernel_signature": [],
+        "lineage_hash": "699df9c3324f3f6d72cc04818e16a633bddb5494590dba65aca0b185e3438fe2",
+        "parent_vaid": "c0000000-0000-0000-0000-000000000001",
+        "public_key_der": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ],
+        "scope_boundary": [
+          "data.aifactory.sub"
+        ],
+        "sig_version": 3,
+        "tenant_id": "aifactory",
+        "trust_domain": "vaid.example",
+        "vaid_id": "c0000000-0000-0000-0000-000000000002",
+        "version": "1.0.0"
+      },
+      "signature_hex": "ed595ec92d30e7792017b80409353490c2ae9ec5e63271bc507421250f922216fd5945dd2e2f70d82db5fc733af2d06808216cd3d1ca1f55201f251a6a104b04"
+    },
+    {
+      "_role": "leaf",
+      "digest_sha256_hex": "416b0596d3ea793204fce0a819af72da6922dff889f5cd959ae707438668ea40",
+      "document": {
+        "agent_class": "worker",
+        "agent_id": "c0000000-0000-0000-0000-000000000003",
+        "capability_set": [
+          "read"
+        ],
+        "expires_at": "2026-06-05T12:00:00Z",
+        "issued_at": "2026-06-04T12:00:00Z",
+        "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+        "kernel_signature": [],
+        "lineage_hash": "455d3363fba1267dacf8b241b60a8b5f9d27d676ece417e69f3ce25f4f4f7737",
+        "parent_vaid": "c0000000-0000-0000-0000-000000000002",
+        "public_key_der": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ],
+        "scope_boundary": [
+          "data.aifactory.sub.task"
+        ],
+        "sig_version": 3,
+        "tenant_id": "aifactory",
+        "trust_domain": "vaid.example",
+        "vaid_id": "c0000000-0000-0000-0000-000000000003",
+        "version": "1.0.0"
+      },
+      "signature_hex": "0bc3dcf68478ad5e839c76328bece0d8de7e1c347ef41d955dd5afd76d1069610aa3c37b07d90f5041d73cd1c668627feb50038544ad762c6098215ff2159100"
+    }
+  ],
+  "ed25519": {
+    "_comment": "Deterministic kernel key (same RFC 8032 seed as mint_v1.json and operator_pop_v1.json). EVERY hop is signed by this ONE key: the chain is single-trust-domain, which is what the shipped verifier supports.",
+    "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+    "kernel_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+  },
+  "expected": {
+    "_comment": "`assembled_lineage` is the output of assembling the leaf's ancestry against a bundle holding the other two documents: root first, leaf last. `verification` is the verdict of full chain verification — authenticate every document, pin each hop against the signed `parent_vaid`, then check containment at every hop.",
+    "assembled_lineage": [
+      "c0000000-0000-0000-0000-000000000001",
+      "c0000000-0000-0000-0000-000000000002",
+      "c0000000-0000-0000-0000-000000000003"
+    ],
+    "verification": "attenuated"
+  }
+}
