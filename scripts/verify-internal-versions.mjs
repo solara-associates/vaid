@@ -136,7 +136,21 @@ for (const p of packages) {
   }
 
   if (p.changelog === null) {
-    notes.push(`  · [${p.dir}] ${p.name} — no CHANGELOG.md`);
+    // A CHANGELOG is REQUIRED, unlike the code constant above. The distinction is
+    // not arbitrary: a language either has a second version constant or it does not,
+    // and inventing one would manufacture drift. Every language can carry a
+    // changelog, so an absent one is a gap rather than a property of the ecosystem.
+    //
+    // This was a note until every package had one. It stayed a note long enough for
+    // six published packages to acquire none between them, which is the argument for
+    // the change: a note is a finding nobody is obliged to clear, and it was not
+    // cleared. Turning it on before the files existed would only have made main red,
+    // so the files landed first and this went on against a green tree.
+    failures.push(
+      `  ✗ [${p.dir}] ${p.name}: no CHANGELOG.md — a published package must record ` +
+        `what changed. Add one whose top heading is "## [${p.manifest}]".`,
+    );
+    continue;
   } else if (p.changelog.unparseable) {
     failures.push(`  ✗ [${p.dir}] ${p.name}: CHANGELOG.md has no parseable "## [x.y.z]" heading (failing closed)`);
     continue;
