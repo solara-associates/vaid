@@ -90,6 +90,7 @@
 //! # fn tokio_test_block<F: std::future::Future>(f: F) { let rt = tokio::runtime::Builder::new_current_thread().build().unwrap(); rt.block_on(f); }
 //! ```
 
+pub mod attestation;
 pub mod audit;
 pub mod authz;
 pub mod chain;
@@ -102,8 +103,15 @@ pub mod mint_types;
 pub mod revocation;
 pub mod verify;
 
+pub use attestation::{
+    canonical_attestation_signing_bytes, verify_attestation_authenticity, AttestationBundle,
+    ConsentAttestation, ATTESTATION_VERSION,
+};
 pub use authz::{AuthorizationGate, PermitAll};
-pub use chain::{verify_chain, ChainVerification, PresentedBundle};
+pub use chain::{
+    verify_chain, verify_chain_with, ChainVerification, KernelKeyMap, KernelKeyResolver,
+    PresentedBundle, SingleKernelKey,
+};
 pub use document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
     VaidId, VAID_SIG_VERSION_V3,

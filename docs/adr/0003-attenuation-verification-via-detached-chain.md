@@ -113,6 +113,12 @@ Because `vaid_id` equals `agent_id` and is a fresh UUIDv4 per mint, that require
 a kernel-key compromise or a UUID collision. No new field contributes to this
 property; the pin is already signed.
 
+**This argument holds only while every document on the chain is signed by one
+kernel key**: once a verifier accepts more than one, a second accepted issuer can
+sign a document naming any `vaid_id` it knows as `parent_vaid` without compromising
+anyone's key, so a cross-key hop additionally requires a detached consent
+attestation from the issuer that minted the parent (`crates/vaid-mint/src/attestation.rs`).
+
 ### The primitives already exist
 
 `docs/spec/revocation.md` R.4.2 and `crates/vaid-mint/src/revocation.rs` already

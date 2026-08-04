@@ -43,11 +43,23 @@ pub const MINT_POP_FRESHNESS_SECS: i64 = 300;
 /// the parent. Fail closed: an empty child scope is permitted ONLY when the
 /// parent is itself unrestricted (empty).
 pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
+    scope_attenuates_within(parent.scope_boundary(), child_scope)
+}
+
+/// The same predicate over a bare boundary rather than a document.
+///
+/// A consent attestation carries a `scope_boundary` that belongs to no document,
+/// and the child's authority must be contained by it under EXACTLY this rule —
+/// including the empty-child guard, which is the subtle half. Reimplementing the
+/// rule for the detached case is how the guard would be lost in one of them.
+pub(crate) fn scope_attenuates_within(parent_scope: &[String], child_scope: &[String]) -> bool {
     if child_scope.is_empty() {
         // Child wants ⊤; allowed only if the parent is also ⊤.
-        parent.scope_boundary().is_empty()
+        parent_scope.is_empty()
     } else {
-        child_scope.iter().all(|s| parent.is_in_scope(s))
+        child_scope
+            .iter()
+            .all(|s| crate::document::scope_contains(parent_scope, s))
     }
 }
 
@@ -103,7 +115,15 @@ pub(crate) fn tenant_attenuates(
 /// requested child capability is rejected. This is the deliberate scope/caps
 /// asymmetry — scope empty = ⊤ needs a guard, caps empty = ∅ does not.
 pub(crate) fn caps_attenuate(parent: &Vaid, child_caps: &[String]) -> bool {
-    child_caps.iter().all(|c| parent.has_capability(c))
+    caps_attenuate_within(parent.capability_set(), child_caps)
+}
+
+/// The same predicate over a bare capability set rather than a document — the
+/// attestation counterpart of [`scope_attenuates_within`].
+pub(crate) fn caps_attenuate_within(parent_caps: &[String], child_caps: &[String]) -> bool {
+    child_caps
+        .iter()
+        .all(|c| crate::document::caps_contain(parent_caps, c))
 }
 
 /// The mint service. Holds the issuer (kernel signer) and the audit sink, plus
