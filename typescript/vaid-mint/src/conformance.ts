@@ -28,14 +28,16 @@
  * against the managed authority's VAID format.
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 import {
+  canonicalize,
   canonicalizeToString,
   canonicalRequestSigningBytes,
   ed25519PublicKey,
   ed25519Sign,
   fromHex,
+  sha256,
   toHex,
   verifySignedPayload,
 } from 'vaid-pop';
@@ -45,6 +47,12 @@ import {
   computeLineageHash,
   type Vaid,
 } from './document.js';
+import {
+  canonicalAttestationSigningBytes,
+  verifyAttestationAuthenticity,
+  type ConsentAttestation,
+} from './attestation.js';
+import { PresentedBundle, verifyChain } from './chain.js';
 import { buildMintPopPayload, type MintPopPayload } from './mintTypes.js';
 import { verifyVaidAuthenticity } from './verify.js';
 
@@ -75,6 +83,34 @@ export interface MintPopVector {
   };
   /** A real camelCase `MintPopPayload`. */
   input: MintPopPayload;
+}
+
+/** One hop of the frozen chain vector. */
+export interface ChainVectorEntry {
+  _role: string;
+  digest_sha256_hex: string;
+  signature_hex: string;
+  document: Vaid;
+}
+
+/** `chain_v1.json` — the frozen chain presentation and its expected walk. */
+export interface ChainVector {
+  digest_sha256_hex: string;
+  ed25519: {
+    kernel_private_key_seed_hex: string;
+    kernel_public_key_hex: string;
+    kernel_key_thumbprint: string;
+  };
+  chain: ChainVectorEntry[];
+  expected: { _comment?: string; assembled_lineage: string[]; verification: string };
+}
+
+/** `attestation_v1.json` — the frozen consent attestation. */
+export interface AttestationVector {
+  digest_sha256_hex: string;
+  signature_hex: string;
+  ed25519: { kernel_private_key_seed_hex: string; kernel_public_key_hex: string };
+  attestation: ConsentAttestation;
 }
 
 // `../vectors` resolves to the package's vectors/ directory from both `src/`
@@ -242,25 +278,147 @@ export function checkMintPop(v: MintPopVector): void {
   }
 }
 
-/**
- * Run every firewall check against the bundled vector. Throws
- * {@link ConformanceError} on any divergence; returns the vector on PASS.
- */
-export function run(): { document: MintVector; mintPop: MintPopVector } {
-  const document = loadVector();
-  checkDocumentDigest(document);
-  checkKernelSignature(document);
-  checkLineageHash(document);
-  checkVaidIdEqualsAgentId(document);
-  checkPublicKeyOnlyVerification(document);
-  const mintPop = loadMintPopVector();
-  checkMintPop(mintPop);
-  return { document, mintPop };
+/** `chain_v1.json` — the WALK: per-hop digests and signatures, the contract digest
+ * over the whole frozen chain, and the verdict a third party reaches. */
+export function checkChain(v: ChainVector): void {
+  const seed = fromHex(v.ed25519.kernel_private_key_seed_hex);
+
+  for (const entry of v.chain) {
+    const digest = canonicalVaidSigningBytes(entry.document);
+    assertHex(`chain hop ${entry._role} digest`, toHex(digest), entry.digest_sha256_hex);
+    assertHex(
+      `chain hop ${entry._role} signature`,
+      toHex(ed25519Sign(digest, seed)),
+      entry.signature_hex,
+    );
+  }
+
+  const { _comment: _dropped, ...expected } = v.expected;
+  void _dropped; // prose is documentation, not contract
+  assertHex(
+    'chain contract digest',
+    toHex(sha256(canonicalize({ chain: v.chain, expected }))),
+    v.digest_sha256_hex,
+  );
+
+  const docs = v.chain.map((e) => ({
+    ...e.document,
+    kernel_signature: Array.from(fromHex(e.signature_hex)),
+  }));
+  const verdict = verifyChain(
+    fromHex(v.ed25519.kernel_public_key_hex),
+    docs[docs.length - 1]!,
+    new PresentedBundle(docs),
+  );
+  if (verdict !== v.expected.verification) {
+    throw new ConformanceError(
+      `chain verdict '${verdict}' != frozen '${v.expected.verification}' — the ` +
+        'installed verifier disagrees with the frozen walk',
+    );
+  }
 }
 
-/** CLI entry point: exit 0 on PASS, 1 on any divergence. */
+/** `attestation_v1.json` — canonicalization, signature, and that the frozen
+ * signature verifies as authentic. */
+export function checkAttestation(v: AttestationVector): void {
+  const digest = canonicalAttestationSigningBytes(v.attestation);
+  assertHex('attestation digest', toHex(digest), v.digest_sha256_hex);
+
+  const seed = fromHex(v.ed25519.kernel_private_key_seed_hex);
+  assertHex('attestation signature', toHex(ed25519Sign(digest, seed)), v.signature_hex);
+
+  const signed = {
+    ...v.attestation,
+    signature: Array.from(fromHex(v.signature_hex)),
+  };
+  if (!verifyAttestationAuthenticity(fromHex(v.ed25519.kernel_public_key_hex), signed)) {
+    throw new ConformanceError('the frozen attestation must verify as authentic');
+  }
+}
+
+/**
+ * Every vector this firewall knows how to check, by filename.
+ *
+ * The firewall ENUMERATES what actually ships and dispatches through this table
+ * rather than naming a fixed set, and it fails in BOTH directions — see
+ * {@link run}. Adding a vector to the package without adding it here is a hard
+ * failure, by design.
+ */
+export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
+  'mint_v1.json': (v: MintVector) => {
+    checkDocumentDigest(v);
+    checkKernelSignature(v);
+    checkLineageHash(v);
+    checkVaidIdEqualsAgentId(v);
+    checkPublicKeyOnlyVerification(v);
+  },
+  'mint_pop_v1.json': (v: MintPopVector) => checkMintPop(v),
+  'chain_v1.json': (v: ChainVector) => checkChain(v),
+  'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
+} as Record<string, (v: never) => void>;
+
+/**
+ * Every `.json` vector actually present in the INSTALLED package.
+ *
+ * Read from the package rather than from a list in this file: a list is what
+ * silently stops matching reality.
+ */
+export function bundledVectorNames(): string[] {
+  const dir = new URL('../vectors/', import.meta.url);
+  return readdirSync(dir)
+    .filter((n) => n.endsWith('.json'))
+    .sort();
+}
+
+/**
+ * Run the firewall over every vector the installed package ships.
+ *
+ * Fails in BOTH directions, because each direction hides a different defect:
+ *
+ * - a vector PRESENT in the package with no entry in {@link VECTOR_CHECKS} is a
+ *   hard failure. This is the defect that motivated the change: the firewall named
+ *   a fixed set, so a release whose entire purpose was a new vector passed a check
+ *   that never looked at it. Silence there is indistinguishable from coverage.
+ * - a vector NAMED in {@link VECTOR_CHECKS} but ABSENT from the package is also a
+ *   hard failure — a checker that quietly checks nothing is the same masked-green
+ *   defect wearing the other hat.
+ *
+ * It cannot verify a vector nobody has written a checker for; nothing can. What it
+ * guarantees is that such a vector cannot ship *quietly* — the firewall goes red
+ * until someone says what the vector means.
+ */
+export function run(): Record<string, { digest_sha256_hex: string }> {
+  const present = bundledVectorNames();
+  const known = Object.keys(VECTOR_CHECKS).sort();
+
+  const unchecked = present.filter((n) => !known.includes(n));
+  if (unchecked.length > 0) {
+    throw new ConformanceError(
+      `vector(s) ship in this package but no firewall check covers them: ${unchecked.join(', ')}` +
+        ' — add a checker to VECTOR_CHECKS. A shipped-but-unchecked vector makes a' +
+        ' PASS mean less than it appears to.',
+    );
+  }
+
+  const missing = known.filter((n) => !present.includes(n));
+  if (missing.length > 0) {
+    throw new ConformanceError(
+      `firewall expects vector(s) that are not in this package: ${missing.join(', ')}` +
+        ' — the packaging dropped them, or the check is stale.',
+    );
+  }
+
+  const results: Record<string, { digest_sha256_hex: string }> = {};
+  for (const name of present) {
+    const vector = loadVectorFile<{ digest_sha256_hex: string }>(name);
+    VECTOR_CHECKS[name]!(vector as never);
+    results[name] = vector;
+  }
+  return results;
+}
+
 export function main(): number {
-  let result: { document: MintVector; mintPop: MintPopVector };
+  let result: Record<string, { digest_sha256_hex: string }>;
   try {
     result = run();
   } catch (error) {
@@ -269,11 +427,16 @@ export function main(): number {
     );
     return 1;
   }
+  const names = Object.keys(result).sort();
   console.log(
-    'CROSS-LANGUAGE MINT FIREWALL: PASS — installed mint == frozen vectors, byte-for-byte\n' +
-      `  document digest    = ${result.document.digest_sha256_hex}\n` +
-      `  document signature = ${result.document.ed25519.signature_hex}\n` +
-      `  mint-PoP digest    = ${result.mintPop.digest_sha256_hex}`,
+    `CROSS-LANGUAGE MINT FIREWALL: PASS — installed mint == ${names.length} frozen ` +
+      'vector(s), byte-for-byte',
   );
+  // Every vector is named with its digest. The COUNT is the point: a release that
+  // adds a vector visibly adds a line here, so "did the firewall look at the thing
+  // this release was about" is answerable from the output alone.
+  for (const name of names) {
+    console.log(`  ${name.padEnd(22)} ${result[name]!.digest_sha256_hex}`);
+  }
   return 0;
 }
