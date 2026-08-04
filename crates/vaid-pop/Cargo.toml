@@ -8,7 +8,9 @@ name = "vaid-pop"
 #
 # 0.2.0 — adds the packaged `vaid-pop-conformance` firewall binary (additive; no
 # change to the PoP wire shape, and the frozen vectors are untouched).
-version = "0.2.0"
+# 0.2.1 — that firewall named a fixed set of vectors; it now enumerates what ships.
+# Additive, same wire shape, same frozen vectors.
+version = "0.2.1"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["solara.associates"]
