@@ -15,7 +15,7 @@ name = "vaid-mint"
 # byte-identical-conformance-locked against the closed VAID format (that format is
 # still moving); the frozen vector proves only that this repo's Rust and Python
 # minters agree with each other.
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["solara.associates"]
@@ -26,6 +26,14 @@ documentation = "https://docs.rs/vaid-mint"
 readme = "README.md"
 keywords = ["synthera", "vaid", "delegation", "attenuation", "ed25519"]
 categories = ["cryptography", "authentication", "api-bindings"]
+
+# The packaged firewall, mirroring the Python and TypeScript `vaid-mint-conformance`
+# executables and the sibling `vaid-pop-conformance`. Named explicitly because the
+# file is `src/bin/conformance.rs` and the auto-detected target name ("conformance")
+# is too generic once installed onto a PATH.
+[[bin]]
+name = "vaid-mint-conformance"
+path = "src/bin/conformance.rs"
 
 [dependencies]
 # The VAID identity newtypes (VaidId/TenantId) and the canonical PoP primitive
