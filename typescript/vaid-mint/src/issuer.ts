@@ -29,6 +29,11 @@
  * caller that needs to distinguish "forged" from "expired" beforehand.
  */
 
+import {
+  buildUnsignedAttestation,
+  canonicalAttestationSigningBytes,
+  type ConsentAttestation,
+} from './attestation.js';
 import { MintError } from './error.js';
 import { isValidTrustDomain, kernelKeyThumbprint } from './issuerIdentity.js';
 import {
@@ -216,6 +221,46 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   /** The kernel public key (raw 32 bytes) a verifier binds this issuer's VAIDs against. */
   kernelPublicKey(): Uint8Array {
     return this.#kernelPublicKey;
+  }
+
+  /**
+   * Sign a **detached consent attestation**: this issuer, as the party that issued
+   * `parentVaid`, consents to `childVaid` holding at most `scopeBoundary` and
+   * `capabilitySet` under it. Mirror of the Rust `attest_delegation`.
+   *
+   * Consent is otherwise a property of the mint's *session* — `mintChild` enforces
+   * it in-process and nothing about that enforcement lands in the child document,
+   * so a cross-issuer verifier cannot see it. This makes it a signed object the
+   * presenter can carry.
+   *
+   * The trust domain and thumbprint come from this issuer's own key and
+   * configuration, never from a parameter, so an attestation cannot name a key or
+   * domain other than the one about to sign it.
+   *
+   * **This does not check that `parentVaid` was actually minted here.** The
+   * reference lineage map is in-memory and empty after restart (R.4.6), so such a
+   * check would fail closed on legitimate attestations after any restart. A verifier
+   * does not rely on it: it independently requires the attestation's thumbprint to
+   * equal the parent document's.
+   */
+  attestDelegation(fields: {
+    parentVaid: VaidId;
+    childVaid: VaidId;
+    childTrustDomain: string;
+    childTenantId: string;
+    scopeBoundary: readonly string[];
+    capabilitySet: readonly string[];
+  }): ConsentAttestation {
+    const unsigned = buildUnsignedAttestation({
+      ...fields,
+      trustDomain: this.#trustDomain,
+      kernelKeyThumbprint: kernelKeyThumbprint(this.kernelPublicKey()),
+    });
+    const signature = ed25519Sign(
+      canonicalAttestationSigningBytes(unsigned),
+      this.#kernelSeed,
+    );
+    return { ...unsigned, signature: Array.from(signature) };
   }
 
   /**

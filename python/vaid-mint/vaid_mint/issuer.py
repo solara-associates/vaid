@@ -141,6 +141,52 @@ class ReferenceIssuer:
         """The kernel public key (raw 32 bytes) a verifier binds VAIDs against."""
         return self._kernel_key.public_key().public_bytes_raw()
 
+    def attest_delegation(
+        self,
+        parent_vaid: str,
+        child_vaid: str,
+        child_trust_domain: str,
+        child_tenant_id: str,
+        scope_boundary: list[str],
+        capability_set: list[str],
+    ) -> dict:
+        """Sign a **detached consent attestation**: this issuer, as the party that
+        issued ``parent_vaid``, consents to ``child_vaid`` holding at most ``scope``
+        and ``capability_set`` under it. Mirror of the Rust ``attest_delegation``.
+
+        Consent is otherwise a property of the mint's *session* — ``mint_child``
+        enforces it in-process and nothing about that enforcement lands in the child
+        document, so a cross-issuer verifier cannot see it. This makes it a signed
+        object the presenter can carry.
+
+        The trust domain and thumbprint come from this issuer's own key and
+        configuration, never from a parameter, so an attestation cannot name a key
+        or domain other than the one about to sign it.
+
+        **This does not check that ``parent_vaid`` was actually minted here.** The
+        reference lineage map is in-memory and empty after restart (R.4.6), so such
+        a check would fail closed on legitimate attestations after any restart. A
+        verifier does not rely on it: it independently requires the attestation's
+        thumbprint to equal the parent document's.
+        """
+        from vaid_mint.attestation import (
+            build_unsigned_attestation,
+            canonical_attestation_signing_bytes,
+        )
+
+        unsigned = build_unsigned_attestation(
+            parent_vaid=parent_vaid,
+            child_vaid=child_vaid,
+            child_trust_domain=child_trust_domain,
+            child_tenant_id=child_tenant_id,
+            scope_boundary=scope_boundary,
+            capability_set=capability_set,
+            trust_domain=self._trust_domain,
+            kernel_key_thumbprint=kernel_key_thumbprint(self.kernel_public_key()),
+        )
+        signature = self._kernel_key.sign(canonical_attestation_signing_bytes(unsigned))
+        return {**unsigned, "signature": list(signature)}
+
     def revoke(self, vaid_id: str) -> None:
         """Revoke a VAID in the built-in in-memory store. A revoked VAID — and every
         VAID attenuated from it (R.4.4) — fails :meth:`verify_vaid`. Does not survive

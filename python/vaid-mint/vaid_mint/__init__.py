@@ -33,7 +33,22 @@ Usage::
 """
 
 from vaid_mint.audit import AuditEntry, AuditSink, InMemoryAudit, NoopAudit
-from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain
+from vaid_mint.attestation import (
+    ATTESTATION_VERSION,
+    AttestationBundle,
+    build_unsigned_attestation,
+    canonical_attestation_signing_bytes,
+    verify_attestation_authenticity,
+)
+from vaid_mint.chain import (
+    ChainVerification,
+    KernelKeyMap,
+    KernelKeyResolver,
+    PresentedBundle,
+    SingleKernelKey,
+    verify_chain,
+    verify_chain_with,
+)
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
 from vaid_mint.document import (
     VAID_SIG_VERSION_V3,
@@ -95,6 +110,15 @@ __all__ = [
     "verify_chain",
     "ChainVerification",
     "PresentedBundle",
+    "verify_chain_with",
+    "KernelKeyResolver",
+    "SingleKernelKey",
+    "KernelKeyMap",
+    "AttestationBundle",
+    "ATTESTATION_VERSION",
+    "build_unsigned_attestation",
+    "canonical_attestation_signing_bytes",
+    "verify_attestation_authenticity",
     "AuditSink",
     "AuditEntry",
     "InMemoryAudit",
