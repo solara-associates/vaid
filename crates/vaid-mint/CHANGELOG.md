@@ -3,6 +3,40 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0]
+
+### Changed — lineage-depth bound lowered 1024 → 64 (BEHAVIOUR CHANGE)
+
+`MAX_LINEAGE_DEPTH` is now **64**. A delegation chain **deeper than 64** no
+longer verifies where it previously did.
+
+Concretely: `assemble_lineage` returns an incomplete assembly past the bound,
+which a verifier maps to `Unavailable` revocation status, and `verify_chain`
+maps to `Unverifiable`. Both **fail closed** — this change cannot cause anything
+to be accepted that was previously rejected. The only regression available is a
+legitimate chain of depth 65–1024 that stops verifying.
+
+Why lower it:
+
+1. **Exposure.** `assemble_lineage` is reachable over attacker-supplied input —
+   `verify_chain` runs it against a `PresentedBundle` the *presenter* assembled.
+   The bound caps work a third party can make a verifier perform, and 1024 was
+   the loosest bound sitting on the most exposed path.
+2. **Cost is quadratic.** The walk performs a membership test against what it
+   has already collected on every hop, so a depth-`d` walk is O(d²). 1024 admits
+   roughly 500,000 comparisons per verification; 64 admits roughly 2,000.
+3. **Nothing legitimate is near it.** Observed delegation chains are single-digit
+   deep. 64 leaves about sixty times that headroom.
+
+**If you delegate deeper than 64 hops, do not take this release** until you have
+either flattened those chains or pinned 0.3.x. There is no configuration knob;
+the bound is a compile-time constant in all three languages, deliberately, so
+the three implementations cannot drift into different verification verdicts.
+
+Changed identically in Rust, Python and TypeScript. No conformance vector is
+affected — revocation and lineage assembly sit outside the conformance surface
+(ADR-0001), and no frozen vector exercises this bound.
+
 ## [0.6.0]
 
 ### Fixed — a verifier canonicalizes the bytes it was PRESENTED (SECURITY / correctness)
