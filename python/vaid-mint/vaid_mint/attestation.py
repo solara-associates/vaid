@@ -64,26 +64,41 @@ attestation through. Structural inertness has no such failure mode. If a deploym
 needs to tell the two apart, the right fix is a *diagnostic* that reports which hops
 lacked consent — not a rejection branch in the verifier.
 
-What is deliberately absent
----------------------------
+A time bound is a mitigation, not withdrawal
+-------------------------------------------
 
-**No timestamps.** An ``expires_at`` nobody consults is decoration, and chain
-verification deliberately does not consult expiry for VAID documents either. Replay
-is bound structurally instead: an attestation names both ``parent_vaid`` and
-``child_vaid``, and both are fresh UUIDv4s, so it cannot be moved onto a different
-pair.
+An attestation carries ``issued_at`` and ``expires_at``, and
+:func:`~vaid_mint.chain.verify_chain_at` refuses one outside its window with
+``ChainVerification.CONSENT_EXPIRED``.
+
+**This does not let a parent withdraw consent.** It bounds how long stale consent
+remains usable; it does nothing about consent an organisation wants to retract
+*inside* its window. Retraction needs durable revocation, and **durable revocation
+does not exist in this implementation** — the reference stores are in-memory and do
+not survive restart (``docs/spec/revocation.md`` R.4.6). Until it does, the honest
+statement is that consent is time-bounded, not revocable.
+
+This is the same distinction R.5 draws for VAID time-to-live, and it is stated here
+for the same reason: a validity window is exactly the kind of field that gets read
+as solving withdrawal when it does not. Choosing a short ``expires_at`` is the whole
+of the mitigation.
+
+``expires_at`` is **required and has no default**. Consent that outlives its purpose
+should be somebody's stated intention, never a value that arrived by omission.
 """
 
 from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
 
 import rfc8785
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from vaid_mint.issuer_identity import is_valid_trust_domain, kernel_key_thumbprint
+from vaid_mint.mint import MINT_POP_FRESHNESS_SECS
 
 #: Attestation format discriminant. Independent of ``sig_version``: this is a
 #: separate object with its own shape, and bumping one must not imply the other.
@@ -96,6 +111,8 @@ def build_unsigned_attestation(
     child_vaid: str,
     child_trust_domain: str,
     child_tenant_id: str,
+    issued_at: str,
+    expires_at: str,
     scope_boundary: list[str],
     capability_set: list[str],
     trust_domain: str,
@@ -122,6 +139,8 @@ def build_unsigned_attestation(
         "child_vaid": child_vaid,
         "child_trust_domain": child_trust_domain,
         "child_tenant_id": child_tenant_id,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
         "scope_boundary": scope_boundary,
         "capability_set": capability_set,
         "trust_domain": trust_domain,
@@ -174,6 +193,54 @@ def verify_attestation_authenticity(kernel_public_key: bytes, attestation: dict)
     except (InvalidSignature, ValueError, TypeError):
         return False
     return True
+
+
+def _parse_e6(value: object) -> datetime | None:
+    """Parse an E.6 timestamp (whole-second RFC 3339 UTC, literal ``Z``).
+
+    Returns ``None`` for anything unparseable, and every caller treats ``None`` as
+    *outside the window*. That direction is deliberate: a timestamp that cannot be
+    read is not a timestamp that can be shown to be current. TypeScript's
+    ``isExpired`` had the opposite behaviour once — ``Date.parse`` yields ``NaN``,
+    every comparison against ``NaN`` is false, and unreadable expiry silently read
+    as "not expired". That fail-open is not repeated here.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def is_current(attestation: dict, now: datetime) -> bool:
+    """Is this consent inside its validity window at ``now``? Mirror of the Rust
+    ``ConsentAttestation::is_current``.
+
+    Both directions are checked, and they are treated asymmetrically on purpose:
+
+    - **Expiry is exact.** ``now > expires_at`` is lapsed, with no grace. Being
+      generous at the end of a validity window is being generous in the one
+      direction that extends unauthorized access.
+    - **Not-yet-valid tolerates skew**, by ``MINT_POP_FRESHNESS_SECS`` — the same
+      allowance the mint already makes for a proof-of-possession, reused rather than
+      reinvented. A verifier whose clock is a few seconds behind the attesting
+      issuer should not reject consent that is merely young.
+
+    A window where ``expires_at <= issued_at`` is never current: it cannot be
+    satisfied at any instant, and treating it as valid-forever would be the worst
+    available reading of a malformed window. An unparseable timestamp is likewise
+    never current.
+    """
+    issued = _parse_e6(attestation.get("issued_at"))
+    expires = _parse_e6(attestation.get("expires_at"))
+    if issued is None or expires is None:
+        return False
+    if expires <= issued:
+        return False
+    if now > expires:
+        return False
+    return now >= issued - timedelta(seconds=MINT_POP_FRESHNESS_SECS)
 
 
 class AttestationBundle:

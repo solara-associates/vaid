@@ -147,6 +147,7 @@ class ReferenceIssuer:
         child_vaid: str,
         child_trust_domain: str,
         child_tenant_id: str,
+        expires_at: str,
         scope_boundary: list[str],
         capability_set: list[str],
     ) -> dict:
@@ -163,6 +164,11 @@ class ReferenceIssuer:
         configuration, never from a parameter, so an attestation cannot name a key
         or domain other than the one about to sign it.
 
+        ``expires_at`` is required. A time bound is a **mitigation, not
+        withdrawal**: it limits how long stale consent stays usable and does nothing
+        about consent retracted inside its window, which needs durable revocation —
+        and durable revocation does not exist here (R.4.6).
+
         **This does not check that ``parent_vaid`` was actually minted here.** The
         reference lineage map is in-memory and empty after restart (R.4.6), so such
         a check would fail closed on legitimate attestations after any restart. A
@@ -174,11 +180,17 @@ class ReferenceIssuer:
             canonical_attestation_signing_bytes,
         )
 
+        # ``issued_at`` is the issuing instant, as it is for a minted document.
+        # ``expires_at`` is a REQUIRED parameter with no default and no derived
+        # fallback: consent that outlives its purpose must be somebody's stated
+        # intention, never a value that arrived by omission.
         unsigned = build_unsigned_attestation(
             parent_vaid=parent_vaid,
             child_vaid=child_vaid,
             child_trust_domain=child_trust_domain,
             child_tenant_id=child_tenant_id,
+            issued_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            expires_at=expires_at,
             scope_boundary=scope_boundary,
             capability_set=capability_set,
             trust_domain=self._trust_domain,

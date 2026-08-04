@@ -57,9 +57,14 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from typing import Protocol
 
-from vaid_mint.attestation import AttestationBundle, verify_attestation_authenticity
+from vaid_mint.attestation import (
+    AttestationBundle,
+    is_current,
+    verify_attestation_authenticity,
+)
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.mint import (
     caps_attenuate,
@@ -95,6 +100,16 @@ class ChainVerification(enum.Enum):
     #: The chain is complete and authentic, but some child claims authority its
     #: parent does not hold.
     NOT_ATTENUATED = "not_attenuated"
+    #: A cross-key hop's consent attestation is **authentic but outside its validity
+    #: window** — lapsed, or not yet valid beyond the permitted clock skew.
+    #:
+    #: Kept distinct on purpose. An expired attestation is not forged: the parent
+    #: really did sign it, so ``INAUTHENTIC`` would misdescribe it. Nor did the child
+    #: overreach, so ``NOT_ATTENUATED`` would be wrong too. The operational
+    #: difference is the point — this says *renew the attestation*, the other two say
+    #: *you were never authorized*. **Not withdrawal:** see
+    #: :mod:`vaid_mint.attestation`.
+    CONSENT_EXPIRED = "consent_expired"
 
     def is_attenuated(self) -> bool:
         """Whether the chain verified. Provided so callers do not treat a
@@ -228,6 +243,25 @@ def verify_chain_with(
     bundle: PresentedBundle,
     attestations: AttestationBundle,
 ) -> ChainVerification:
+    """:func:`verify_chain_at` against the system clock.
+
+    Convenience for callers with no reason to control time. Anything that needs a
+    reproducible verdict — a conformance vector, a boundary test, replaying a
+    historical decision — must call :func:`verify_chain_at` with an explicit instant
+    instead, or it is asserting against whenever it happened to run.
+    """
+    return verify_chain_at(
+        keys, leaf, bundle, attestations, datetime.now(timezone.utc)
+    )
+
+
+def verify_chain_at(
+    keys: KernelKeyResolver,
+    leaf: dict,
+    bundle: PresentedBundle,
+    attestations: AttestationBundle,
+    now: datetime,
+) -> ChainVerification:
     """Verify a full delegation chain end to end, selecting a kernel key per
     document and requiring parental consent for any hop that crosses one.
 
@@ -240,7 +274,7 @@ def verify_chain_with(
     2. **Pin each hop** against the signed ``parent_vaid``.
     3. **Fail closed on an incomplete chain** — ``UNVERIFIABLE``.
     4. **Check containment** — tenant (same-key hops), scope, capabilities.
-    5. **Require consent on a cross-key hop** — a valid
+    5. **Require consent on a cross-key hop**, current at ``now`` — a valid
        :func:`~vaid_mint.attestation.build_unsigned_attestation` object for exactly
        that ``(parent, child)`` pair, signed by the issuer that minted the parent.
        Same-key hops need none: the single issuer enforced consent at mint time.
@@ -329,6 +363,17 @@ def verify_chain_with(
         key = keys.resolve_key(attestation["kernel_key_thumbprint"])
         if key is None or not verify_attestation_authenticity(key, attestation):
             return ChainVerification.INAUTHENTIC
+
+        # The consent must be current. Checked AFTER authenticity, so a forged
+        # attestation is reported as forged rather than as merely stale — the
+        # stronger statement is the more useful one.
+        #
+        # NOTE: this consults the ATTESTATION's window only. Document expiry is
+        # deliberately not consulted here, exactly as elsewhere in this module; an
+        # attestation may outlive the parent VAID it delegates from, and whether that
+        # should change is a separate decision.
+        if not is_current(attestation, now):
+            return ChainVerification.CONSENT_EXPIRED
 
         # The consent must name the identity the child actually claims, or an
         # attestation for a child in one tenant would authorize the same vaid_id

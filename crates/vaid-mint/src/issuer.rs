@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 
@@ -239,6 +239,12 @@ impl ReferenceIssuer {
     /// configuration, never from a parameter, so an attestation cannot name a key
     /// or a domain other than the one about to sign it.
     ///
+    /// `expires_at` is required. A time bound is a **mitigation, not withdrawal**:
+    /// it limits how long stale consent stays usable and does nothing about consent
+    /// retracted inside its window, which needs durable revocation — and durable
+    /// revocation does not exist here (R.4.6). Choose a short window; that is the
+    /// whole of the control.
+    ///
     /// **This does not check that `parent_vaid` was actually minted here.** The
     /// reference issuer's lineage map is in-memory and empty after restart
     /// (R.4.6), so a check against it would fail closed on legitimate attestations
@@ -253,14 +259,21 @@ impl ReferenceIssuer {
         child_vaid: VaidId,
         child_trust_domain: String,
         child_tenant_id: String,
+        expires_at: DateTime<Utc>,
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
     ) -> crate::attestation::ConsentAttestation {
+        // `issued_at` is the issuing instant, as it is for a minted document.
+        // `expires_at` is a REQUIRED parameter with no default and no derived
+        // fallback: consent that outlives its purpose must be somebody's stated
+        // intention, never a value that arrived by omission.
         let unsigned = crate::attestation::ConsentAttestation::new(
             parent_vaid,
             child_vaid,
             child_trust_domain,
             child_tenant_id,
+            Utc::now(),
+            expires_at,
             scope_boundary,
             capability_set,
             self.trust_domain.clone(),

@@ -19,6 +19,7 @@ with its own kernel key. ``A`` is the delegating parent; ``B`` mints the child.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -32,8 +33,10 @@ from vaid_mint.chain import (
     KernelKeyMap,
     PresentedBundle,
     SingleKernelKey,
+    verify_chain_at,
     verify_chain_with,
 )
+from vaid_mint.mint import MINT_POP_FRESHNESS_SECS
 from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
@@ -83,6 +86,37 @@ class Org:
         signature = self._key.sign(canonical_vaid_signing_bytes(unsigned))
         return {**unsigned, "kernel_signature": list(signature)}
 
+    def sign_window(
+        self,
+        agent_id: str,
+        parent_vaid: str | None,
+        tenant: str,
+        scope: list[str],
+        caps: list[str],
+        issued_at: datetime,
+        expires_at: datetime,
+    ) -> dict:
+        """As :meth:`sign`, with the document's own window under the test's control.
+        Used only to prove document expiry stays unconsulted."""
+        unsigned = build_unsigned_vaid_document(
+            vaid_id=agent_id,
+            agent_id=agent_id,
+            agent_class="test",
+            version="1.0.0",
+            tenant_id=tenant,
+            issued_at=_e6(issued_at),
+            expires_at=_e6(expires_at),
+            public_key_der=list(range(32)),
+            parent_vaid=parent_vaid,
+            scope_boundary=scope,
+            lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
+            capability_set=caps,
+            trust_domain=self.trust_domain,
+            kernel_key_thumbprint=self.thumbprint(),
+        )
+        signature = self._key.sign(canonical_vaid_signing_bytes(unsigned))
+        return {**unsigned, "kernel_signature": list(signature)}
+
     def attest(
         self,
         parent_vaid: str,
@@ -91,13 +125,22 @@ class Org:
         child_tenant: str,
         scope: list[str],
         caps: list[str],
+        issued_at: datetime | None = None,
+        expires_at: datetime | None = None,
     ) -> dict:
-        """Sign a consent attestation as the parent's issuer."""
+        """Sign a consent attestation as the parent's issuer. The window defaults to
+        one that is currently valid and wide enough never to race the clock; the
+        window tests override it."""
+        now = datetime.now(timezone.utc)
+        issued_at = issued_at if issued_at is not None else now - timedelta(minutes=1)
+        expires_at = expires_at if expires_at is not None else now + timedelta(hours=1)
         unsigned = build_unsigned_attestation(
             parent_vaid=parent_vaid,
             child_vaid=child_vaid,
             child_trust_domain=child_trust_domain,
             child_tenant_id=child_tenant,
+            issued_at=_e6(issued_at),
+            expires_at=_e6(expires_at),
             scope_boundary=scope,
             capability_set=caps,
             trust_domain=self.trust_domain,
@@ -105,6 +148,11 @@ class Org:
         )
         signature = self._key.sign(canonical_attestation_signing_bytes(unsigned))
         return {**unsigned, "signature": list(signature)}
+
+
+def _e6(moment: datetime) -> str:
+    """E.6 timestamp profile: whole-second RFC 3339 UTC with a literal Z."""
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def vid(n: int) -> str:
@@ -429,3 +477,276 @@ def test_tampered_attestation_is_inauthentic() -> None:
         )
         is ChainVerification.INAUTHENTIC
     ), "widening consent after signing must break its signature"
+
+
+# ── CONSENT VALIDITY WINDOW ─────────────────────────────────────────────────────
+
+
+def _window_fixture() -> tuple[Org, Org, dict, dict]:
+    """A cross-key chain correct in every way except, per test, the consent window."""
+    a, b = org_a(), org_b()
+    root = a.sign(vid(1), None, "acme", ["data.acme"], ["read"])
+    child = b.sign(vid(2), vid(1), "acme", ["data.acme.sub"], ["read"])
+    return a, b, root, child
+
+
+def test_expired_consent_is_consent_expired() -> None:
+    """Not INAUTHENTIC — the parent really did sign it. Not NOT_ATTENUATED — the
+    child did not overreach. The verdict has to say *renew this*."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    lapsed = a.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now - timedelta(hours=2),
+        expires_at=now - timedelta(hours=1),
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([lapsed]),
+            now,
+        )
+        is ChainVerification.CONSENT_EXPIRED
+    ), "lapsed consent is authentic and unusable, and the verdict must say so"
+
+
+def test_not_yet_valid_consent_is_consent_expired() -> None:
+    """The window is refused in both directions."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    premature = a.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now + timedelta(hours=1),
+        expires_at=now + timedelta(hours=2),
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([premature]),
+            now,
+        )
+        is ChainVerification.CONSENT_EXPIRED
+    ), "consent that has not started is outside its window too"
+
+
+def test_clock_skew_is_tolerated_before_the_window_opens() -> None:
+    """Skew allowance on the not-yet-valid side only, reusing the mint's PoP
+    tolerance rather than inventing a second one."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    slightly_early = a.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now + timedelta(seconds=MINT_POP_FRESHNESS_SECS - 5),
+        expires_at=now + timedelta(hours=2),
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([slightly_early]),
+            now,
+        )
+        is ChainVerification.ATTENUATED
+    ), "a verifier a few seconds behind the issuer must not reject young consent"
+
+
+def test_no_skew_is_granted_after_the_window_closes() -> None:
+    """Expiry is exact. Being generous at the closing edge is being generous in the
+    one direction that extends unauthorized access."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    just_lapsed = a.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now - timedelta(hours=1),
+        expires_at=now - timedelta(seconds=1),
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([just_lapsed]),
+            now,
+        )
+        is ChainVerification.CONSENT_EXPIRED
+    ), "expiry is exact: no grace period on the closing edge"
+
+
+def test_the_closing_instant_itself_is_still_valid() -> None:
+    """Pins the inclusive/exclusive choice rather than leaving it incidental."""
+    a, b, root, child = _window_fixture()
+    # Whole seconds, because the E.6 profile has no sub-second component.
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    closing = a.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now - timedelta(hours=1),
+        expires_at=now,
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([closing]),
+            now,
+        )
+        is ChainVerification.ATTENUATED
+    ), "the closing instant is inside the window; the instant after it is not"
+
+
+def test_an_inverted_window_is_never_current() -> None:
+    """A window that cannot be satisfied at any instant is not satisfied at this
+    one. Valid-forever would be the worst available reading."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    inverted = a.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now + timedelta(hours=1),
+        expires_at=now - timedelta(hours=1),
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([inverted]),
+            now,
+        )
+        is ChainVerification.CONSENT_EXPIRED
+    )
+
+
+def test_an_unparseable_timestamp_is_never_current() -> None:
+    """Fail closed. A timestamp that cannot be read is not one that can be shown to
+    be current — the opposite of the ``Date.parse`` NaN fail-open TypeScript once
+    had."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    malformed = a.attest(
+        vid(1), vid(2), "b.example", "acme", ["data.acme.sub"], ["read"]
+    )
+    malformed["expires_at"] = "whenever"
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([malformed]),
+            now,
+        )
+        is not ChainVerification.ATTENUATED
+    ), "an unreadable window must never verify"
+
+
+def test_a_forged_and_expired_attestation_reports_inauthentic() -> None:
+    """Authenticity is checked first: "not from who it claims" is the stronger and
+    more actionable statement."""
+    a, b, root, child = _window_fixture()
+    now = datetime.now(timezone.utc)
+
+    forged_and_lapsed = b.attest(
+        vid(1),
+        vid(2),
+        "b.example",
+        "acme",
+        ["data.acme.sub"],
+        ["read"],
+        issued_at=now - timedelta(hours=2),
+        expires_at=now - timedelta(hours=1),
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([root]),
+            AttestationBundle([forged_and_lapsed]),
+            now,
+        )
+        is ChainVerification.INAUTHENTIC
+    ), "forgery outranks staleness in the verdict"
+
+
+def test_an_expired_parent_document_does_not_affect_the_verdict() -> None:
+    """Document expiry stays UNCONSULTED. An attestation may outlive the parent VAID
+    it delegates from; this pass deliberately does not change that. Pinned so the
+    property is not lost by accident."""
+    a, b = org_a(), org_b()
+    now = datetime.now(timezone.utc)
+
+    expired_root = a.sign_window(
+        vid(1),
+        None,
+        "acme",
+        ["data.acme"],
+        ["read"],
+        now - timedelta(hours=2),
+        now - timedelta(hours=1),
+    )
+    child = b.sign(vid(2), vid(1), "acme", ["data.acme.sub"], ["read"])
+    consent = a.attest(
+        vid(1), vid(2), "b.example", "acme", ["data.acme.sub"], ["read"]
+    )
+
+    assert (
+        verify_chain_at(
+            both_keys(a, b),
+            child,
+            PresentedBundle([expired_root]),
+            AttestationBundle([consent]),
+            now,
+        )
+        is ChainVerification.ATTENUATED
+    ), (
+        "document expiry is not consulted by chain verification, and did not become "
+        "consulted when attestation expiry landed"
+    )

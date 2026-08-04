@@ -118,6 +118,7 @@ export {
   SingleKernelKey,
   isAttenuated,
   verifyChain,
+  verifyChainAt,
   verifyChainWith,
   type KernelKeyResolver,
 } from './chain.js';
@@ -127,6 +128,7 @@ export {
   AttestationBundle,
   buildUnsignedAttestation,
   canonicalAttestationSigningBytes,
+  isCurrent,
   verifyAttestationAuthenticity,
   type ConsentAttestation,
 } from './attestation.js';

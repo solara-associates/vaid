@@ -146,6 +146,7 @@ fn reproduces_the_frozen_verification_verdict() {
         ChainVerification::Inauthentic => "inauthentic",
         ChainVerification::Unverifiable => "unverifiable",
         ChainVerification::NotAttenuated => "not_attenuated",
+        ChainVerification::ConsentExpired => "consent_expired",
     };
     assert_eq!(actual, expected, "chain verification verdict drift");
 }

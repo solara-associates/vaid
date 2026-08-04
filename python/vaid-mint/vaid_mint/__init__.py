@@ -47,6 +47,7 @@ from vaid_mint.chain import (
     PresentedBundle,
     SingleKernelKey,
     verify_chain,
+    verify_chain_at,
     verify_chain_with,
 )
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
@@ -111,6 +112,7 @@ __all__ = [
     "ChainVerification",
     "PresentedBundle",
     "verify_chain_with",
+    "verify_chain_at",
     "KernelKeyResolver",
     "SingleKernelKey",
     "KernelKeyMap",

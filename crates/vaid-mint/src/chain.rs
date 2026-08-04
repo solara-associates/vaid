@@ -53,6 +53,8 @@
 
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
+
 use crate::attestation::{verify_attestation_authenticity, AttestationBundle};
 use crate::document::{Vaid, VaidId};
 use crate::mint::{
@@ -153,6 +155,22 @@ pub enum ChainVerification {
     /// The chain is complete and authentic, but some child claims authority its
     /// parent does not hold.
     NotAttenuated,
+    /// A cross-key hop's consent attestation is **authentic but outside its
+    /// validity window** — lapsed, or not yet valid beyond the permitted clock
+    /// skew.
+    ///
+    /// Kept distinct from the other three on purpose. An expired attestation is
+    /// not forged: the parent really did sign it, so reporting
+    /// [`Inauthentic`](ChainVerification::Inauthentic) would misdescribe what
+    /// happened. Nor did the child overreach, so
+    /// [`NotAttenuated`](ChainVerification::NotAttenuated) would be wrong too. The
+    /// operational difference is the point: this one says *renew the attestation*,
+    /// the other two say *you were never authorized*, and an operator sent down the
+    /// wrong path by a collapsed verdict wastes the incident.
+    ///
+    /// **This is not withdrawal.** See [`crate::attestation`]: a validity window
+    /// bounds stale consent and does nothing about consent retracted inside it.
+    ConsentExpired,
 }
 
 impl ChainVerification {
@@ -270,6 +288,21 @@ pub fn verify_chain(
     )
 }
 
+/// [`verify_chain_at`] against the system clock.
+///
+/// Convenience for callers with no reason to control time. Anything that needs a
+/// reproducible verdict — a conformance vector, a boundary test, replaying a
+/// historical decision — must call [`verify_chain_at`] with an explicit instant
+/// instead, or it is asserting against whenever it happened to run.
+pub fn verify_chain_with(
+    keys: &dyn KernelKeyResolver,
+    leaf: &Vaid,
+    bundle: &PresentedBundle,
+    attestations: &AttestationBundle,
+) -> ChainVerification {
+    verify_chain_at(keys, leaf, bundle, attestations, Utc::now())
+}
+
 /// Verify a full delegation chain end to end, selecting a kernel key per document
 /// and requiring parental consent for any hop that crosses one.
 ///
@@ -313,11 +346,12 @@ pub fn verify_chain(
 /// # What this does not check
 ///
 /// Expiry and revocation, as before. See [`verify_chain`].
-pub fn verify_chain_with(
+pub fn verify_chain_at(
     keys: &dyn KernelKeyResolver,
     leaf: &Vaid,
     bundle: &PresentedBundle,
     attestations: &AttestationBundle,
+    now: DateTime<Utc>,
 ) -> ChainVerification {
     // Step 1 — authenticate the leaf and EVERY presented document, before any of
     // them is allowed to influence assembly. Authenticating the whole bundle rather
@@ -439,6 +473,18 @@ pub fn verify_chain_with(
                     return ChainVerification::Inauthentic;
                 }
             }
+        }
+
+        // The consent must be current. Checked AFTER authenticity, so a forged
+        // attestation is reported as forged rather than as merely stale — the
+        // stronger statement is the more useful one.
+        //
+        // NOTE: this consults the ATTESTATION's window only. Document expiry is
+        // deliberately not consulted here, exactly as elsewhere in this module; an
+        // attestation may outlive the parent VAID it delegates from, and whether
+        // that should change is a separate decision.
+        if !attestation.is_current(now) {
+            return ChainVerification::ConsentExpired;
         }
 
         // The child may hold no more than the parent consented to...
