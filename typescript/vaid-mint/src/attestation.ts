@@ -31,6 +31,29 @@
  * re-freeze. This is a **separate signed object** presented alongside the chain —
  * the same move ADR-0003 made for the ancestors themselves.
  *
+ * ## Replayed and absent consent are indistinguishable in the verdict
+ *
+ * {@link AttestationBundle} indexes attestations by the `(parent_vaid, child_vaid)`
+ * hop they name. The verifier asks for the hop in front of it, so an attestation
+ * minted for a *different* delegation is filed under a different key and is simply
+ * not found. It is never **rejected** — there is no rejection path, and therefore no
+ * rejection path to get wrong.
+ *
+ * **The cost, stated because it is real:** a presenter who replays a genuine
+ * attestation onto the wrong chain and a presenter who supplies nothing at all
+ * receive the *same* verdict, `Inauthentic`. Both are safe — neither can reach
+ * `Attenuated` — but the verdict alone cannot tell an operator which happened.
+ * Diagnosing "I presented consent and it was ignored" means comparing the
+ * attestation's own `parent_vaid`/`child_vaid` against the hop by hand, outside the
+ * verifier.
+ *
+ * This was chosen deliberately over an explicit "this attestation names a different
+ * hop" check. Such a check is a second code path that must agree with the lookup,
+ * and a disagreement between the two is precisely the shape of bug that lets a
+ * mismatched attestation through. Structural inertness has no such failure mode. If
+ * a deployment needs to tell the two apart, the right fix is a *diagnostic* that
+ * reports which hops lacked consent — not a rejection branch in the verifier.
+ *
  * ## What is deliberately absent
  *
  * **No timestamps.** An `expires_at` nobody consults is decoration, and chain
