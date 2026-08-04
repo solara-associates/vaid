@@ -27,7 +27,7 @@ from vaid_pop import canonical_request_signing_bytes
 
 from vaid_mint.audit import AuditSink
 from vaid_mint.authz import AuthorizationGate, PermitAll
-from vaid_mint.document import has_capability, is_in_scope
+from vaid_mint.document import caps_contain, has_capability, is_in_scope, scope_contains
 from vaid_mint.error import IdentityError, UnauthorizedError
 from vaid_mint.issuer import ReferenceIssuer
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
@@ -40,16 +40,66 @@ def scope_attenuates(parent: dict, child_scope: list[str]) -> bool:
     """Is every entry of ``child_scope`` within ``parent``'s scope? Uses only
     ``is_in_scope`` (the single matcher). Empty child scope = ⊤ is permitted only
     under an empty/⊤ parent (the escalation guard)."""
+    return scope_attenuates_within(parent["scope_boundary"], child_scope)
+
+
+def scope_attenuates_within(parent_scope: list[str], child_scope: list[str]) -> bool:
+    """The same predicate over a bare boundary rather than a document.
+
+    A consent attestation carries a ``scope_boundary`` belonging to no document, and
+    the child's authority must be contained by it under EXACTLY this rule —
+    including the empty-child ⊤ guard, which is the subtle half. Reimplementing the
+    rule for the detached case is how the guard would be lost in one of them.
+    """
     if not child_scope:
-        return not parent["scope_boundary"]
-    return all(is_in_scope(parent, s) for s in child_scope)
+        return not parent_scope
+    return all(scope_contains(parent_scope, s) for s in child_scope)
+
+
+def tenant_attenuates(parent: dict, child_trust_domain: str, child_tenant: str) -> bool:
+    """Tenant containment, as the **qualified pair** ``(trust_domain, tenant_id)``.
+    Both components must match the parent's. Mirror of the Rust
+    ``tenant_attenuates``.
+
+    **Why the pair, and not ``tenant_id`` alone.** ``tenant_id`` is not globally
+    meaningful: it names a tenant *within an unnamed deployment* and is namespaced
+    by nothing, so two self-hosters both minting ``tenant_id: "acme"`` produce
+    documents indistinguishable on that field (ADR-0004). Comparing it alone is
+    safe only while every document on a chain came from one issuer — the assumption
+    that stops holding the moment chains cross kernel keys.
+
+    **What ``trust_domain`` is worth.** It is *issuer-stamped, not holder-supplied*
+    — it is not a field of :class:`~vaid_mint.mint_types.VaidSeed`; the issuer holds
+    it, validates it at construction, and stamps it into every document it mints. It
+    is inside the canonical signing bytes, so it cannot be altered without breaking
+    the kernel signature. **But it is self-asserted:** nothing forces an issuer to
+    stamp a domain it controls, and neither ``trust_domain`` nor
+    ``kernel_key_thumbprint`` establishes attribution on its own. The binding from a
+    trust domain to an authorized key set is out-of-band (ADR-0004,
+    ``docs/trust-anchor.md``).
+
+    **So, plainly: this is defence against operator error, not against a hostile
+    issuer.** It catches a misconfigured mint that delegates across a tenant
+    boundary, and documents assembled into a chain they were never meant to be in.
+    It does not constrain an issuer whose key the verifier already trusts.
+    """
+    return (
+        parent["trust_domain"] == child_trust_domain
+        and parent["tenant_id"] == child_tenant
+    )
 
 
 def caps_attenuate(parent: dict, child_caps: list[str]) -> bool:
     """Is every entry of ``child_caps`` held by ``parent``? Uses only
     ``has_capability``. Empty child caps = ∅ is safe; empty parent caps holds
     nothing (the deliberate scope/caps asymmetry)."""
-    return all(has_capability(parent, c) for c in child_caps)
+    return caps_attenuate_within(parent["capability_set"], child_caps)
+
+
+def caps_attenuate_within(parent_caps: list[str], child_caps: list[str]) -> bool:
+    """The same predicate over a bare capability set — the attestation counterpart
+    of :func:`scope_attenuates_within`."""
+    return all(caps_contain(parent_caps, c) for c in child_caps)
 
 
 class MintService:
@@ -165,7 +215,15 @@ class MintService:
             )
 
         # (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.
-        if seed.tenant_id != parent["tenant_id"]:
+        #
+        # Shares ``tenant_attenuates`` with verify-time chain walking, so the two
+        # cannot drift. The ``trust_domain`` component is passed as the parent's
+        # own: at mint time the child's document does not exist yet and the domain
+        # it will carry is this issuer's, so that component is trivially satisfied
+        # here and the only free variable is the tenant. Behaviour is unchanged
+        # from the inline comparison this replaces — the pair does real work at
+        # verify time, where both documents exist and may not share an issuer.
+        if not tenant_attenuates(parent, parent["trust_domain"], seed.tenant_id):
             raise UnauthorizedError(
                 f"child tenant '{seed.tenant_id}' != authenticated parent tenant "
                 f"'{parent['tenant_id']}' — cross-tenant delegation is denied"

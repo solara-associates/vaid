@@ -179,16 +179,33 @@ def has_conforming_timestamps(vaid: dict) -> bool:
     return True
 
 
+def scope_contains(boundary: list[str], resource: str) -> bool:
+    """Is ``resource`` within ``boundary``? An empty boundary means unrestricted (⊤).
+
+    THE scope matcher. :func:`is_in_scope` delegates here rather than implementing
+    it, so a caller holding a bare boundary — a consent attestation's
+    ``scope_boundary``, which is attached to no document — is matched by exactly the
+    same rule as a document's own. Duplicating the rule for the detached case is how
+    the two would drift.
+    """
+    if not boundary:
+        return True
+    return any(resource.startswith(s) for s in boundary)
+
+
+def caps_contain(capabilities: list[str], capability: str) -> bool:
+    """Does ``capabilities`` hold ``capability`` (exact membership)? THE capability
+    matcher; :func:`has_capability` delegates here, for the same reason."""
+    return capability in capabilities
+
+
 def is_in_scope(vaid: dict, resource: str) -> bool:
     """Is ``resource`` within the document's scope boundary? Empty = unrestricted.
     The single scope matcher — mirror of ``Vaid::is_in_scope``."""
-    scope = vaid["scope_boundary"]
-    if not scope:
-        return True
-    return any(resource.startswith(s) for s in scope)
+    return scope_contains(vaid["scope_boundary"], resource)
 
 
 def has_capability(vaid: dict, capability: str) -> bool:
     """Does the document hold ``capability`` (exact membership)? Mirror of
     ``Vaid::has_capability``."""
-    return capability in vaid["capability_set"]
+    return caps_contain(vaid["capability_set"], capability)

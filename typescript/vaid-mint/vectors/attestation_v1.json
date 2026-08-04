@@ -1,0 +1,27 @@
+{
+  "_comment": "Consent attestation conformance vector (att_version 1). Load-bearing. `attestation` is a real UNSIGNED attestation (snake_case) with `signature` empty. A conforming implementation MUST produce `digest_sha256_hex` from it by nulling `signature`, canonicalizing per JCS (RFC 8785) and SHA-256; and (given the kernel seed) reproduce `signature_hex` byte-for-byte. ADDITIVE: the attestation is a SEPARATE SIGNED OBJECT, so mint_v1.json, mint_pop_v1.json and chain_v1.json are untouched and `sig_version` is unchanged — `att_version` is this object's own discriminant. WHOSE FIELDS ARE WHOSE (spec C.2): the top-level `trust_domain` and `kernel_key_thumbprint` are the ATTESTING PARENT ISSUER'S and MUST equal the parent document's; `child_trust_domain` and `child_tenant_id` are what is AUTHORIZED and MUST equal the child document's. The two differ here (`a.example` consenting to a child in `b.example`) precisely so that distinction is visible in the bytes. `issued_at`/`expires_at` bound the consent; per spec C.6 a time bound is a MITIGATION, NOT WITHDRAWAL — retraction inside the window needs durable revocation, which does not exist in this implementation. Both domains are RFC 2606 reserved BY DESIGN: this vector publishes its own kernel private seed, so anyone can sign under it. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
+  "attestation": {
+    "att_version": 1,
+    "capability_set": [
+      "read"
+    ],
+    "child_tenant_id": "aifactory",
+    "child_trust_domain": "b.example",
+    "child_vaid": "d0000000-0000-0000-0000-000000000002",
+    "expires_at": "2026-06-05T12:00:00Z",
+    "issued_at": "2026-06-04T12:00:00Z",
+    "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+    "parent_vaid": "d0000000-0000-0000-0000-000000000001",
+    "scope_boundary": [
+      "data.aifactory.sub"
+    ],
+    "signature": [],
+    "trust_domain": "a.example"
+  },
+  "digest_sha256_hex": "50c20577c8c1c74e5e0e1cefc3ea8c2bc6f340c0d01a180e228d50dbd24f988c",
+  "ed25519": {
+    "kernel_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+  },
+  "signature_hex": "b8bc653ae7b761a69d1d118534e129621511c784117b5dcde4f7cd898220a1e3f97f1f06a2e7d88acf498ba03ed11365ebda6c2a94137b708c8667c2d231dc0c"
+}
