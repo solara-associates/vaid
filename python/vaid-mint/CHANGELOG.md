@@ -9,6 +9,78 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.4.0]
+
+### Added — third-party end-to-end lineage verification (ADR-0003)
+
+A third party holding only the issuer's kernel **public** key and the ancestor
+documents a presenter supplies can now verify a full delegation chain end to end.
+**No format change:** no new field in the VAID document, no `sig_version` bump,
+no `mint_v1.json` re-freeze.
+
+- **`PresentedBundle`** — a new implementation of the existing `LineageResolver`
+  over the documents a presenter supplies, so `assemble_lineage`, cycle detection
+  and `MAX_LINEAGE_DEPTH` are reused unchanged rather than reimplemented.
+- **`verify_chain`** — authenticate every document, pin each hop against the
+  signed `parent_vaid`, fail closed on any gap, then check containment at every
+  hop using the **mint-time** matchers, so verify-time cannot drift from the check
+  that gated issuance.
+- **`ChainVerification`** keeps its failure states apart. `Unverifiable` means
+  attenuation could not be established — never that it was satisfied.
+- **`chain_v1.json`**, a new cross-language vector pinning the *walk*: the
+  assembled lineage order and the verdict. Additive; it re-freezes nothing.
+
+### Added — tenant containment at verification time
+
+Tenant is now checked at every hop as the qualified `(trust_domain, tenant_id)`
+pair, sharing `tenant_attenuates` with `mint_child` so the two cannot drift.
+`tenant_id` alone is not globally meaningful (ADR-0004), so bare equality would be
+correct today and wrong the moment chains cross kernel keys.
+
+`trust_domain` is issuer-stamped and inside the signed bytes, but **self-asserted**:
+this is defence against operator error, not against a hostile issuer.
+
+### Added — detached consent attestations and multi-key verification
+
+Nothing in a VAID document proves the parent *consented* to a delegation;
+`mint_child` enforces it in-process and none of that enforcement lands in the
+child document. Under one kernel key that is invisible and sound. Across keys it
+is not: an issuer B can mint a document naming issuer A's root `vaid_id` as
+`parent_vaid`, inside A's authority, and it would verify while A delegated nothing.
+
+- **`ConsentAttestation`** — a separate signed object over the same
+  JCS → SHA-256 → Ed25519 discipline. Its `att_version` is independent of
+  `sig_version`. Frozen as `attestation_v1.json`.
+- **`KernelKeyResolver`** / `SingleKernelKey` / `KernelKeyMap` — per-document key
+  selection by `kernel_key_thumbprint`. **Lands strictly behind consent:** a
+  cross-key hop without a valid attestation is `Inauthentic`, never `Attenuated`.
+- **Time-bounded consent** — `issued_at` and `expires_at`, `expires_at` REQUIRED
+  with no default, and a fifth verdict `ConsentExpired`. Expiry is exact; the
+  opening edge tolerates `MINT_POP_FRESHNESS_SECS` of clock skew.
+- **The clock is injected.** `verify_chain_at` takes an explicit instant;
+  `verify_chain_with` is the system-clock wrapper.
+
+**A time bound is a mitigation, not withdrawal.** `expires_at` bounds how long
+stale consent stays usable and does nothing about consent retracted inside its
+window. Retraction needs durable revocation, and durable revocation does not exist
+in this implementation (`docs/spec/revocation.md` R.4.6). Consent is time-bounded,
+not revocable. See `docs/spec/consent-attestation.md` C.6.
+
+### Changed
+
+- `scope_attenuates` / `caps_attenuate` now delegate to slice-based forms
+  (`scope_contains` / `caps_contain` on the document), so an attestation's bare
+  authority is matched by exactly the document rule — including the empty-scope ⊤
+  guard. Behaviour is unchanged.
+- ADR-0003's chain-substitution argument records that it holds only under a single
+  kernel key.
+
+### Not changed
+
+Document expiry is still not consulted by chain verification. An attestation may
+outlive the parent VAID it delegates from; whether that changes is a separate
+decision. `mint_v1.json` and `mint_pop_v1.json` are untouched.
+
 ## [0.3.0]
 
 ### Changed — VAID v3: the document names its issuer and commits to its key (BREAKING)
