@@ -5,7 +5,10 @@ name = "vaid-pop"
 # change to the PoP canonicalization / wire shape (RequestAuthPayload field names,
 # JCS, digest, signature) — that breaks byte-identity against the frozen
 # conformance vector.
-version = "0.1.0"
+#
+# 0.2.0 — adds the packaged `vaid-pop-conformance` firewall binary (additive; no
+# change to the PoP wire shape, and the frozen vectors are untouched).
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["solara.associates"]
@@ -16,6 +19,13 @@ documentation = "https://docs.rs/vaid-pop"
 readme = "README.md"
 keywords = ["synthera", "vaid", "proof-of-possession", "ed25519", "signing"]
 categories = ["cryptography", "authentication", "api-bindings"]
+
+# The packaged firewall, mirroring the Python and TypeScript `vaid-pop-conformance`
+# executables. Named explicitly because the file is `src/bin/conformance.rs` and the
+# auto-detected target name ("conformance") is too generic once installed onto a PATH.
+[[bin]]
+name = "vaid-pop-conformance"
+path = "src/bin/conformance.rs"
 
 [dependencies]
 serde = { workspace = true }

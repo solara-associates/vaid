@@ -12,7 +12,7 @@
           "language": "rust",
           "registry": "crates.io",
           "package": "vaid-pop",
-          "version": "0.1.0"
+          "version": "0.2.0"
         },
         {
           "language": "python",
@@ -27,7 +27,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key \u2014 offline, no service.",
+      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key \u2014 offline, no service. All three implementations ship the conformance firewall as an installable executable (`vaid-pop-conformance`); Rust gained one at 0.2.0, closing the gap where its only check ran from a repository checkout. A consumer therefore reproduces the frozen digest and signature from the artifact they received, in any of the three.",
       "blocked_on": null
     },
     {
