@@ -243,6 +243,14 @@ impl Vaid {
     }
 }
 
+/// The reserved hierarchy separators (spec `docs/spec/scope.md` S.2).
+///
+/// Both are normative and both are always honoured. A scope segment MUST NOT
+/// contain either — that constraint is what makes honouring both safe rather
+/// than widening, and it is the reason this set is fixed by the specification
+/// instead of being a property of a deployment. See [`scope_contains`].
+pub const SCOPE_SEPARATORS: [char; 2] = ['/', '.'];
+
 /// Is `resource` within `boundary`? An empty boundary means unrestricted (⊤).
 ///
 /// This is THE scope matcher. [`Vaid::is_in_scope`] delegates here rather than
@@ -250,11 +258,75 @@ impl Vaid {
 /// `scope_boundary`, which is not attached to any document — is matched by exactly
 /// the same rule as a document's own. Duplicating the rule for the detached case is
 /// how the two would drift.
+///
+/// # Containment is segment-bounded (spec S.3)
+///
+/// A boundary entry `P` contains a resource `R` iff `R == P`, or `P` ends with a
+/// separator and `R` starts with `P`, or `R` starts with `P` followed by a
+/// separator. **Bare prefix matching is not containment.**
+///
+/// Until 0.5.0 this was `R.starts_with(P)`, which made `data.governance` contain
+/// `data.governance-secret` — a *sibling*, sharing a textual prefix and nothing
+/// else. Because this same predicate decides mint-time attenuation
+/// (`scope_attenuates`) and third-party chain verification
+/// ([`crate::chain::verify_chain`]), that let a child be delegated authority its
+/// parent never held, and let a verifier confirm the delegation as legitimate.
+/// The rule below is **strictly narrower**: it denies cases the old one allowed
+/// and permits nothing new, so no previously-rejected delegation becomes
+/// possible.
+///
+/// # Why both separators, always
+///
+/// Honouring only one would break real deployments in opposite directions — a
+/// `.`-only rule stops `t/research` containing `t/research/sub`, a `/`-only rule
+/// stops `data.governance` containing `data.governance.reports`. Making the set
+/// a deployment setting is worse still: under ADR-0003 a **third party**
+/// recomputes containment from a presented chain, and a deployment-local rule
+/// leaves it unable to reproduce the mint's verdict.
+///
+/// So both are reserved by the specification, and a segment MUST NOT contain
+/// either (S.2). That constraint is doing the safety work. Without it, an
+/// implementer treating `/` as their separator and `.` as an ordinary character
+/// would find `data/user` containing `data/user.admin` — the same
+/// sibling-capture bug in the other separator. With it, `data/user.admin` is
+/// unambiguously the path `data`, `user`, `admin`, and containment is correct.
+///
+/// The segment constraint is normative on producers but is **not enforced here**
+/// in 0.5.0; enforcement would reject documents this version accepts, which is a
+/// second breaking change. See `docs/spec/scope.md` S.6.
+///
+/// Formulated with only `==`, `starts_with`, `ends_with` and concatenation — no
+/// character indexing — so Rust (bytes), Python (code points) and TypeScript
+/// (UTF-16) cannot diverge on a multi-byte boundary.
 pub fn scope_contains(boundary: &[String], resource: &str) -> bool {
     if boundary.is_empty() {
         return true;
     }
-    boundary.iter().any(|scope| resource.starts_with(scope))
+    boundary.iter().any(|scope| prefix_contains(scope, resource))
+}
+
+/// Does a single boundary entry `prefix` contain `resource`? The one-entry core
+/// of [`scope_contains`], split out so the rule is stated exactly once.
+///
+/// An empty entry matches everything, preserving the match-all that an empty
+/// string had under prefix matching. It is unreachable from a well-formed
+/// boundary (an empty *list* is the way to say ⊤) and is kept only so the rule
+/// is total.
+fn prefix_contains(prefix: &str, resource: &str) -> bool {
+    if prefix.is_empty() {
+        return true;
+    }
+    if resource == prefix {
+        return true;
+    }
+    // A trailing separator already marks the boundary, so plain prefixing is
+    // containment — `data.` contains `data.x` without needing a second dot.
+    if SCOPE_SEPARATORS.iter().any(|sep| prefix.ends_with(*sep)) {
+        return resource.starts_with(prefix);
+    }
+    SCOPE_SEPARATORS
+        .iter()
+        .any(|sep| resource.starts_with(&format!("{prefix}{sep}")))
 }
 
 /// Does `capabilities` hold `capability` (exact membership)? THE capability
@@ -330,10 +402,112 @@ mod tests {
     }
 
     #[test]
-    fn scope_is_prefix_matched() {
+    fn scope_is_segment_matched() {
         let v = doc(vec!["data.x"], vec![]);
         assert!(v.is_in_scope("data.x.sub"));
         assert!(!v.is_in_scope("data.y"));
+    }
+
+    /// THE regression this rule exists for. `data.governance-secret` is a
+    /// SIBLING of `data.governance`: it shares a textual prefix and nothing else.
+    /// Prefix matching called it contained, so it could be delegated to a child
+    /// of a `data.governance` parent and a third-party verifier would confirm the
+    /// delegation.
+    #[test]
+    fn a_sibling_sharing_a_textual_prefix_is_not_contained() {
+        let v = doc(vec!["data.governance"], vec![]);
+        assert!(v.is_in_scope("data.governance"), "the entry contains itself");
+        assert!(v.is_in_scope("data.governance.reports"), "a real child");
+        assert!(
+            !v.is_in_scope("data.governance-secret"),
+            "a hyphenated sibling must NOT be contained — this is the bug"
+        );
+        assert!(!v.is_in_scope("data.governanceX"));
+        assert!(!v.is_in_scope("data.governance2"));
+    }
+
+    /// Both separators, always — the union rule (spec S.3). Neither convention
+    /// may be privileged, because a verifier recomputing containment under
+    /// ADR-0003 has no way to learn which one a deployment meant.
+    #[test]
+    fn both_reserved_separators_are_honoured() {
+        let slash = doc(vec!["t/research"], vec![]);
+        assert!(slash.is_in_scope("t/research/sub"));
+        assert!(!slash.is_in_scope("t/research-secret"));
+
+        let dot = doc(vec!["data.governance"], vec![]);
+        assert!(dot.is_in_scope("data.governance.reports"));
+
+        // Mixed: `.` is a separator by fiat, so this is the path a,b,c — NOT a
+        // segment literally named `b.c`. That is exactly what S.2 reserves.
+        let mixed = doc(vec!["a/b"], vec![]);
+        assert!(mixed.is_in_scope("a/b.c"));
+        assert!(mixed.is_in_scope("a/b/c"));
+        assert!(!mixed.is_in_scope("a/bc"));
+    }
+
+    /// An entry already ending in a separator needs no second one.
+    #[test]
+    fn a_trailing_separator_entry_matches_by_plain_prefix() {
+        let v = doc(vec!["data."], vec![]);
+        assert!(v.is_in_scope("data.x"));
+        assert!(v.is_in_scope("data.."));
+        assert!(!v.is_in_scope("datax"));
+
+        let s = doc(vec!["t/"], vec![]);
+        assert!(s.is_in_scope("t/x"));
+        assert!(!s.is_in_scope("tx"));
+    }
+
+    /// The new rule permits NOTHING the old one denied. Stated as a property
+    /// rather than as examples, because "strictly narrower" is the whole safety
+    /// argument for shipping this as a minor bump: no previously-rejected
+    /// delegation can become possible.
+    #[test]
+    fn the_rule_is_strictly_narrower_than_bare_prefix_matching() {
+        let alphabet = ["a", "b", ".", "/", "-", ""];
+        let mut corpus: Vec<String> = Vec::new();
+        for a in alphabet {
+            for b in alphabet {
+                for c in alphabet {
+                    corpus.push(format!("{a}{b}{c}"));
+                }
+            }
+        }
+        corpus.sort();
+        corpus.dedup();
+
+        let mut narrowed = 0usize;
+        for p in &corpus {
+            for r in &corpus {
+                let old = r.starts_with(p.as_str());
+                let new = prefix_contains(p, r);
+                if new && !old {
+                    panic!(
+                        "WIDENING: {p:?} now contains {r:?} but did not before — the \
+                         new rule must never permit what bare prefixing denied"
+                    );
+                }
+                if old && !new {
+                    narrowed += 1;
+                }
+            }
+        }
+        assert!(
+            narrowed > 0,
+            "the rule must actually deny something, or it changed nothing"
+        );
+    }
+
+    /// Multi-byte input must not be split differently by byte/code-point/UTF-16
+    /// length. The rule uses no character indexing; this pins that.
+    #[test]
+    fn multibyte_segments_are_handled_consistently() {
+        let v = doc(vec!["data.données"], vec![]);
+        assert!(v.is_in_scope("data.données"));
+        assert!(v.is_in_scope("data.données.sub"));
+        assert!(!v.is_in_scope("data.donnéesX"));
+        assert!(!v.is_in_scope("data.donné"));
     }
 
     #[test]

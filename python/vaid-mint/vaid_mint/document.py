@@ -179,6 +179,34 @@ def has_conforming_timestamps(vaid: dict) -> bool:
     return True
 
 
+#: The reserved hierarchy separators (spec ``docs/spec/scope.md`` S.2).
+#:
+#: Both are normative and both are always honoured. A scope segment MUST NOT
+#: contain either — that constraint is what makes honouring both safe rather than
+#: widening, and it is why the set is fixed by the specification instead of being
+#: a property of a deployment. See :func:`scope_contains`.
+SCOPE_SEPARATORS: tuple[str, str] = ("/", ".")
+
+
+def _prefix_contains(prefix: str, resource: str) -> bool:
+    """Does a single boundary entry contain ``resource``? The one-entry core of
+    :func:`scope_contains`, split out so the rule is stated exactly once.
+
+    An empty entry matches everything, preserving the match-all an empty string
+    had under prefix matching. It is unreachable from a well-formed boundary (an
+    empty *list* is how ⊤ is expressed) and is kept only so the rule is total.
+    """
+    if prefix == "":
+        return True
+    if resource == prefix:
+        return True
+    # A trailing separator already marks the boundary, so plain prefixing is
+    # containment — ``data.`` contains ``data.x`` without needing a second dot.
+    if any(prefix.endswith(sep) for sep in SCOPE_SEPARATORS):
+        return resource.startswith(prefix)
+    return any(resource.startswith(prefix + sep) for sep in SCOPE_SEPARATORS)
+
+
 def scope_contains(boundary: list[str], resource: str) -> bool:
     """Is ``resource`` within ``boundary``? An empty boundary means unrestricted (⊤).
 
@@ -187,10 +215,34 @@ def scope_contains(boundary: list[str], resource: str) -> bool:
     ``scope_boundary``, which is attached to no document — is matched by exactly the
     same rule as a document's own. Duplicating the rule for the detached case is how
     the two would drift.
+
+    **Containment is segment-bounded (spec S.3).** An entry ``P`` contains a
+    resource ``R`` iff ``R == P``, or ``P`` ends with a separator and ``R`` starts
+    with ``P``, or ``R`` starts with ``P`` followed by a separator. Bare prefix
+    matching is not containment.
+
+    Until 0.5.0 this was ``resource.startswith(s)``, which made
+    ``data.governance`` contain ``data.governance-secret`` — a *sibling*, sharing
+    a textual prefix and nothing else. Because this same predicate decides
+    mint-time attenuation and third-party chain verification, that let a child be
+    delegated authority its parent never held, and let a verifier confirm the
+    delegation. The rule here is **strictly narrower**: it denies cases the old
+    one allowed and permits nothing new.
+
+    Both separators are always honoured, and a segment MUST NOT contain either
+    (S.2) — that constraint is doing the safety work. Without it, an implementer
+    treating ``/`` as their separator and ``.`` as an ordinary character would
+    find ``data/user`` containing ``data/user.admin``: the same sibling-capture
+    bug in the other separator. The segment constraint is normative on producers
+    but is **not enforced here** in 0.5.0 (S.6).
+
+    Written with only ``==``, ``startswith``, ``endswith`` and concatenation — no
+    character indexing — so Rust (bytes), Python (code points) and TypeScript
+    (UTF-16) cannot diverge on a multi-byte boundary.
     """
     if not boundary:
         return True
-    return any(resource.startswith(s) for s in boundary)
+    return any(_prefix_contains(s, resource) for s in boundary)
 
 
 def caps_contain(capabilities: list[str], capability: str) -> bool:

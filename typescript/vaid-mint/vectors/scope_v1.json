@@ -1,0 +1,180 @@
+{
+  "_comment": "Scope-containment conformance vector (v1), per spec docs/spec/scope.md S.3 and ADR-0005. ADDITIVE AND SIGNATURE-FREE: containment is a PREDICATE OVER a document, never part of one, so this vector introduces no signed field, no encoding rule and no digest. mint_v1.json, mint_pop_v1.json, chain_v1.json and attestation_v1.json are untouched and are NOT re-frozen by this vector's existence -- verified: no verdict in chain_v1.json changes under this rule. A conforming implementation MUST, for each case, return `expected` from its single scope matcher (Rust `scope_contains`, Python `scope_contains`, TypeScript `scopeContains`). This is the FIRST vector to police the matcher: before 0.5.0 the three implementations agreed only by review, which is how bare prefix matching survived in all three at once.",
+  "rule": {
+    "separators": [
+      "/",
+      "."
+    ],
+    "statement": "An entry P contains a resource R iff R == P, or P ends with a separator and R starts with P, or R starts with P followed by a separator. An empty boundary list is unrestricted. Bare prefix matching is NOT containment.",
+    "segment_constraint": "A scope segment MUST NOT contain a separator (S.2). This constraint is what makes honouring both separators safe rather than widening. It is normative on producers and NOT enforced by the matcher in 0.5.0 (S.6).",
+    "strictly_narrower_than": "resource.startsWith(entry)"
+  },
+  "cases": [
+    {
+      "boundary": [],
+      "resource": "anything.at.all",
+      "expected": true,
+      "why": "empty boundary is unrestricted (top)"
+    },
+    {
+      "boundary": [],
+      "resource": "",
+      "expected": true,
+      "why": "empty boundary admits the empty resource"
+    },
+    {
+      "boundary": [
+        "data.governance"
+      ],
+      "resource": "data.governance",
+      "expected": true,
+      "why": "an entry contains itself"
+    },
+    {
+      "boundary": [
+        "data.governance"
+      ],
+      "resource": "data.governance.reports",
+      "expected": true,
+      "why": "dot-separated child"
+    },
+    {
+      "boundary": [
+        "data.governance"
+      ],
+      "resource": "data.governance-secret",
+      "expected": false,
+      "why": "REGRESSION: hyphenated sibling is NOT contained"
+    },
+    {
+      "boundary": [
+        "data.governance"
+      ],
+      "resource": "data.governanceX",
+      "expected": false,
+      "why": "REGRESSION: bare textual prefix is NOT containment"
+    },
+    {
+      "boundary": [
+        "data.governance"
+      ],
+      "resource": "data.governance2",
+      "expected": false,
+      "why": "REGRESSION: digit-suffixed sibling is NOT contained"
+    },
+    {
+      "boundary": [
+        "t/research"
+      ],
+      "resource": "t/research/sub",
+      "expected": true,
+      "why": "slash-separated child"
+    },
+    {
+      "boundary": [
+        "t/research"
+      ],
+      "resource": "t/research-secret",
+      "expected": false,
+      "why": "REGRESSION: slash-namespace hyphenated sibling"
+    },
+    {
+      "boundary": [
+        "a/b"
+      ],
+      "resource": "a/b.c",
+      "expected": true,
+      "why": "both separators honoured: '.' is a separator by fiat (S.2)"
+    },
+    {
+      "boundary": [
+        "a/b"
+      ],
+      "resource": "a/b/c",
+      "expected": true,
+      "why": "both separators honoured: '/' after a slash-namespace entry"
+    },
+    {
+      "boundary": [
+        "a/b"
+      ],
+      "resource": "a/bc",
+      "expected": false,
+      "why": "no separator at the boundary is not containment"
+    },
+    {
+      "boundary": [
+        "data."
+      ],
+      "resource": "data.x",
+      "expected": true,
+      "why": "trailing-separator entry matches by plain prefix"
+    },
+    {
+      "boundary": [
+        "data."
+      ],
+      "resource": "datax",
+      "expected": false,
+      "why": "trailing-separator entry still requires the separator"
+    },
+    {
+      "boundary": [
+        "t/"
+      ],
+      "resource": "t/x",
+      "expected": true,
+      "why": "trailing slash entry matches by plain prefix"
+    },
+    {
+      "boundary": [
+        "data.x",
+        "data.y"
+      ],
+      "resource": "data.y.sub",
+      "expected": true,
+      "why": "any entry may match (disjunction over the boundary)"
+    },
+    {
+      "boundary": [
+        "data.x",
+        "data.y"
+      ],
+      "resource": "data.z",
+      "expected": false,
+      "why": "no entry matches"
+    },
+    {
+      "boundary": [
+        "data.donnees"
+      ],
+      "resource": "data.donnees.sub",
+      "expected": true,
+      "why": "multi-byte-adjacent segment, child"
+    },
+    {
+      "boundary": [
+        "data.donnees"
+      ],
+      "resource": "data.donneesX",
+      "expected": false,
+      "why": "multi-byte-adjacent segment, sibling is NOT contained"
+    },
+    {
+      "boundary": [
+        "data"
+      ],
+      "resource": "data.governance",
+      "expected": true,
+      "why": "single-segment root contains a child"
+    },
+    {
+      "boundary": [
+        "data"
+      ],
+      "resource": "database",
+      "expected": false,
+      "why": "REGRESSION: 'database' is not under 'data'"
+    }
+  ]
+}

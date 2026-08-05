@@ -45,6 +45,8 @@ import {
 import {
   canonicalVaidSigningBytes,
   computeLineageHash,
+  SCOPE_SEPARATORS,
+  scopeContains,
   type Vaid,
 } from './document.js';
 import {
@@ -336,6 +338,61 @@ export function checkAttestation(v: AttestationVector): void {
   }
 }
 
+/** A scope-containment vector: a predicate table, with no digest and no signature. */
+interface ScopeVector {
+  rule: { separators: string[] };
+  cases: { boundary: string[]; resource: string; expected: boolean; why: string }[];
+}
+
+/**
+ * Check the scope-containment vector (spec S.3, ADR-0005).
+ *
+ * The only checker here that verifies a PREDICATE rather than bytes. Containment
+ * is computed over a document and never appears inside one, so there is no digest
+ * to reproduce and no signature to re-derive — what must agree across languages is
+ * the verdict on every case.
+ *
+ * It also asserts the vector still disagrees with bare prefix matching in at least
+ * five places. Without that, a future edit could quietly reduce the vector to cases
+ * both rules accept, leaving a green firewall that no longer covers the
+ * sibling-capture bug the vector exists for.
+ */
+export function checkScope(v: ScopeVector): void {
+  if (v.cases.length === 0) {
+    throw new ConformanceError('scope vector carries no cases');
+  }
+  for (const c of v.cases) {
+    const got = scopeContains(c.boundary, c.resource);
+    if (got !== c.expected) {
+      throw new ConformanceError(
+        `scope containment mismatch: boundary=${JSON.stringify(c.boundary)} ` +
+          `resource=${JSON.stringify(c.resource)} expected=${c.expected} got=${got} — ${c.why}`,
+      );
+    }
+  }
+  if (!v.cases.some((c) => c.expected) || !v.cases.some((c) => !c.expected)) {
+    throw new ConformanceError('scope vector must exercise both outcomes');
+  }
+  const disagreements = v.cases.filter(
+    (c) =>
+      c.boundary.length > 0 &&
+      c.boundary.some((s) => c.resource.startsWith(s)) !== c.expected,
+  ).length;
+  if (disagreements < 5) {
+    throw new ConformanceError(
+      `scope vector must pin the sibling-capture regression class; only ${disagreements} ` +
+        'case(s) disagree with bare prefix matching',
+    );
+  }
+  const declared = [...SCOPE_SEPARATORS];
+  if (JSON.stringify(declared) !== JSON.stringify(v.rule.separators)) {
+    throw new ConformanceError(
+      `separator set mismatch: implementation ${JSON.stringify(declared)} != ` +
+        `vector ${JSON.stringify(v.rule.separators)}`,
+    );
+  }
+}
+
 /**
  * Every vector this firewall knows how to check, by filename.
  *
@@ -355,6 +412,7 @@ export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
   'mint_pop_v1.json': (v: MintPopVector) => checkMintPop(v),
   'chain_v1.json': (v: ChainVector) => checkChain(v),
   'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
+  'scope_v1.json': (v: ScopeVector) => checkScope(v),
 } as Record<string, (v: never) => void>;
 
 /**
@@ -387,7 +445,7 @@ export function bundledVectorNames(): string[] {
  * guarantees is that such a vector cannot ship *quietly* — the firewall goes red
  * until someone says what the vector means.
  */
-export function run(): Record<string, { digest_sha256_hex: string }> {
+export function run(): Record<string, VectorSummary> {
   const present = bundledVectorNames();
   const known = Object.keys(VECTOR_CHECKS).sort();
 
@@ -408,17 +466,37 @@ export function run(): Record<string, { digest_sha256_hex: string }> {
     );
   }
 
-  const results: Record<string, { digest_sha256_hex: string }> = {};
+  const results: Record<string, VectorSummary> = {};
   for (const name of present) {
-    const vector = loadVectorFile<{ digest_sha256_hex: string }>(name);
+    const vector = loadVectorFile<VectorSummary>(name);
     VECTOR_CHECKS[name]!(vector as never);
     results[name] = vector;
   }
   return results;
 }
 
+/**
+ * What a vector reports about itself in the firewall's output.
+ *
+ * `digest_sha256_hex` is optional because not every vector pins bytes: a
+ * predicate vector (`scope_v1.json`) pins verdicts, and has nothing to digest.
+ * Reporting it as an empty digest would read as a missing value rather than an
+ * inapplicable one.
+ */
+interface VectorSummary {
+  digest_sha256_hex?: string;
+  cases?: unknown[];
+}
+
+/** One output line's worth of evidence that this vector was actually checked. */
+function describeVector(v: VectorSummary): string {
+  if (v.digest_sha256_hex !== undefined) return v.digest_sha256_hex;
+  if (v.cases !== undefined) return `${v.cases.length} case(s) — predicate vector, no digest`;
+  return 'checked';
+}
+
 export function main(): number {
-  let result: Record<string, { digest_sha256_hex: string }>;
+  let result: Record<string, VectorSummary>;
   try {
     result = run();
   } catch (error) {
@@ -436,7 +514,7 @@ export function main(): number {
   // adds a vector visibly adds a line here, so "did the firewall look at the thing
   // this release was about" is answerable from the output alone.
   for (const name of names) {
-    console.log(`  ${name.padEnd(22)} ${result[name]!.digest_sha256_hex}`);
+    console.log(`  ${name.padEnd(22)} ${describeVector(result[name]!)}`);
   }
   return 0;
 }

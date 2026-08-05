@@ -39,11 +39,29 @@ def test_the_packaged_firewall_passes_against_every_bundled_vector() -> None:
 
     assert covered == bundled_vector_names()
 
-    # Each produced a real digest, and no two are equal — a firewall that silently
-    # checked one vector four times would pass a count assertion.
-    digests = [result[n]["digest_sha256_hex"] for n in covered]
+    # Each BYTE-PINNING vector produced a real digest, and no two are equal — a
+    # firewall that silently checked one vector four times would pass a count
+    # assertion.
+    #
+    # ``scope_v1.json`` is deliberately excluded from the digest assertions rather
+    # than given a synthetic digest: containment is a predicate computed OVER a
+    # document and never appears inside one, so it pins verdicts, not bytes. A
+    # fabricated digest would assert byte-identity about a thing that has no bytes.
+    # It is still covered by the ``covered == bundled_vector_names()`` assertion
+    # above, and by ``check_scope`` inside ``run()``, which is where its real
+    # content is verified.
+    digested = [n for n in covered if "digest_sha256_hex" in result[n]]
+    assert digested, "expected at least one byte-pinning vector"
+    digests = [result[n]["digest_sha256_hex"] for n in digested]
     assert all(len(d) == 64 for d in digests)
     assert len(set(digests)) == len(digests)
+
+    # A predicate vector must still carry content, so "no digest" cannot become a
+    # way to ship an empty vector past the firewall.
+    for name in (n for n in covered if "digest_sha256_hex" not in result[n]):
+        assert result[name].get("cases"), (
+            f"{name} has neither a digest nor any cases — it asserts nothing"
+        )
 
 
 def test_a_vector_shipped_with_no_check_is_a_blocker() -> None:

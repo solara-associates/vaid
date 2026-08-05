@@ -3,6 +3,80 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+### Fixed — scope containment is segment-bounded (SECURITY)
+
+**Bare prefix matching decided scope containment, so a sibling counted as a child.**
+
+```
+boundary  data.governance
+resource  data.governance-secret     ->  CONTAINED (0.4.x)
+                                     ->  NOT CONTAINED (0.5.0)
+```
+
+`data.governance-secret` shares a textual prefix with `data.governance` and nothing
+else. No hierarchy relates them.
+
+That predicate decides two things, and both are inside the conformance surface
+(ADR-0001 §2): **mint-time attenuation**, and **third-party chain verification**
+(ADR-0003). So a holder of a VAID scoped to `data.governance` could mint a child
+scoped to `data.governance-secret`, and a conforming third-party verifier would
+confirm that child as a legitimate attenuation of its parent. Privilege escalation
+across a delegation boundary, and it verified.
+
+**The new rule** (spec [`docs/spec/scope.md`](../../docs/spec/scope.md) S.3, ADR-0005):
+an entry `P` contains a resource `R` iff `R == P`, or `P` ends with a separator and
+`R` starts with `P`, or `R` starts with `P` followed by a separator. An empty
+boundary list remains unrestricted.
+
+**Separators are `/` and `.`, both always honoured, and now normative.** A scope
+segment MUST NOT contain either — that constraint is what makes honouring both safe
+rather than widening, and it is why the set is fixed by the specification instead of
+being a deployment setting. A configurable set would break ADR-0003 outright: a third
+party recomputing containment from a presented chain has only the documents, and
+could not know which rule the mint applied.
+
+### Breaking
+
+Some delegations that succeeded under 0.4.x now fail. That is the fix presenting
+itself. Concretely, a child scope is now rejected unless it sits at or below a
+segment boundary of a parent scope.
+
+**Nothing else changes.** The rule is *strictly narrower* — verified exhaustively
+over a generated corpus, not asserted — so it denies cases the old rule allowed and
+permits nothing the old rule denied:
+
+- no previously-rejected delegation becomes possible;
+- **no document bytes change** — containment is a predicate computed over a document
+  and never appears inside one;
+- **no existing frozen vector's verdict changes.** `chain_v1.json` was checked
+  specifically, as the one vector whose verification runs containment: its scopes are
+  properly dot-nested and both rules accept every hop. `mint_v1`, `mint_pop_v1` and
+  `attestation_v1` are untouched and are not re-frozen.
+
+### Added — `scope_v1.json`, the first vector to police the matcher
+
+The matcher had no vector until now, and that is how bare prefix matching survived in
+Rust, Python and TypeScript simultaneously: three mirrored ports of one wrong rule
+agreed with each other perfectly, and nothing else was asking. Across all 23 scope
+literals in the three test suites, every one was either equal or properly dot-nested
+— the bug was not weakly tested, it was untested.
+
+`scope_v1.json` carries **no digest and no signature**, because there are no bytes to
+pin — it pins verdicts. It is byte-identical across all three packages (CI `cmp`s
+them), it is registered in each packaged firewall, and its own checks assert that it
+still disagrees with bare prefix matching in at least five places, so it cannot
+quietly decay into cases both rules accept.
+
+### Known limitation
+
+The segment constraint is normative on producers and **not enforced** by the matcher
+in this release (spec S.6). Enforcing it would reject documents 0.5.0 accepts, which
+is a second breaking change; it is deferred to its own revision. No escaping
+mechanism is defined for a literal separator inside a segment — encode it before it
+reaches `scope_boundary`.
+
 ## [0.4.2]
 
 ### Added — `vaid-mint-conformance`, the packaged firewall as a Rust binary
