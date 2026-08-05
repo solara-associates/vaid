@@ -44,7 +44,12 @@ from vaid_mint.attestation import (
     verify_attestation_authenticity,
 )
 from vaid_mint.chain import PresentedBundle, verify_chain
-from vaid_mint.document import canonical_vaid_signing_bytes, compute_lineage_hash
+from vaid_mint.document import (
+    SCOPE_SEPARATORS,
+    canonical_vaid_signing_bytes,
+    compute_lineage_hash,
+    scope_contains,
+)
 from vaid_mint.mint_types import VaidSeed, build_mint_pop_payload
 
 
@@ -260,6 +265,60 @@ def check_attestation(v: dict) -> None:
         raise ConformanceError("the frozen attestation must verify as authentic")
 
 
+def check_scope(v: dict) -> None:
+    """``scope_v1.json`` — scope containment (spec S.3, ADR-0005).
+
+    The only check here that verifies a PREDICATE rather than bytes. Containment is
+    computed over a document and never appears inside one, so there is no digest to
+    reproduce and no signature to re-derive; what must agree across languages is the
+    verdict on every case.
+
+    It also asserts the vector still disagrees with bare prefix matching in at least
+    five places. Without that, a future edit could quietly reduce the vector to cases
+    both rules accept, leaving a green firewall that no longer covers the
+    sibling-capture bug the vector exists for.
+    """
+    cases = v.get("cases") or []
+    if not cases:
+        raise ConformanceError("scope vector carries no cases")
+
+    positives = negatives = disagreements = 0
+    for case in cases:
+        boundary = case["boundary"]
+        resource = case["resource"]
+        expected = case["expected"]
+        if not isinstance(expected, bool):
+            raise ConformanceError("scope case has no boolean `expected`")
+
+        got = scope_contains(boundary, resource)
+        if got != expected:
+            raise ConformanceError(
+                f"scope containment mismatch: boundary={boundary!r} "
+                f"resource={resource!r} expected={expected} got={got} — {case['why']}"
+            )
+        if expected:
+            positives += 1
+        else:
+            negatives += 1
+        if boundary and any(resource.startswith(s) for s in boundary) != expected:
+            disagreements += 1
+
+    if not positives or not negatives:
+        raise ConformanceError("scope vector must exercise both outcomes")
+    if disagreements < 5:
+        raise ConformanceError(
+            "scope vector must pin the sibling-capture regression class; only "
+            f"{disagreements} case(s) disagree with bare prefix matching"
+        )
+
+    declared = list(SCOPE_SEPARATORS)
+    frozen = v["rule"]["separators"]
+    if declared != frozen:
+        raise ConformanceError(
+            f"separator set mismatch: implementation {declared!r} != vector {frozen!r}"
+        )
+
+
 #: Every vector this firewall knows how to check, by filename.
 #:
 #: The firewall ENUMERATES what actually ships and dispatches through this table
@@ -276,6 +335,7 @@ VECTOR_CHECKS = {
     "mint_pop_v1.json": [check_mint_pop],
     "chain_v1.json": [check_chain],
     "attestation_v1.json": [check_attestation],
+    "scope_v1.json": [check_scope],
 }
 
 
@@ -364,7 +424,17 @@ def main() -> int:
     # that adds a vector visibly adds a line here, so "did the firewall look at
     # the thing this release was about" is answerable from the output alone.
     for name in sorted(result):
-        print(f"  {name:22} {result[name]['digest_sha256_hex']}")
+        # A predicate vector pins verdicts, not bytes, so it has no digest to
+        # report. Say what it DID check rather than printing a blank, so the
+        # output still evidences that this vector was looked at.
+        vector = result[name]
+        if "digest_sha256_hex" in vector:
+            detail = vector["digest_sha256_hex"]
+        elif "cases" in vector:
+            detail = f"{len(vector['cases'])} case(s) — predicate vector, no digest"
+        else:
+            detail = "(no digest)"
+        print(f"  {name:22} {detail}")
     return 0
 
 
