@@ -75,6 +75,7 @@
 //
 // Run: node scripts/verify-vector-freeze.mjs   (also wired into CI)
 
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -206,7 +207,31 @@ function releaseTagFor(pkg) {
 
 /* -------------------------------- checking ------------------------------- */
 
-function digestOf(text, label) {
+/**
+ * What this vector is frozen ON.
+ *
+ * Most vectors PIN BYTES: they carry a self-declared `digest_sha256_hex`, and the
+ * freeze compares that value across the release tag. That is the original
+ * contract and it is unchanged.
+ *
+ * A PREDICATE vector (`scope_v1.json`, ADR-0005) pins VERDICTS, not bytes.
+ * Containment is computed over a document and never appears inside one, so there
+ * is nothing to digest and the field is deliberately absent.
+ *
+ * This function used to fail closed on a missing digest, on the reasoning that a
+ * vector without one "cannot be frozen". For a predicate vector that reasoning
+ * inverts: refusing to freeze it leaves it UNPROTECTED, which is the opposite of
+ * failing closed. So it is frozen on the SHA-256 of its own file bytes instead —
+ * a strictly stronger pin than the declared-digest one, since it catches any
+ * change to the file at all, including to the cases themselves.
+ *
+ * Fail-closed is preserved everywhere it was load-bearing: unparseable JSON still
+ * fails, and a vector that HAS a digest is still compared on it, so a byte-pinning
+ * vector that silently lost its digest field cannot slip through as a content
+ * hash — the `then` side would still carry one and the mismatch in freeze MODE is
+ * reported.
+ */
+function freezeKeyOf(text, label) {
   let j;
   try {
     j = JSON.parse(text);
@@ -215,11 +240,13 @@ function digestOf(text, label) {
     return undefined;
   }
   const d = j[DIGEST_FIELD];
-  if (typeof d !== 'string' || d.length === 0) {
-    failures.push(`  ✗ ${label}: no "${DIGEST_FIELD}" field (failing closed — a vector without a digest cannot be frozen)`);
-    return undefined;
+  if (typeof d === 'string' && d.length > 0) {
+    return { mode: 'declared-digest', value: d };
   }
-  return d;
+  return {
+    mode: 'content-hash',
+    value: createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
 }
 
 const packages = discoverPackages();
@@ -261,7 +288,7 @@ for (const pkg of packages) {
       failures.push(`  ✗ ${label}: unreadable (failing closed): ${e.message}`);
       continue;
     }
-    const now = digestOf(nowText, label);
+    const now = freezeKeyOf(nowText, label);
     if (now === undefined) continue;
 
     const thenText = readAtTag(tag, v);
@@ -269,19 +296,34 @@ for (const pkg of packages) {
       notes.push(`  · ${v} — new since ${tag}; nothing frozen to compare`);
       continue;
     }
-    const then = digestOf(thenText, `${label} at ${tag}`);
+    const then = freezeKeyOf(thenText, `${label} at ${tag}`);
     if (then === undefined) continue;
 
-    if (now !== then) {
+    // A vector that changed which thing it is frozen ON is a defect in itself: a
+    // byte-pinning vector that lost its digest would otherwise silently downgrade
+    // to a content hash and compare clean against nothing.
+    if (now.mode !== then.mode) {
       failures.push(
         `  ✗ ${v}\n` +
-        `      digest CHANGED under an already-released version — this is a wire-contract break shipped without a version bump\n` +
-        `        at ${tag}: ${then}\n` +
-        `        now:        ${now}\n` +
+        `      freeze MODE changed under an already-released version\n` +
+        `        at ${tag}: ${then.mode}\n` +
+        `        now:        ${now.mode}\n` +
+        `      A vector may not change how it is pinned without a version bump.`,
+      );
+      continue;
+    }
+
+    if (now.value !== then.value) {
+      const what = now.mode === 'declared-digest' ? 'digest' : 'content hash';
+      failures.push(
+        `  ✗ ${v}\n` +
+        `      ${what} CHANGED under an already-released version — this is a wire-contract break shipped without a version bump\n` +
+        `        at ${tag}: ${then.value}\n` +
+        `        now:        ${now.value}\n` +
         `      ${pkg.name} is still ${pkg.version}. Bump it (and publish), or revert the vector.`,
       );
     } else {
-      checked.push({ v, pkg, tag });
+      checked.push({ v, pkg, tag, mode: now.mode });
     }
   }
 }
@@ -290,7 +332,7 @@ for (const pkg of packages) {
 
 console.log(`Discovered ${packages.length} package(s); checked ${checked.length} frozen vector(s) against their release tags.`);
 for (const c of checked.sort((a, b) => a.v.localeCompare(b.v))) {
-  console.log(`  ✓ ${c.v} — unchanged since ${c.tag}`);
+  console.log(`  ✓ ${c.v} — unchanged since ${c.tag}${c.mode === 'content-hash' ? ' (content hash — predicate vector)' : ''}`);
 }
 if (notes.length) {
   console.log(`\nNOT CHECKED — ${notes.length} (named, never silently skipped):`);

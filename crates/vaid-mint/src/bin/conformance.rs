@@ -50,7 +50,9 @@ use vaid_mint::attestation::{
     canonical_attestation_signing_bytes, verify_attestation_authenticity, ConsentAttestation,
 };
 use vaid_mint::chain::{verify_chain, ChainVerification, PresentedBundle};
-use vaid_mint::document::{canonical_vaid_signing_bytes, compute_lineage_hash, Vaid};
+use vaid_mint::document::{
+    canonical_vaid_signing_bytes, compute_lineage_hash, scope_contains, Vaid, SCOPE_SEPARATORS,
+};
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::verify::verify_vaid_authenticity;
 
@@ -320,6 +322,90 @@ fn check_attestation(v: &Value) -> Check {
     Ok(())
 }
 
+/// `scope_v1.json` — scope containment (spec S.3, ADR-0005).
+///
+/// The only check here that verifies a PREDICATE rather than bytes. Containment is
+/// computed over a document and never appears inside one, so there is no digest to
+/// reproduce and no signature to re-derive; what must agree across languages is the
+/// verdict on every case.
+///
+/// It also asserts the vector still disagrees with bare prefix matching in at least
+/// five places. Without that, a future edit could quietly reduce the vector to cases
+/// both rules accept, leaving a green firewall that no longer covers the
+/// sibling-capture bug the vector exists for.
+fn check_scope(v: &Value) -> Check {
+    let cases = match v["cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("scope vector carries no cases"),
+    };
+
+    let mut positives = 0usize;
+    let mut negatives = 0usize;
+    let mut disagreements = 0usize;
+
+    for case in cases {
+        let boundary: Vec<String> = case["boundary"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|s| s.as_str().unwrap_or_default().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let resource = case["resource"].as_str().unwrap_or_default();
+        let expected = match case["expected"].as_bool() {
+            Some(b) => b,
+            None => return err("scope case has no boolean `expected`"),
+        };
+        let why = case["why"].as_str().unwrap_or_default();
+
+        let got = scope_contains(&boundary, resource);
+        if got != expected {
+            return err(format!(
+                "scope containment mismatch: boundary={boundary:?} resource={resource:?} \
+                 expected={expected} got={got} — {why}"
+            ));
+        }
+        if expected {
+            positives += 1;
+        } else {
+            negatives += 1;
+        }
+        if !boundary.is_empty() {
+            let old = boundary.iter().any(|s| resource.starts_with(s));
+            if old != expected {
+                disagreements += 1;
+            }
+        }
+    }
+
+    if positives == 0 || negatives == 0 {
+        return err("scope vector must exercise both outcomes");
+    }
+    if disagreements < 5 {
+        return err(format!(
+            "scope vector must pin the sibling-capture regression class; only \
+             {disagreements} case(s) disagree with bare prefix matching"
+        ));
+    }
+
+    let declared: Vec<String> = SCOPE_SEPARATORS.iter().map(|c| c.to_string()).collect();
+    let frozen: Vec<String> = v["rule"]["separators"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|s| s.as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    if declared != frozen {
+        return err(format!(
+            "separator set mismatch: implementation {declared:?} != vector {frozen:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// Every vector this firewall knows how to check, by filename.
 ///
 /// The embedded set is enumerated by `build.rs`; this table says what each one
@@ -329,6 +415,7 @@ const VECTOR_CHECKS: &[VectorCheck] = &[
     ("mint_pop_v1.json", check_mint_pop),
     ("chain_v1.json", check_chain),
     ("attestation_v1.json", check_attestation),
+    ("scope_v1.json", check_scope),
 ];
 
 /// Run every check against every embedded vector, returning `(name, digest)` pairs.
@@ -377,10 +464,16 @@ fn run() -> Result<Vec<(String, String)>, ConformanceError> {
         check(&value)?;
         checked.push((
             (*name).to_string(),
+            // A predicate vector pins verdicts, not bytes, so it has no digest to
+            // report. Say what it DID check rather than printing a blank, so the
+            // output still evidences that this vector was looked at.
             value["digest_sha256_hex"]
                 .as_str()
-                .unwrap_or("(no digest)")
-                .to_string(),
+                .map(str::to_string)
+                .unwrap_or_else(|| match value["cases"].as_array() {
+                    Some(c) => format!("{} case(s) — predicate vector, no digest", c.len()),
+                    None => "(no digest)".to_string(),
+                }),
         ));
     }
     checked.sort();

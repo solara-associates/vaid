@@ -32,11 +32,31 @@ test('the packaged firewall passes against EVERY bundled vector', () => {
   // remember. That duplication is precisely what let a new vector ship unchecked.
   assert.deepEqual(covered, bundledVectorNames());
 
-  // Each one produced a real digest, and no two are the same — a firewall that
-  // silently checked one vector four times would pass a count assertion.
-  const digests = covered.map((n) => result[n]!.digest_sha256_hex);
+  // Each BYTE-PINNING vector produced a real digest, and no two are the same — a
+  // firewall that silently checked one vector four times would pass a count
+  // assertion.
+  //
+  // `scope_v1.json` is deliberately excluded from the digest assertions rather
+  // than given a synthetic digest: containment is a predicate computed OVER a
+  // document and never appears inside one, so it pins verdicts, not bytes. A
+  // fabricated digest would assert byte-identity about a thing that has no bytes.
+  // It is still covered by the `covered == bundledVectorNames()` assertion above,
+  // and by `checkScope` inside `run()`, which is where its real content is
+  // verified.
+  const digested = covered.filter((n) => result[n]!.digest_sha256_hex !== undefined);
+  assert.ok(digested.length > 0, 'expected at least one byte-pinning vector');
+  const digests = digested.map((n) => result[n]!.digest_sha256_hex!);
   for (const d of digests) assert.equal(d.length, 64);
   assert.equal(new Set(digests).size, digests.length);
+
+  // A predicate vector must still carry content, so "no digest" cannot become a
+  // way to ship an empty vector past the firewall.
+  for (const n of covered.filter((x) => result[x]!.digest_sha256_hex === undefined)) {
+    assert.ok(
+      (result[n]!.cases?.length ?? 0) > 0,
+      `${n} has neither a digest nor any cases — it asserts nothing`,
+    );
+  }
 });
 
 test('a vector shipped with no check is a BLOCKER, not a silent pass', () => {

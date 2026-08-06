@@ -113,8 +113,8 @@ pub use chain::{
     KernelKeyResolver, PresentedBundle, SingleKernelKey,
 };
 pub use document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
-    VaidId, VAID_SIG_VERSION_V3,
+    canonical_vaid_signing_bytes, caps_contain, compute_lineage_hash, scope_contains, AgentClass,
+    AgentId, TenantId, Vaid, VaidId, SCOPE_SEPARATORS, VAID_SIG_VERSION_V3,
 };
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
