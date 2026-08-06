@@ -240,13 +240,69 @@ export function hasConformingTimestamps(vaid: Vaid): boolean {
  * which is attached to no document — is matched by exactly the same rule as a
  * document's own. Duplicating the rule for the detached case is how the two would
  * drift.
+ *
+ * ## Containment is segment-bounded (spec S.3)
+ *
+ * An entry `P` contains a resource `R` iff `R === P`, or `P` ends with a separator
+ * and `R` starts with `P`, or `R` starts with `P` followed by a separator. Bare
+ * prefix matching is not containment.
+ *
+ * Until 0.5.0 this was `resource.startsWith(scope)`, which made `data.governance`
+ * contain `data.governance-secret` — a *sibling*, sharing a textual prefix and
+ * nothing else. Because this same predicate decides mint-time attenuation and
+ * third-party chain verification, that let a child be delegated authority its
+ * parent never held, and let a verifier confirm the delegation. The rule below is
+ * **strictly narrower**: it denies cases the old one allowed and permits nothing
+ * new.
+ *
+ * ## Why both separators, always
+ *
+ * Honouring only one breaks real deployments in opposite directions, and making
+ * the set a deployment setting is worse: under ADR-0003 a **third party**
+ * recomputes containment from a presented chain, and a deployment-local rule
+ * leaves it unable to reproduce the mint's verdict. So both are reserved by the
+ * specification and a segment MUST NOT contain either (S.2) — that constraint is
+ * doing the safety work. Without it, an implementer treating `/` as their
+ * separator and `.` as an ordinary character would find `data/user` containing
+ * `data/user.admin`: the same sibling-capture bug in the other separator. The
+ * constraint is normative on producers but is **not enforced here** in 0.5.0 (S.6).
+ *
+ * Written with only `===`, `startsWith`, `endsWith` and concatenation — no
+ * character indexing — so Rust (bytes), Python (code points) and TypeScript
+ * (UTF-16) cannot diverge on a multi-byte boundary.
  */
+
+/**
+ * The reserved hierarchy separators (spec `docs/spec/scope.md` S.2). Both are
+ * normative and both are always honoured; a scope segment MUST NOT contain either.
+ */
+export const SCOPE_SEPARATORS: readonly string[] = ['/', '.'];
+
+/**
+ * Does a single boundary entry contain `resource`? The one-entry core of
+ * {@link scopeContains}, split out so the rule is stated exactly once.
+ *
+ * An empty entry matches everything, preserving the match-all an empty string had
+ * under prefix matching. It is unreachable from a well-formed boundary (an empty
+ * *array* is how ⊤ is expressed) and is kept only so the rule is total.
+ */
+function prefixContains(prefix: string, resource: string): boolean {
+  if (prefix === '') return true;
+  if (resource === prefix) return true;
+  // A trailing separator already marks the boundary, so plain prefixing is
+  // containment — `data.` contains `data.x` without needing a second dot.
+  if (SCOPE_SEPARATORS.some((sep) => prefix.endsWith(sep))) {
+    return resource.startsWith(prefix);
+  }
+  return SCOPE_SEPARATORS.some((sep) => resource.startsWith(prefix + sep));
+}
+
 export function scopeContains(
   boundary: readonly string[],
   resource: string,
 ): boolean {
   if (boundary.length === 0) return true;
-  return boundary.some((scope) => resource.startsWith(scope));
+  return boundary.some((scope) => prefixContains(scope, resource));
 }
 
 /**
