@@ -406,6 +406,101 @@ fn check_scope(v: &Value) -> Check {
     Ok(())
 }
 
+/// `roundtrip_v1.json` -- round-trip verification (ADR-0006).
+///
+/// Verify-only: it pins a VERDICT OVER GIVEN BYTES rather than bytes over a given
+/// input, the only shape that catches cross-implementation disagreement. It also
+/// asserts the vector still DISCRIMINATES -- a dropping implementation must fail
+/// it in BOTH directions -- so it cannot decay into cases every implementation
+/// passes regardless of behaviour.
+fn check_roundtrip(v: &Value) -> Check {
+    use ring::signature::{UnparsedPublicKey, ED25519};
+    let cases = match v["cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("roundtrip vector carries no cases"),
+    };
+    let pk_bytes = unhex(
+        v["ed25519"]["kernel_public_key_hex"]
+            .as_str()
+            .unwrap_or_default(),
+    );
+
+    let sig_of = |doc: &Value| -> Vec<u8> {
+        doc["kernel_signature"]
+            .as_array()
+            .map(|a| a.iter().map(|n| n.as_u64().unwrap_or(0) as u8).collect())
+            .unwrap_or_default()
+    };
+
+    for case in cases {
+        let doc = &case["document"];
+        let expected = match case["expected_valid"].as_bool() {
+            Some(b) => b,
+            None => return err("roundtrip case has no boolean `expected_valid`"),
+        };
+        let parsed: Vaid = match serde_json::from_value(doc.clone()) {
+            Ok(d) => d,
+            Err(e) => return err(format!("roundtrip case document does not deserialize: {e}")),
+        };
+        // Canonicalization must be a function of the input: re-serializing MUST
+        // reproduce what was presented, or the verdict below is about other bytes.
+        if serde_json::to_value(&parsed).unwrap_or(Value::Null) != *doc {
+            return err(format!(
+                "roundtrip case {:?} did not round-trip byte-exactly -- this \
+                 implementation is re-projecting the document (ADR-0006)",
+                case["name"].as_str().unwrap_or_default()
+            ));
+        }
+        let got = UnparsedPublicKey::new(&ED25519, &pk_bytes)
+            .verify(&canonical_vaid_signing_bytes(&parsed), &sig_of(doc))
+            .is_ok();
+        if got != expected {
+            return err(format!(
+                "roundtrip case {:?}: got {got}, expected {expected} -- {}",
+                case["name"].as_str().unwrap_or_default(),
+                case["why"].as_str().unwrap_or_default()
+            ));
+        }
+    }
+
+    let (mut false_negative, mut false_accept) = (false, false);
+    for case in cases {
+        let doc = &case["document"];
+        let expected = case["expected_valid"].as_bool().unwrap_or(false);
+        let mut dropped = doc.clone();
+        if let Value::Object(m) = &mut dropped {
+            m.retain(|k, _| !k.starts_with("x_"));
+            m.insert("kernel_signature".into(), Value::Null);
+        }
+        let digest = {
+            let c = match serde_jcs::to_vec(&dropped) {
+                Ok(c) => c,
+                Err(e) => return err(format!("jcs failed: {e}")),
+            };
+            let mut h = Sha256::new();
+            h.update(&c);
+            h.finalize().to_vec()
+        };
+        let got = UnparsedPublicKey::new(&ED25519, &pk_bytes)
+            .verify(&digest, &sig_of(doc))
+            .is_ok();
+        if got != expected {
+            if expected {
+                false_negative = true;
+            } else {
+                false_accept = true;
+            }
+        }
+    }
+    if !false_negative || !false_accept {
+        return err(
+            "the roundtrip vector no longer catches a dropping implementation in both \
+             directions -- its discriminating power has been weakened",
+        );
+    }
+    Ok(())
+}
+
 /// Every vector this firewall knows how to check, by filename.
 ///
 /// The embedded set is enumerated by `build.rs`; this table says what each one
@@ -416,6 +511,7 @@ const VECTOR_CHECKS: &[VectorCheck] = &[
     ("chain_v1.json", check_chain),
     ("attestation_v1.json", check_attestation),
     ("scope_v1.json", check_scope),
+    ("roundtrip_v1.json", check_roundtrip),
 ];
 
 /// Run every check against every embedded vector, returning `(name, digest)` pairs.

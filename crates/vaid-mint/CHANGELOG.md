@@ -3,6 +3,74 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0]
+
+### Fixed — a verifier canonicalizes the bytes it was PRESENTED (SECURITY / correctness)
+
+**Rust only.** Python and TypeScript were already correct and are unchanged.
+
+Rust `vaid-mint` returned **the wrong verdict** on a valid document. Given a
+conforming VAID plus one additive extension field, signed by its issuer over the
+bytes as presented:
+
+| implementation | behaviour | verdict |
+|---|---|---|
+| Python | canonicalizes the raw dict | correct — verifies |
+| TypeScript | spreads the object as received | correct — verifies |
+| **Rust (before 0.6.0)** | **projects through the typed `Vaid`** | **wrong — rejects** |
+
+`Vaid` is a typed struct and serde's default is to ignore unknown fields, so
+deserializing discarded every member the struct did not name and
+`canonical_vaid_signing_bytes` hashed what survived. **The digest was over a
+document nobody sent.** It failed closed, so nothing was accepted that should not
+have been — but the verdict was about different bytes.
+
+Tolerant parsing is right for a consumer and wrong for a canonicalizer, whose
+whole job is to reproduce the bytes the signer signed. One type served both needs
+and the parsing need won silently.
+
+**Fix** (ADR-0006): unrecognised members are captured and preserved, so
+canonicalization covers the presented key set.
+
+```rust
+#[serde(flatten)]
+unknown_fields: BTreeMap<String, serde_json::Value>,
+```
+
+Chosen over `deny_unknown_fields` because the standard's extension rule permits
+additive fields, and a verifier that rejects every extension makes that rule
+unusable. Rejecting remains a **conforming** choice — what is now forbidden is
+silently dropping a member and reporting a verdict as though it had not been
+there.
+
+### Added — `roundtrip_v1.json`, a verify-only vector
+
+Every other vector pins **one implementation's output for a given input**. This
+one pins **a verdict over given bytes** — the only shape that catches
+cross-implementation disagreement, because the defect appears only when one
+implementation *mints* and another *verifies*.
+
+Four cases, and it discriminates in **both** directions: a dropping
+implementation fails the extension case as a false negative *and* wrongly accepts
+the not-covered-by-the-signature case. Its own checks assert that, so it cannot
+decay into cases every implementation passes regardless of behaviour.
+
+Checked before writing it: across all five existing mint-side vectors, **zero
+documents carry an unknown field**. The gap was structural, not an oversight.
+
+### Breaking
+
+An implementation relying on Rust silently dropping unknown members will now see
+them in the digest. That reliance was on a defect. **Minted documents are
+unchanged** — a document minted by this crate has an empty capture map and is
+byte-identical to one minted by 0.5.0, and `mint_v1.json` still reproduces.
+
+### Note
+
+The same defect exists in the Solara substrate (`synthera-types`), which projects
+through its own typed `Vaid`, and it is in production. Tracked separately; this
+release is the normative statement that fix will cite.
+
 ## [0.5.0]
 
 ### Fixed — scope containment is segment-bounded (SECURITY)

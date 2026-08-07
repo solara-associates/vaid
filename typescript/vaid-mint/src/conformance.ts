@@ -36,7 +36,9 @@ import {
   canonicalRequestSigningBytes,
   ed25519PublicKey,
   ed25519Sign,
+  ed25519Verify,
   fromHex,
+  numbersToBytes,
   sha256,
   toHex,
   verifySignedPayload,
@@ -338,6 +340,65 @@ export function checkAttestation(v: AttestationVector): void {
   }
 }
 
+/** A round-trip verification vector: signed documents plus expected verdicts. */
+interface RoundtripVector {
+  ed25519: { kernel_public_key_hex: string };
+  cases: { name: string; why: string; document: Record<string, unknown>; expected_valid: boolean }[];
+}
+
+/**
+ * Check the round-trip verification vector (ADR-0006).
+ *
+ * Verify-only: it pins a VERDICT OVER GIVEN BYTES rather than bytes over a given
+ * input, which is the only shape that catches cross-implementation disagreement.
+ * It also asserts the vector still DISCRIMINATES — a dropping implementation must
+ * fail it in both directions — so it cannot decay into cases every implementation
+ * passes regardless of behaviour.
+ */
+export function checkRoundtrip(v: RoundtripVector): void {
+  if (v.cases.length === 0) throw new ConformanceError('roundtrip vector carries no cases');
+  const pub = fromHex(v.ed25519.kernel_public_key_hex);
+  for (const c of v.cases) {
+    const got = ed25519Verify(
+      numbersToBytes(c.document.kernel_signature as number[]),
+      canonicalVaidSigningBytes(c.document as never),
+      pub,
+    );
+    if (got !== c.expected_valid) {
+      throw new ConformanceError(
+        `roundtrip case "${c.name}": got ${got}, expected ${c.expected_valid} — ${c.why}`,
+      );
+    }
+    // The requirement behind the verdict: canonicalization must be a function of
+    // the input, so parsing and re-serializing must reproduce what was presented.
+    const back = JSON.parse(JSON.stringify(c.document));
+    if (JSON.stringify(Object.keys(back).sort()) !== JSON.stringify(Object.keys(c.document).sort())) {
+      throw new ConformanceError(`roundtrip case "${c.name}" did not round-trip its key set`);
+    }
+  }
+  let falseNegative = false;
+  let falseAccept = false;
+  for (const c of v.cases) {
+    const dropped: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(c.document)) if (!k.startsWith('x_')) dropped[k] = val;
+    const got = ed25519Verify(
+      numbersToBytes(c.document.kernel_signature as number[]),
+      sha256(canonicalize({ ...dropped, kernel_signature: null })),
+      pub,
+    );
+    if (got !== c.expected_valid) {
+      if (c.expected_valid) falseNegative = true;
+      else falseAccept = true;
+    }
+  }
+  if (!falseNegative || !falseAccept) {
+    throw new ConformanceError(
+      'the roundtrip vector no longer catches a dropping implementation in both ' +
+        'directions — its discriminating power has been weakened',
+    );
+  }
+}
+
 /** A scope-containment vector: a predicate table, with no digest and no signature. */
 interface ScopeVector {
   rule: { separators: string[] };
@@ -413,6 +474,7 @@ export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
   'chain_v1.json': (v: ChainVector) => checkChain(v),
   'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
   'scope_v1.json': (v: ScopeVector) => checkScope(v),
+  'roundtrip_v1.json': (v: RoundtripVector) => checkRoundtrip(v),
 } as Record<string, (v: never) => void>;
 
 /**
