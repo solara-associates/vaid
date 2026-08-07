@@ -319,6 +319,59 @@ def check_scope(v: dict) -> None:
         )
 
 
+def check_roundtrip(v: dict) -> None:
+    """``roundtrip_v1.json`` -- round-trip verification (ADR-0006).
+
+    Verify-only: it pins a VERDICT OVER GIVEN BYTES rather than bytes over a given
+    input, which is the only shape that catches cross-implementation disagreement.
+    It also asserts the vector still DISCRIMINATES -- a dropping implementation
+    must fail it in BOTH directions -- so it cannot decay into cases every
+    implementation passes regardless of behaviour.
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    cases = v.get("cases") or []
+    if not cases:
+        raise ConformanceError("roundtrip vector carries no cases")
+    pub = Ed25519PublicKey.from_public_bytes(
+        bytes.fromhex(v["ed25519"]["kernel_public_key_hex"])
+    )
+
+    def verify(doc: dict, payload: dict | None = None) -> bool:
+        try:
+            pub.verify(
+                bytes(doc["kernel_signature"]),
+                canonical_vaid_signing_bytes(payload if payload is not None else doc),
+            )
+            return True
+        except InvalidSignature:
+            return False
+
+    for c in cases:
+        got = verify(c["document"])
+        if got != c["expected_valid"]:
+            raise ConformanceError(
+                f"roundtrip case {c['name']!r}: got {got}, expected "
+                f"{c['expected_valid']} -- {c['why']}"
+            )
+
+    false_negative = false_accept = False
+    for c in cases:
+        doc = c["document"]
+        dropped = {k: val for k, val in doc.items() if not k.startswith("x_")}
+        if verify(doc, dropped) != c["expected_valid"]:
+            if c["expected_valid"]:
+                false_negative = True
+            else:
+                false_accept = True
+    if not (false_negative and false_accept):
+        raise ConformanceError(
+            "the roundtrip vector no longer catches a dropping implementation in both "
+            "directions -- its discriminating power has been weakened"
+        )
+
+
 #: Every vector this firewall knows how to check, by filename.
 #:
 #: The firewall ENUMERATES what actually ships and dispatches through this table
@@ -336,6 +389,7 @@ VECTOR_CHECKS = {
     "chain_v1.json": [check_chain],
     "attestation_v1.json": [check_attestation],
     "scope_v1.json": [check_scope],
+    "roundtrip_v1.json": [check_roundtrip],
 }
 
 
