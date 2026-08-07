@@ -59,6 +59,72 @@ const WAIVERS = [];
 const WAIVED = new Map();
 for (const w of WAIVERS) for (const n of w.names) WAIVED.set(`${w.registry}:${n}`, w);
 
+/* ---------------------------- registry scope ----------------------------- */
+//
+// THE DECLARED MATRIX of (registry, package) pairs this repository intends to
+// exist. Everything else in this file discovers packages by walking `crates/`,
+// `python/` and `typescript/`; this is the only place that states what SHOULD be
+// there.
+//
+// Why it exists: discovery-by-directory cannot distinguish "we decided not to
+// build this" from "nobody built this and nobody noticed". PyPI `vaid-client` was
+// the live instance — `python/vaid-client/` does not exist, so the loop below
+// never produced a package, so no check ever had an opinion. It was not a
+// suppressed failure or a waived one; it was NOT A SUBJECT. An opt-out marker
+// cannot help either: the marker lives in a manifest, and the manifest is what is
+// missing. Absence had no representation in the repo at all, and reading the
+// green tick as "all packages published" was reasonable and wrong.
+//
+// So: absence must now be STATED to be legal.
+//
+// Enforced in BOTH directions, so neither half can rot quietly:
+//   · declared applicable + directory exists   -> checked normally
+//   · declared applicable + NO directory       -> FAILURE (vanished or never built)
+//   · declared not-applicable + NO directory   -> OK, reason printed every run
+//   · declared not-applicable + DIRECTORY      -> FAILURE (stale; delete the entry)
+//   · directory with NO declaration            -> FAILURE (undeclared package)
+//   · manifest name ≠ declared name            -> FAILURE (renamed under the radar)
+//
+// `applicable: false` is a THIRD thing, distinct from both an opt-out and a waiver,
+// and conflating them would put a lie in the repository:
+//   · opt-out (`publish = false`, `"private": true`, `Private :: Do Not Upload`)
+//       — the package EXISTS and we will never publish it.
+//   · waiver  — the package EXISTS, publishing it is the plan, and a decision no
+//       pull request can make is blocking it.
+//   · applicable: false — the package DOES NOT EXIST and is not planned. There is
+//       no artifact, no manifest, and nothing to publish.
+// Using an opt-out here would require inventing `python/vaid-client/` just to mark
+// it private, which would assert a Python implementation exists. It does not.
+const REGISTRY_SCOPE = [
+  { registry: 'crates.io', dir: 'crates/vaid-mint',      name: 'vaid-mint' },
+  { registry: 'crates.io', dir: 'crates/vaid-pop',       name: 'vaid-pop' },
+  { registry: 'crates.io', dir: 'crates/vaid-client',    name: 'vaid-client' },
+
+  { registry: 'pypi',      dir: 'python/vaid-mint',      name: 'vaid-mint' },
+  { registry: 'pypi',      dir: 'python/vaid-pop',       name: 'vaid-pop' },
+  { registry: 'pypi',      dir: 'python/vaid-langchain', name: 'vaid-langchain' },
+  {
+    registry: 'pypi',
+    dir: 'python/vaid-client',
+    name: 'vaid-client',
+    applicable: false,
+    reason:
+      'Python has no separate client package: the request signer ships INSIDE vaid-pop as ' +
+      '`vaid_pop.signer.RequestSigner` (python/vaid-pop/vaid_pop/signer.py), which is why ' +
+      'python/vaid-pop/README.md calls vaid-client "(Rust)" — the cross-language peer, not a ' +
+      'missing sibling. vaid-client is a TWO-language package by design (Rust + TypeScript). ' +
+      'No doc, README or site page instructs `pip install vaid-client` (verified 2026-08-07), ' +
+      'so nothing is currently broken by its absence. To make this entry go away, build a real ' +
+      'Python vaid-client — do NOT delete the entry to silence the check.',
+  },
+
+  { registry: 'npm',       dir: 'typescript/vaid-mint',   name: 'vaid-mint' },
+  { registry: 'npm',       dir: 'typescript/vaid-pop',    name: 'vaid-pop' },
+  { registry: 'npm',       dir: 'typescript/vaid-client', name: 'vaid-client' },
+];
+
+const SCOPE_BY_DIR = new Map(REGISTRY_SCOPE.map((s) => [s.dir, s]));
+
 /* --------------------------- release tag parity --------------------------- */
 //
 // The SECOND assertion this script makes, and the one that closes a blind spot in
@@ -214,6 +280,63 @@ if (existsSync(tsDir)) for (const d of readdirSync(tsDir)) {
   pkgs.push({ dir: `typescript/${d}`, registry: 'npm', name: pkg.name, version: pkg.version, skip: pkg.private === true });
 }
 
+/* ------------------- scope declaration, both directions ------------------- */
+//
+// Runs BEFORE any registry call: a tree that disagrees with its own declaration
+// makes the registry answer meaningless, the same reason verify-internal-versions
+// runs before this script in CI.
+
+const notApplicable = [];
+const foundDirs = new Set(pkgs.map((p) => p.dir));
+
+// Direction 1 — TREE → DECLARATION. A package nobody declared.
+for (const p of pkgs) {
+  const s = SCOPE_BY_DIR.get(p.dir);
+  if (!s) {
+    failures.push(
+      `  ✗ [${p.dir}] ${p.name} (${p.registry}) exists in the tree but is NOT in REGISTRY_SCOPE` +
+      ` — every package must be declared. Add it, so a future reader can tell an intended` +
+      ` package from one that drifted in.`,
+    );
+    continue;
+  }
+  if (s.name !== p.name) {
+    failures.push(
+      `  ✗ [${p.dir}] manifest name '${p.name}' ≠ declared name '${s.name}' in REGISTRY_SCOPE` +
+      ` — a rename that only half-landed. Fix whichever is wrong.`,
+    );
+  }
+  if (s.applicable === false) {
+    failures.push(
+      `  ✗ [${p.dir}] is declared applicable:false ("does not exist"), but the directory IS present` +
+      ` — the declaration is STALE. An implementation now exists: DELETE the entry and publish it` +
+      ` (this is the success path).`,
+    );
+  }
+}
+
+// Direction 2 — DECLARATION → TREE. A declaration asserting something about nothing.
+for (const s of REGISTRY_SCOPE) {
+  const present = foundDirs.has(s.dir);
+  if (s.applicable === false) {
+    if (!s.reason) {
+      failures.push(`  ✗ [${s.dir}] declared applicable:false with NO reason — an unexplained absence is the defect this check exists to prevent`);
+    } else if (!present) {
+      notApplicable.push(s);
+    }
+    // present && applicable:false is already reported in direction 1.
+    continue;
+  }
+  if (!present) {
+    failures.push(
+      `  ✗ [${s.dir}] ${s.name} (${s.registry}) is DECLARED in REGISTRY_SCOPE but has no readable` +
+      ` manifest in the tree — either it was deleted/renamed (fix the declaration) or its manifest` +
+      ` is unparseable (fix the manifest). Failing closed: this is exactly how PyPI vaid-client went` +
+      ` unnoticed, as an absence with no representation.`,
+    );
+  }
+}
+
 for (const p of pkgs) {
   if (p.skip) { notes.push(`  · [${p.dir}] ${p.name} — opt-out marker present, not checked`); continue; }
   if (!p.version) { failures.push(`  ✗ [${p.dir}] ${p.name}: could not read a literal version (dynamic/unresolved) — cannot verify parity (failing closed)`); continue; }
@@ -271,6 +394,16 @@ for (const w of WAIVERS) {
 
 if (notes.length) console.log('Notes:\n' + notes.join('\n'));
 
+// Declared absences print in full, every run, with the reason. The whole point of
+// the declaration is that the absence is VISIBLE — printing it only when something
+// breaks would recreate the silence it replaced.
+console.log(`\nNOT APPLICABLE — ${notApplicable.length} (registry, package) pair(s) declared not to exist:`);
+if (notApplicable.length === 0) console.log('  (none)');
+for (const s of notApplicable.sort((a, b) => a.dir.localeCompare(b.dir))) {
+  console.log(`  · ${s.registry}: ${s.name} — no implementation at ${s.dir}`);
+  console.log(`      ${s.reason.replace(/(.{1,86})(\s|$)/g, '$1\n      ').trimEnd()}`);
+}
+
 // Waivers print in full, every run, with reason and expiry. A waiver nobody
 // reads is a waiver nobody re-decides.
 console.log(`\nWAIVED — ${waived.length} package(s) red for a stated reason no PR can clear:`);
@@ -282,8 +415,9 @@ for (const p of waived.sort((a, b) => a.dir.localeCompare(b.dir))) {
 }
 
 if (failures.length) {
-  console.error(`\n✗ REGISTRY PARITY FAILED — an in-repo version is not on its registry, or a published release has no tag:\n${failures.join('\n')}\n`);
+  console.error(`\n✗ REGISTRY PARITY FAILED — the tree disagrees with REGISTRY_SCOPE, an in-repo version is not on its registry, or a published release has no tag:\n${failures.join('\n')}\n`);
   process.exit(1);
 }
-console.log(`\n✓ registry parity — ${pkgs.filter((p) => !p.skip).length} package(s) checked: ${pkgs.filter((p) => !p.skip).length - waived.length} published, ${waived.length} waived.`);
+console.log(`\n✓ scope declaration — ${REGISTRY_SCOPE.length} declared pair(s): ${REGISTRY_SCOPE.length - notApplicable.length} present in the tree, ${notApplicable.length} declared not-applicable. No undeclared packages.`);
+console.log(`✓ registry parity — ${pkgs.filter((p) => !p.skip).length} package(s) checked: ${pkgs.filter((p) => !p.skip).length - waived.length} published, ${waived.length} waived.`);
 console.log('✓ release tag parity — every published version has a release tag.');
