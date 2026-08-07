@@ -196,6 +196,18 @@ async function publishedVersions(registry, name) {
   if (res.status !== 200) throw new Error(`unexpected HTTP ${res.status} from ${registry} for ${name}`);
   const j = await res.json();
   if (registry === 'crates.io') return j.versions.map((v) => v.num);
+  // PyPI: read `releases`, NEVER `info.version`.
+  //
+  // `info.version` is served through a CDN that can lag the upload by minutes,
+  // and it lags in the direction that matters: immediately after publishing
+  // vaid-mint 0.6.0 it was observed still reporting 0.5.0 while `releases`
+  // already listed 0.6.0 and `/pypi/vaid-mint/0.6.0/json` returned 200. A check
+  // reading `info.version` would have reported "bumped but not released" for a
+  // release that was live, and the correct response to THAT is to retry, not to
+  // investigate a publish that already succeeded.
+  //
+  // `releases` is the full set and is the authoritative answer to the only
+  // question this check asks: is this version present at all.
   if (registry === 'pypi') return Object.keys(j.releases);
   return Object.keys(j.versions);
 }
