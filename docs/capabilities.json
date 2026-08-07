@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for VAID capability STATUS. Prose (the marketing site, docs) renders status FROM this file rather than asserting it, so a sentence can never carry a stale status. Guarded by TWO CI checks: (1) a DRIFT check \u2014 every vendored copy (e.g. the site's) must byte-match this file; (2) a VERIFICATION check (scripts/verify-capabilities.mjs) \u2014 status must match reality: a `shipped` capability's package version must be published on its registry (or its repo_ref must resolve), and a `roadmap`/`planned` capability blocked on a PR must have that PR still OPEN (a capability blocked on a merged PR is a status that should have flipped). See docs/adr/0002-capabilities-manifest.md. NOTE: `status_text` is the one hand-written field \u2014 a review item at release, not generated.",
+  "_comment": "Single source of truth for VAID capability STATUS. Prose (the marketing site, docs) renders status FROM this file rather than asserting it, so a sentence can never carry a stale status. Guarded by TWO CI checks: (1) a DRIFT check — every vendored copy (e.g. the site's) must byte-match this file; (2) a VERIFICATION check (scripts/verify-capabilities.mjs) — status must match reality: a `shipped` capability's package version must be published on its registry (or its repo_ref must resolve), and a `roadmap`/`planned` capability blocked on a PR must have that PR still OPEN (a capability blocked on a merged PR is a status that should have flipped). See docs/adr/0002-capabilities-manifest.md. NOTE: `status_text` is the one hand-written field — a review item at release, not generated.",
   "version": 1,
   "capabilities": [
     {
@@ -27,7 +27,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key \u2014 offline, no service. All three implementations ship the conformance firewall as an installable executable (`vaid-pop-conformance`); Rust gained one at 0.2.0, closing the gap where its only check ran from a repository checkout. A consumer therefore reproduces the frozen digest and signature from the artifact they received, in any of the three.",
+      "status_text": "A request's proof-of-possession is verifiable by any holder of the signer's public key — offline, no service. All three implementations ship the conformance firewall as an installable executable (`vaid-pop-conformance`); Rust gained one at 0.2.0, closing the gap where its only check ran from a repository checkout. A consumer therefore reproduces the frozen digest and signature from the artifact they received, in any of the three.",
       "blocked_on": null
     },
     {
@@ -55,7 +55,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "A reference mint issues VAIDs and mints attenuated child VAIDs; published and installable. Rust and Python version independently \u2014 Python 0.1.3 is a docs-only PyPI re-release over the same 0.1.2 behaviour \u2014 so byte-for-byte agreement is asserted at the conformance-vector level, not the version number.",
+      "status_text": "A reference mint issues VAIDs and mints attenuated child VAIDs; published and installable. Rust and Python version independently — Python 0.1.3 is a docs-only PyPI re-release over the same 0.1.2 behaviour — so byte-for-byte agreement is asserted at the conformance-vector level, not the version number.",
       "blocked_on": null
     },
     {
@@ -127,7 +127,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "Verifying a VAID document's authenticity from the issuer's public key alone \u2014 no issuer instance.",
+      "status_text": "Verifying a VAID document's authenticity from the issuer's public key alone — no issuer instance.",
       "blocked_on": null
     },
     {
@@ -155,7 +155,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "Revocation checked over a VAID's full lineage \u2014 three-state, revoking a parent revokes its children, failing closed.",
+      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, failing closed.",
       "blocked_on": null
     },
     {
@@ -183,7 +183,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "A third conforming implementation in TypeScript \u2014 minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. Published on npm (vaid-pop, vaid-mint, vaid-client), landing at 0.3.0 \u2014 the version this capability LANDED IN, not an install instruction: the three packages version independently and have moved since (vaid-mint is 0.5.0 as of 2026-08-07). What you get installing today is registry-checked separately and must never be sourced from this file. Each ships a packaged conformance firewall \u2014 `npx -p vaid-mint vaid-mint-conformance` and the two siblings \u2014 which reproduces the frozen digests from the INSTALLED package, so a consumer can check the artifact they actually received rather than trusting this claim.",
+      "status_text": "A third conforming implementation in TypeScript — minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. Published on npm (vaid-pop, vaid-mint, vaid-client), landing at 0.3.0 — the version this capability LANDED IN, not an install instruction: the three packages version independently and have moved since. What you get installing today is registry-checked separately and must never be sourced from this file. Each ships a packaged conformance firewall — `npx -p vaid-mint vaid-mint-conformance` and the two siblings — which reproduces the frozen digests from the INSTALLED package, so a consumer can check the artifact they actually received rather than trusting this claim.",
       "blocked_on": null
     },
     {
@@ -211,7 +211,7 @@
           "version": "0.4.0"
         }
       ],
-      "status_text": "A third party holding the issuer's kernel PUBLIC key and the ancestor documents a presenter supplies can verify that a child's authority is within its parent's, at every hop \u2014 scope, capabilities, and the qualified (trust_domain, tenant_id) pair. Containment reuses the mint-time matchers, so verify-time cannot drift from the check that gated issuance. Achieved by detached chain presentation (ADR-0003) with NO change to the VAID document: no new field, no sig_version bump, no mint_v1 re-freeze. Pinned cross-language by chain_v1.json. LIMITS, stated because they are load-bearing: the presenter must retain and present the ancestors, so a leaf whose ancestor documents were discarded has unverifiable attenuation; and full-chain verification requires full-chain disclosure.",
+      "status_text": "A third party holding the issuer's kernel PUBLIC key and the ancestor documents a presenter supplies can verify that a child's authority is within its parent's, at every hop — scope, capabilities, and the qualified (trust_domain, tenant_id) pair. Containment reuses the mint-time matchers, so verify-time cannot drift from the check that gated issuance. Achieved by detached chain presentation (ADR-0003) with NO change to the VAID document: no new field, no sig_version bump, no mint_v1 re-freeze. Pinned cross-language by chain_v1.json. LIMITS, stated because they are load-bearing: the presenter must retain and present the ancestors, so a leaf whose ancestor documents were discarded has unverifiable attenuation; and full-chain verification requires full-chain disclosure.",
       "blocked_on": null
     },
     {
@@ -239,7 +239,7 @@
           "version": "0.4.0"
         }
       ],
-      "status_text": "A third party can walk a full delegation chain from a presented bundle: every document authenticated, every hop pinned against the signed parent_vaid, and any gap \u2014 an unpresented ancestor, a cycle, an implausible depth \u2014 failing closed as attenuation-unverifiable rather than attenuation-satisfied. Chains that cross kernel keys additionally require a detached consent attestation from the issuer that minted the parent (attestation_v1.json), because nothing in a VAID document otherwise proves the parent consented; a cross-key hop without valid consent never verifies. LIMITS: revocation and expiry are NOT consulted by chain verification, and consent is time-bounded rather than revocable \u2014 retraction inside an attestation's window needs durable revocation, which this implementation does not provide (docs/spec/revocation.md R.4.6, docs/spec/consent-attestation.md C.6).",
+      "status_text": "A third party can walk a full delegation chain from a presented bundle: every document authenticated, every hop pinned against the signed parent_vaid, and any gap — an unpresented ancestor, a cycle, an implausible depth — failing closed as attenuation-unverifiable rather than attenuation-satisfied. Chains that cross kernel keys additionally require a detached consent attestation from the issuer that minted the parent (attestation_v1.json), because nothing in a VAID document otherwise proves the parent consented; a cross-key hop without valid consent never verifies. LIMITS: revocation and expiry are NOT consulted by chain verification, and consent is time-bounded rather than revocable — retraction inside an attestation's window needs durable revocation, which this implementation does not provide (docs/spec/revocation.md R.4.6, docs/spec/consent-attestation.md C.6).",
       "blocked_on": null
     },
     {
@@ -248,10 +248,10 @@
       "status": "planned",
       "landed_in": null,
       "packages": [],
-      "status_text": "Verifying a VAID issued by one deployment from another. v3 (ADR-0004) supplies the missing identifier \u2014 the document names its issuing trust domain and commits to the key that signed it \u2014 and the publication route now exists: the SYNTHERA substrate's kernel public key is published, with its RFC 7638 thumbprint in three independent channels, so a third party can obtain the key and confirm it is the right one (see /trust-anchor). One thing remains: the substrate's deployed image predates ADR-0034 and so emits neither v3 identity field, meaning live-issued documents do not yet carry the issuer identity this capability reads. Until that deploy lands, a VAID issued by one deployment cannot be verified by another.",
+      "status_text": "Verifying a VAID issued by one deployment from another. v3 (ADR-0004) supplies the missing identifier — the document names its issuing trust domain and commits to the key that signed it — and the publication route now exists: the SYNTHERA substrate's kernel public key is published, with its RFC 7638 thumbprint in three independent channels, so a third party can obtain the key and confirm it is the right one (see /trust-anchor). One thing remains: the substrate's deployed image predates ADR-0034 and so emits neither v3 identity field, meaning live-issued documents do not yet carry the issuer identity this capability reads. Until that deploy lands, a VAID issued by one deployment cannot be verified by another.",
       "blocked_on": {
         "type": "decision",
-        "ref": "substrate adoption of the v3 identity fields (synthera ADR-0034) \u2014 the kernel public key publication route (synthera#16) is CLEARED, published 2026-08-03"
+        "ref": "substrate adoption of the v3 identity fields (synthera ADR-0034) — the kernel public key publication route (synthera#16) is CLEARED, published 2026-08-03"
       }
     }
   ]
