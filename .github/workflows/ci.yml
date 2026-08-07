@@ -447,3 +447,13 @@ jobs:
       # every declaration-based check passed. See the script header.
       - name: Verify frozen vectors have not moved under a released version
         run: node scripts/verify-vector-freeze.mjs
+      # ADVISORY, never fails. Every check above compares a package to ITSELF, to
+      # its OWN registry, or to its OWN release tag — none can see two languages
+      # disagreeing about the same package name, which is how vaid-pop came to sit
+      # at 0.2.1/0.2.0/0.3.0 across crates.io/PyPI/npm with everything green.
+      # Independent versioning is stated policy, so skew is legitimate and this
+      # REPORTS rather than blocks; making it fatal would forbid the deliberate
+      # single-language releases the policy exists to allow. Read the output as a
+      # question ("is this still the intended skew?"), not a defect.
+      - name: Report cross-language version skew (advisory, never fails)
+        run: node scripts/verify-crosslang-parity.mjs

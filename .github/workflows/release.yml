@@ -1,0 +1,399 @@
+# Release workflow — publish ONE package to ONE registry, then prove the published
+# artifact works before the run is allowed to report success.
+#
+# THE PROPERTY THIS EXISTS TO ENFORCE: a partial publish must exit non-zero.
+# Before this file, publishing was a hand-run checklist (CONTRIBUTING, "Releasing
+# and version tags") and nothing in CI published anything — the only line matching
+# "publish" in ci.yml is the name of a verification step. A half-finished release
+# therefore had no failure surface at all: it just left the registries in a state
+# nobody was told about. That is how crates.io vaid-client sat at 0.1.0 from 13 July
+# while npm vaid-client moved to 0.3.0, with every check green.
+#
+# ONE TAG PUBLISHES ONE PACKAGE. This deliberately does NOT iterate the workspace.
+# Independent versioning is stated policy: the Rust, Python and TypeScript
+# implementations are separate hand-written codebases, not builds of one another,
+# and single-language releases are correct here (vaid-mint 0.4.2 and vaid-pop 0.2.1
+# were deliberate Rust-only patches). A workflow that fanned out over every language
+# would force the lockstep the repo has decided against. Skew is REPORTED instead,
+# by scripts/verify-crosslang-parity.mjs, which warns and never blocks.
+#
+# TAG FORM — the package-specific form is REQUIRED for new releases:
+#
+#     <eco>-<package>-v<version>     e.g. rust-vaid-pop-v0.2.2
+#                                         python-vaid-mint-v0.5.1
+#                                         npm-vaid-client-v0.3.1
+#
+# The legacy ecosystem-only form (`rust-v0.5.0`, `npm-v0.5.0`) is NOT accepted here.
+# It cannot say which package it releases — the original unprefixed `v0.1.2` tagged
+# a Rust release at a commit where Python was still 0.1.1 — and the ambiguity is
+# real in this repo's history: `npm-v0.3.0` published three packages while
+# `npm-v0.5.0` published one. verify-package-versions.mjs still RESOLVES the legacy
+# forms so existing tags stay auditable; only new releases are constrained.
+#
+# ORDER (CONTRIBUTING): merge -> tag -> publish -> verify from a clean install ->
+# then the capabilities manifest-flip PR. The manifest flip is NOT automated here:
+# `shipped` is a human claim about what a release means, and ADR-0002 exists because
+# that claim was once made ahead of the artifact.
+#
+# SECRETS required in the `release` environment:
+#   CARGO_REGISTRY_TOKEN   crates.io  — scope: publish-update
+#   PYPI_API_TOKEN         PyPI       — project-scoped token
+#   NPM_TOKEN              npm        — automation token, publish rights
+# The `release` environment is the human gate: configure it with required reviewers
+# so a tag push alone cannot publish. A tag is cheap to create and impossible to
+# un-publish.
+#
+# NOT ENABLED, deliberately: npm provenance (`--provenance`) needs a public repo and
+# id-token: write. Turn it on when the repo goes public; leaving it off is a smaller
+# lie than a provenance attestation that silently fails to generate.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "rust-*-v*"
+      - "python-*-v*"
+      - "npm-*-v*"
+
+# Read-only by default. No job here writes to the repository; publishing is
+# authenticated by registry tokens, not by GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Two tags racing to publish the same package would interleave publish and
+# verification. Serialize; never cancel a run that may already have published.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. resolve ────────────────────────────────────────────────────────────
+  # Parse the tag into (ecosystem, package, version, directory) and refuse
+  # anything ambiguous. Fails CLOSED: an unparseable tag publishes nothing.
+  resolve:
+    name: Resolve tag -> package
+    runs-on: ubuntu-latest
+    outputs:
+      eco: ${{ steps.parse.outputs.eco }}
+      pkg: ${{ steps.parse.outputs.pkg }}
+      version: ${{ steps.parse.outputs.version }}
+      dir: ${{ steps.parse.outputs.dir }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Parse the release tag
+        id: parse
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^(rust|python|npm)-([a-z0-9][a-z0-9-]*)-v([0-9]+\.[0-9]+\.[0-9]+.*)$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form <eco>-<package>-v<version>."
+            echo "::error::The ecosystem-only form (rust-v0.5.0) cannot say WHICH package it releases and is rejected for new releases."
+            exit 1
+          fi
+          ECO="${BASH_REMATCH[1]}"; PKG="${BASH_REMATCH[2]}"; VERSION="${BASH_REMATCH[3]}"
+          case "$ECO" in
+            rust)   DIR="crates/$PKG" ;;
+            python) DIR="python/$PKG" ;;
+            npm)    DIR="typescript/$PKG" ;;
+          esac
+          if [[ ! -d "$DIR" ]]; then
+            echo "::error::Tag '$TAG' resolves to '$DIR', which does not exist."
+            exit 1
+          fi
+          { echo "eco=$ECO"; echo "pkg=$PKG"; echo "version=$VERSION"; echo "dir=$DIR"; } >> "$GITHUB_OUTPUT"
+          echo "Releasing $PKG $VERSION to $ECO from $DIR"
+
+  # ── 2. preflight ──────────────────────────────────────────────────────────
+  # Everything that must be true BEFORE anything becomes permanent. A publish is
+  # irreversible in practice (yanking is not deletion), so every cheap check runs
+  # first. Deliberately re-runs the repo's own verifiers rather than trusting that
+  # CI passed on the commit: a tag can point anywhere.
+  preflight:
+    name: Preflight (manifest == tag, self-consistency, conformance)
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # verify-package-versions.mjs and verify-vector-freeze.mjs both resolve
+          # release tags; a shallow, tagless checkout makes them fail closed.
+          fetch-depth: 0
+
+      - name: Assert the manifest version equals the tag version
+        env:
+          DIR: ${{ needs.resolve.outputs.dir }}
+          ECO: ${{ needs.resolve.outputs.eco }}
+          PKG: ${{ needs.resolve.outputs.pkg }}
+          WANT: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          case "$ECO" in
+            rust)   GOT=$(sed -n '/^\[package\]/,/^\[/p' "$DIR/Cargo.toml"    | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -1) ;;
+            python) GOT=$(sed -n '/^\[project\]/,/^\[/p' "$DIR/pyproject.toml" | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -1) ;;
+            npm)    GOT=$(node -p "require('./$DIR/package.json').version") ;;
+          esac
+          echo "tag=$WANT manifest=$GOT"
+          if [[ "$GOT" != "$WANT" ]]; then
+            echo "::error::Tag says $WANT but $DIR manifest says $GOT — the tag is on the wrong commit, or the bump never landed."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+
+      # Local and offline: a package that contradicts ITSELF makes every downstream
+      # answer meaningless, so this runs before anything touching the network.
+      - name: Verify the package agrees with itself (manifest / code constant / changelog)
+        run: node scripts/verify-internal-versions.mjs
+
+      - name: Verify frozen vectors have not moved under a released version
+        run: node scripts/verify-vector-freeze.mjs
+
+      # Advisory. Printed so the release log records the skew this release creates
+      # or resolves; it cannot fail the release.
+      - name: Report cross-language version skew (advisory)
+        run: node scripts/verify-crosslang-parity.mjs
+
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        if: needs.resolve.outputs.eco == 'rust'
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: cargo test --workspace --locked
+        if: needs.resolve.outputs.eco == 'rust'
+        run: cargo test --workspace --locked
+      # `cargo publish --dry-run` packages the crate exactly as the real publish
+      # would, catching packaging exclusions — a file present in the tree but
+      # missing from the .crate — before they become permanent.
+      - name: cargo publish --dry-run
+        if: needs.resolve.outputs.eco == 'rust'
+        run: cargo publish --locked --dry-run -p ${{ needs.resolve.outputs.pkg }}
+
+      - name: Set up Python
+        if: needs.resolve.outputs.eco == 'python'
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: pytest for the package being released
+        if: needs.resolve.outputs.eco == 'python'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build twine
+          python -m pip install "./python/vaid-pop[test]"
+          python -m pip install "./${{ needs.resolve.outputs.dir }}[test]"
+          python -m pytest "${{ needs.resolve.outputs.dir }}"
+
+      - name: npm build + test
+        if: needs.resolve.outputs.eco == 'npm'
+        run: |
+          set -euo pipefail
+          npm ci --prefix typescript
+          npm run build --prefix typescript
+          npm test --prefix typescript
+
+  # ── 3. publish ────────────────────────────────────────────────────────────
+  # The only irreversible job. Gated on the `release` environment so a human
+  # approves. `set -euo pipefail` everywhere: a publish command that fails must
+  # fail the step, not scroll past.
+  publish:
+    name: Publish to ${{ needs.resolve.outputs.eco }}
+    needs: [resolve, preflight]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        if: needs.resolve.outputs.eco == 'rust'
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: cargo publish
+        if: needs.resolve.outputs.eco == 'rust'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          cargo publish --locked -p ${{ needs.resolve.outputs.pkg }}
+
+      - name: Set up Python
+        if: needs.resolve.outputs.eco == 'python'
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: build sdist+wheel and twine upload
+        if: needs.resolve.outputs.eco == 'python'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip build twine
+          rm -rf "${{ needs.resolve.outputs.dir }}/dist"
+          python -m build --outdir "${{ needs.resolve.outputs.dir }}/dist" "${{ needs.resolve.outputs.dir }}"
+          twine check "${{ needs.resolve.outputs.dir }}"/dist/*
+          twine upload "${{ needs.resolve.outputs.dir }}"/dist/*
+
+      - name: Set up Node
+        if: needs.resolve.outputs.eco == 'npm'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: npm publish
+        if: needs.resolve.outputs.eco == 'npm'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm ci --prefix typescript
+          npm run build --prefix typescript
+          npm publish --access public --workspace ${{ needs.resolve.outputs.pkg }} --prefix typescript
+
+  # ── 4. verify the PUBLISHED artifact ──────────────────────────────────────
+  # CONTRIBUTING: "Verify the published artifact from a clean install — not from the
+  # source tree." Testing the source tree cannot catch this class of defect. In the
+  # repo, siblings resolve by path and the dev environment already has every
+  # dependency at a working version; a consumer gets neither. vaid-mint 0.3.0
+  # declared vaid-pop>=0.1.0 while its console script imported verify_signed_payload,
+  # which does not exist until vaid-pop 0.2.0 — every in-repo test passed, and a
+  # fresh install would have produced a console script that died on ImportError.
+  #
+  # So this installs BY NAME AND VERSION from the registry, in an empty environment,
+  # and runs the packaged conformance firewall — which reproduces the frozen digests
+  # from the INSTALLED artifact.
+  verify-artifact:
+    name: Verify published artifact from a clean install
+    needs: [resolve, publish]
+    runs-on: ubuntu-latest
+    steps:
+      # Registries are read-after-write eventually consistent; a fresh version is
+      # not instantly resolvable. Retry rather than fail a good release.
+      - name: Wait for the new version to be resolvable
+        env:
+          ECO: ${{ needs.resolve.outputs.eco }}
+          PKG: ${{ needs.resolve.outputs.pkg }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          case "$ECO" in
+            rust)   URL="https://crates.io/api/v1/crates/$PKG/$V" ;;
+            python) URL="https://pypi.org/pypi/$PKG/$V/json" ;;
+            npm)    URL="https://registry.npmjs.org/$PKG/$V" ;;
+          esac
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -A 'solara-vaid-release' "$URL" || echo 000)
+            if [[ "$code" == "200" ]]; then echo "resolvable after ${i} attempt(s)"; exit 0; fi
+            echo "attempt $i: HTTP $code — waiting"; sleep 10
+          done
+          echo "::error::$PKG $V never became resolvable on $ECO after 5 minutes. The publish step reported success — investigate before re-running."
+          exit 1
+
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        if: needs.resolve.outputs.eco == 'rust'
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      # No checkout: this must build against the REGISTRY artifact, with no source
+      # tree in scope. `cargo install` of the conformance binary is the closest
+      # thing to what a consumer does.
+      - name: Clean-install from crates.io and run the packaged firewall
+        if: needs.resolve.outputs.eco == 'rust'
+        env:
+          PKG: ${{ needs.resolve.outputs.pkg }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$PKG" == "vaid-pop" || "$PKG" == "vaid-mint" ]]; then
+            cargo install "$PKG" --version "$V" --locked --root "$RUNNER_TEMP/vi" --bin "$PKG-conformance"
+            "$RUNNER_TEMP/vi/bin/$PKG-conformance"
+          else
+            # No packaged firewall (vaid-client ships none): prove it at least
+            # RESOLVES and COMPILES as a fresh dependency, which is what caught the
+            # vaid-mint 0.3.0 dependency-floor defect.
+            cargo new "$RUNNER_TEMP/consumer" --name consumer
+            cd "$RUNNER_TEMP/consumer"
+            cargo add "$PKG@=$V"
+            cargo build
+          fi
+
+      - name: Set up Python
+        if: needs.resolve.outputs.eco == 'python'
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Clean-venv install from PyPI and run the packaged firewall
+        if: needs.resolve.outputs.eco == 'python'
+        env:
+          PKG: ${{ needs.resolve.outputs.pkg }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/verify"
+          # Deliberately NOT --no-deps: resolving the real dependency graph from the
+          # registry is the whole point. A wrong floor only shows up here.
+          "$RUNNER_TEMP/verify/bin/pip" install --quiet "$PKG==$V"
+          if [[ -x "$RUNNER_TEMP/verify/bin/$PKG-conformance" ]]; then
+            "$RUNNER_TEMP/verify/bin/$PKG-conformance"
+          else
+            echo "::error::$PKG $V installed but shipped no $PKG-conformance entry point — the packaged firewall is the published-first evaluation path."
+            exit 1
+          fi
+
+      - name: Set up Node
+        if: needs.resolve.outputs.eco == 'npm'
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Clean-install from npm and run the packaged firewall
+        if: needs.resolve.outputs.eco == 'npm'
+        env:
+          PKG: ${{ needs.resolve.outputs.pkg }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/verify" && cd "$RUNNER_TEMP/verify"
+          npm init -y >/dev/null
+          npm install "$PKG@$V"
+          "./node_modules/.bin/$PKG-conformance"
+
+  # ── 5. the gate ───────────────────────────────────────────────────────────
+  # THE PROPERTY, made explicit. `if: always()` means this runs even when an
+  # upstream job failed, was cancelled, or was skipped — and it fails unless every
+  # one of them SUCCEEDED. Without it, a cancelled verify-artifact leaves a run
+  # that published something and reported no failure, which is exactly the silent
+  # partial release this workflow exists to make impossible.
+  #
+  # Make this the required status check for releases, not `publish`.
+  release-complete:
+    name: Release complete (fails on any partial)
+    needs: [resolve, preflight, publish, verify-artifact]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert every stage succeeded
+        env:
+          RESULTS: >-
+            resolve=${{ needs.resolve.result }}
+            preflight=${{ needs.preflight.result }}
+            publish=${{ needs.publish.result }}
+            verify-artifact=${{ needs.verify-artifact.result }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          for kv in $RESULTS; do
+            if [[ "${kv#*=}" != "success" ]]; then
+              echo "::error::PARTIAL RELEASE — stage '${kv%%=*}' finished as '${kv#*=}'."
+              echo "::error::If 'publish' succeeded, the artifact is ALREADY on the registry and cannot be un-published; a version number is burned. Check the registry state by hand before re-tagging."
+              exit 1
+            fi
+          done
+          echo "✓ ${{ github.ref_name }} — published and verified from a clean install."
