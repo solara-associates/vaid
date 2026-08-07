@@ -1,6 +1,6 @@
 {
   "name": "vaid-mint",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "The open, self-hostable reference mint (TypeScript) for the VAID standard: mint a root VAID and mint attenuated child VAIDs (scope/capability-contained delegation), byte-identical to the Rust and Python mints.",
   "keywords": [
     "synthera",

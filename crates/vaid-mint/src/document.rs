@@ -123,6 +123,20 @@ pub struct Vaid {
     /// visible. See ADR-0004 for why that failure mode, not circularity, is the
     /// reason the key itself is not embedded.
     kernel_key_thumbprint: String,
+    /// Every field of the presented document this struct does not name.
+    ///
+    /// A verifier MUST canonicalize the bytes it was PRESENTED, not its own
+    /// projection of them. Without this map, serde's default
+    /// ignore-unknown-fields silently discarded any additive extension before
+    /// [`canonical_vaid_signing_bytes`] ran, so this implementation hashed a
+    /// document nobody sent and returned a verdict about it. See ADR-0006.
+    ///
+    /// `flatten` puts these back at the top level on serialize, so the canonical
+    /// bytes reproduce the presented key set exactly. A document minted here has
+    /// an empty map and is byte-identical to one minted before this existed —
+    /// `mint_v1.json` is unaffected.
+    #[serde(flatten)]
+    unknown_fields: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl Vaid {
@@ -164,6 +178,7 @@ impl Vaid {
             capability_set,
             trust_domain,
             kernel_key_thumbprint,
+            unknown_fields: std::collections::BTreeMap::new(),
         }
     }
 
@@ -221,6 +236,14 @@ impl Vaid {
     }
     pub fn kernel_key_thumbprint(&self) -> &str {
         &self.kernel_key_thumbprint
+    }
+    /// Members of the presented document this type does not name, preserved so
+    /// canonicalization covers the bytes as presented (ADR-0006). Empty for any
+    /// document this crate minted. Exposed read-only so a caller can SEE an
+    /// extension it does not understand and decide what to do about it, rather
+    /// than being unable to tell one was there.
+    pub fn unknown_fields(&self) -> &std::collections::BTreeMap<String, serde_json::Value> {
+        &self.unknown_fields
     }
 
     /// True once past `expires_at`.
