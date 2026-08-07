@@ -183,7 +183,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "A third conforming implementation in TypeScript \u2014 minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. Published on npm at 0.3.0 (vaid-pop, vaid-mint, vaid-client); each ships a packaged conformance firewall \u2014 `npx -p vaid-mint vaid-mint-conformance` and the two siblings \u2014 which reproduces the frozen digests from the INSTALLED package, so a consumer can check the artifact they actually received rather than trusting this claim.",
+      "status_text": "A third conforming implementation in TypeScript \u2014 minting with attenuation, public-key VAID verification, request proof-of-possession, and the three-state revocation seam. It reproduces all five frozen conformance vectors byte-for-byte in CI alongside Rust and Python. Published on npm (vaid-pop, vaid-mint, vaid-client), landing at 0.3.0 \u2014 the version this capability LANDED IN, not an install instruction: the three packages version independently and have moved since (vaid-mint is 0.5.0 as of 2026-08-07). What you get installing today is registry-checked separately and must never be sourced from this file. Each ships a packaged conformance firewall \u2014 `npx -p vaid-mint vaid-mint-conformance` and the two siblings \u2014 which reproduces the frozen digests from the INSTALLED package, so a consumer can check the artifact they actually received rather than trusting this claim.",
       "blocked_on": null
     },
     {
