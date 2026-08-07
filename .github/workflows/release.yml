@@ -43,9 +43,30 @@
 # so a tag push alone cannot publish. A tag is cheap to create and impossible to
 # un-publish.
 #
-# NOT ENABLED, deliberately: npm provenance (`--provenance`) needs a public repo and
-# id-token: write. Turn it on when the repo goes public; leaving it off is a smaller
-# lie than a provenance attestation that silently fails to generate.
+# NPM PROVENANCE IS ENABLED (`--provenance`). It publishes a signed, public
+# attestation binding each npm tarball to the workflow, repository and commit that
+# produced it, verifiable by anyone via `npm audit signatures` and shown as a
+# "Built and signed on GitHub Actions" badge on npmjs.com.
+#
+# It is worth having here specifically because this repo's product claim is that a
+# consumer can check the artifact they received rather than trust a README. The
+# packaged conformance firewalls prove an artifact BEHAVES correctly; provenance
+# proves WHERE IT CAME FROM. Neither substitutes for the other: a firewall cannot
+# tell you a tarball was built from this repo, and an attestation cannot tell you
+# the bytes reproduce the frozen vectors.
+#
+# Preconditions, all currently met — re-check before assuming this still works:
+#   · the repository is PUBLIC (solara-associates/vaid)          — required
+#   · each package.json `repository.url` matches the repo         — required, verified
+#   · the job has `id-token: write`                               — set on `publish`
+#   · npm >= 9.5.0                                                — node 22 ships npm 10
+# If any of these stops holding, `npm publish` FAILS rather than silently omitting
+# the attestation — which is the behaviour we want, and the reason this is safe to
+# leave on. A provenance flag that quietly no-ops would be worse than none.
+#
+# NOT ENABLED: Rust and Python have no equivalent here. crates.io has no provenance
+# mechanism, and PyPI attestations need Trusted Publishing (OIDC) instead of the
+# API token this workflow uses — a separate change, deliberately not bundled.
 
 name: Release
 
@@ -207,6 +228,14 @@ jobs:
     needs: [resolve, preflight]
     runs-on: ubuntu-latest
     environment: release
+    # Overrides the workflow-level `contents: read` for this job only, so the
+    # OIDC token that signs npm provenance is mintable HERE and nowhere else in
+    # this workflow. `contents: read` is restated because a job-level block
+    # replaces the workflow-level one rather than merging with it — omitting it
+    # would drop checkout's read access.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -256,7 +285,9 @@ jobs:
           set -euo pipefail
           npm ci --prefix typescript
           npm run build --prefix typescript
-          npm publish --access public --workspace ${{ needs.resolve.outputs.pkg }} --prefix typescript
+          # --provenance: see the header. Fails loudly if its preconditions stop
+          # holding, rather than publishing an unattested tarball.
+          npm publish --provenance --access public --workspace ${{ needs.resolve.outputs.pkg }} --prefix typescript
 
   # ── 4. verify the PUBLISHED artifact ──────────────────────────────────────
   # CONTRIBUTING: "Verify the published artifact from a clean install — not from the
@@ -364,6 +395,10 @@ jobs:
           npm init -y >/dev/null
           npm install "$PKG@$V"
           "./node_modules/.bin/$PKG-conformance"
+          # Prove the provenance attestation actually LANDED, from the consumer
+          # side, rather than trusting that --provenance did something. This is
+          # the same command a consumer runs. An unattested publish fails here.
+          npm audit signatures
 
   # ── 5. the gate ───────────────────────────────────────────────────────────
   # THE PROPERTY, made explicit. `if: always()` means this runs even when an
