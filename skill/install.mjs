@@ -45,14 +45,30 @@ const only = (() => {
 if (has('--help') || has('-h')) {
   process.stdout.write(`vaid-skill-install — register the VAID skill with your coding agent.
 
-  npx vaid-skill-install                install into every agent detected here
-  npx vaid-skill-install --global       install into your home directory, not this project
-  npx vaid-skill-install --agent claude install into one agent only
-  npx vaid-skill-install --dry-run      print the plan and change nothing
+  npx vaid-skill                install into every agent detected here
+  npx vaid-skill --global       install into your home directory, not this project
+  npx vaid-skill --agent claude install into one agent only
+  npx vaid-skill --dry-run      print the plan and change nothing
 
   agents: claude, codex, cursor, gemini, copilot
 `);
   process.exit(0);
+}
+
+// `npx vaid-skill` is the installer and `npx -p vaid-skill vaid` is the CLI, which
+// are one keystroke apart. A stray verb here used to be ignored, so `npx vaid-skill
+// verify <envelope>` would cheerfully install the skill and report success while
+// verifying nothing. Refuse instead, and say where the verb belongs.
+const VERBS = new Set(['mint', 'present', 'verify', 'revoke']);
+const stray = args.find((a) => VERBS.has(a));
+if (stray) {
+  process.stderr.write(
+    `\nvaid-skill-install: \`${stray}\` is a CLI verb, not an installer flag.\n\n` +
+      `  This command installs the skill into your agents. To run the CLI:\n\n` +
+      `      npx -p vaid-skill vaid ${args.join(' ')}\n\n` +
+      `  (\`npx <name>\` resolves <name> as a package, so -p is what reaches the \`vaid\` bin.)\n\n`,
+  );
+  process.exit(2);
 }
 
 const body = readFileSync(SKILL_MD, 'utf8');
@@ -176,7 +192,7 @@ if (installed === 0) {
   process.stdout.write(
     `  No agent directories found under ${root}.\n` +
       `  Run from a project that has one, use --global, or force one with --agent <name>.\n` +
-      `  The CLI works regardless:  npx vaid --help\n\n`,
+      `  The CLI works regardless:  npx -p vaid-skill vaid --help\n\n`,
   );
   process.exit(1);
 }

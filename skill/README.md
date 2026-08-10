@@ -5,16 +5,19 @@ revoke short-lived, cryptographically signed agent credentials from Claude Code,
 Codex, Cursor, Gemini CLI or Copilot — or from a plain terminal.
 
 ```bash
-npx vaid mint --class orchestrator --tenant acme --scope data.acme --caps read --ttl 24
-npx vaid verify 'vaid1:eyJ2IjoxL…'
+npx -p vaid-skill vaid mint --class orchestrator --tenant acme --caps read --ttl 24
+npx -p vaid-skill vaid verify 'vaid1:eyJ2IjoxL…'
 ```
+
+(`npx <name>` resolves `<name>` as a **package**, so reaching a bin whose name is
+not the package name needs `-p`. Once installed, it is just `vaid`.)
 
 Install into whichever agents you have:
 
 ```bash
-npx vaid-skill-install          # this project
-npx vaid-skill-install --global # your home directory
-npx vaid-skill-install --dry-run
+npx vaid-skill            # install into every agent detected here
+npx vaid-skill --global   # your home directory instead of this project
+npx vaid-skill --dry-run  # print the plan, change nothing
 ```
 
 ## What a VAID is
@@ -65,7 +68,7 @@ printf '%s' "$b" | base64 -d | jq .
 The recipient can check it three ways, needing nothing from us for any of them:
 
 1. <https://solara.associates/vaid/verify> — fully client-side; works offline.
-2. `npx vaid verify '<the line>'`
+2. `npx -p vaid-skill vaid verify '<the line>'`
 3. Any implementation of the standard.
 
 ## What `verify` establishes

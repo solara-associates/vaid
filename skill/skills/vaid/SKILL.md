@@ -29,9 +29,13 @@ There are exactly four, and there is no fifth.
 | `revoke` | mark a VAID revoked **on this machine only** — read the warning below |
 
 ```bash
-npx vaid mint --class orchestrator --tenant acme --scope data.acme --caps read,write --ttl 24
-npx vaid verify 'vaid1:eyJ2IjoxL…'
+npx -p vaid-skill vaid mint --class orchestrator --tenant acme --caps read,write --ttl 24
+npx -p vaid-skill vaid verify 'vaid1:eyJ2IjoxL…'
 ```
+
+`npx <name>` resolves `<name>` as a **package**, so `-p vaid-skill` is what makes
+the `vaid` bin reachable without a local install. Once installed it is just
+`vaid …`, and `npx vaid-skill` runs the installer.
 
 ## When to use this
 
@@ -123,7 +127,7 @@ The recipient can check it three ways, and needs nothing from us for any of them
 
 1. Paste it into <https://solara.associates/vaid/verify> — a fully client-side
    page. Nothing is uploaded; it verifies with the network off.
-2. `npx vaid verify '<the line>'`
+2. `npx -p vaid-skill vaid verify '<the line>'`
 3. Any implementation of the standard, in Rust, Python or TypeScript.
 
 **Two channels, not one.** For a VAID minted by your own local issuer, the

@@ -2,6 +2,37 @@
 
 All notable changes to `vaid-skill`. This project follows semantic versioning.
 
+## 0.1.2 — 2026-08-10
+
+### Fixed
+
+- **`npx vaid-skill-install` never worked.** It was the first command in 0.1.0's and
+  0.1.1's README, and it 404s. `npx <name>` resolves `<name>` as a **package** and
+  then runs the bin matching it; there is no package called `vaid-skill-install`, so
+  npx failed before reaching the bin. It only ever worked for someone who had
+  already installed the package locally — that is, never for a first-time reader,
+  which is the only reader that command is for.
+
+  **`npx vaid-skill` is now the installer.** The package name is the only
+  single-token form npx can resolve, and "npx *package*" reading as "set up
+  *package*" is what the command looked like it meant all along. The
+  `vaid-skill-install` bin is kept as an explicit alias for local installs.
+
+- **The CLI needs `-p` over npx**, for the same reason: `npx -p vaid-skill vaid …`.
+  Every documented invocation is corrected, including the one `vaid mint` prints
+  when it tells you how the recipient can check what you just sent.
+
+- **The installer refuses a stray CLI verb.** `npx vaid-skill` and
+  `npx -p vaid-skill vaid` are one flag apart, so `npx vaid-skill verify <envelope>`
+  used to install the skill and report success while verifying nothing. It now exits
+  2 and prints the command the reader meant.
+
+### Not changed
+
+Verification, minting, the envelope format and the trust anchor are untouched.
+`src/verify-core.mjs`, `src/envelope.mjs`, `src/delegate.mjs`, `src/store.mjs` and
+`trust-anchor.json` are byte-identical to 0.1.1.
+
 ## 0.1.1 — 2026-08-10
 
 ### Fixed
