@@ -358,20 +358,6 @@ jobs:
       # the same rules — so a publish that cannot even FIND its package fails here
       # rather than after a tag, an approval, and a burned version number. The
       # absence of this step is why `npm publish --prefix` reached production.
-      - name: npm publish --dry-run (packages exactly as the real publish will)
-        if: needs.resolve.outputs.eco == 'npm'
-        env:
-          WS: ${{ needs.resolve.outputs.ws }}
-          DIR: ${{ needs.resolve.outputs.dir }}
-          PKG: ${{ needs.resolve.outputs.pkg }}
-        run: |
-          set -euo pipefail
-          if [[ -n "$WS" ]]; then
-            npm publish --dry-run --access public --workspace "$PKG" --prefix "$WS"
-          else
-            ( cd "$DIR" && npm publish --dry-run --access public )
-          fi
-
       - name: Set up Python
         if: needs.resolve.outputs.eco == 'python'
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
@@ -517,25 +503,7 @@ jobs:
             cargo build
           fi
 
-      # The npm mirror of `cargo publish --dry-run` above. It resolves and packages
       # the package exactly as the real publish will — from the same directory, by
-      # the same rules — so a publish that cannot even FIND its package fails here
-      # rather than after a tag, an approval, and a burned version number. The
-      # absence of this step is why `npm publish --prefix` reached production.
-      - name: npm publish --dry-run (packages exactly as the real publish will)
-        if: needs.resolve.outputs.eco == 'npm'
-        env:
-          WS: ${{ needs.resolve.outputs.ws }}
-          DIR: ${{ needs.resolve.outputs.dir }}
-          PKG: ${{ needs.resolve.outputs.pkg }}
-        run: |
-          set -euo pipefail
-          if [[ -n "$WS" ]]; then
-            npm publish --dry-run --access public --workspace "$PKG" --prefix "$WS"
-          else
-            ( cd "$DIR" && npm publish --dry-run --access public )
-          fi
-
       - name: Set up Python
         if: needs.resolve.outputs.eco == 'python'
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
