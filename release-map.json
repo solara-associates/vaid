@@ -1,0 +1,37 @@
+{
+  "$comment": "Where each releasable package LIVES, and how to publish and verify it. Read by .github/workflows/release.yml. This file exists because the workflow used to derive the directory from the ECOSYSTEM alone (npm -> typescript/<pkg>), which is a property of the layout rather than of the package — so the first npm package that lived somewhere else, `vaid-skill` at skill/, could not be released at all and was published by hand three times. See BACKLOG B2. Adding a package in a new location is now one entry here, not a workflow edit.",
+  "version": 1,
+  "packages": {
+    "rust/vaid-pop": { "dir": "crates/vaid-pop" },
+    "rust/vaid-client": { "dir": "crates/vaid-client" },
+    "rust/vaid-mint": { "dir": "crates/vaid-mint" },
+
+    "python/vaid-pop": { "dir": "python/vaid-pop" },
+    "python/vaid-mint": { "dir": "python/vaid-mint" },
+    "python/vaid-langchain": { "dir": "python/vaid-langchain" },
+
+    "npm/vaid-pop": {
+      "dir": "typescript/vaid-pop",
+      "npm_workspace_root": "typescript",
+      "verify_bin": "vaid-pop-conformance"
+    },
+    "npm/vaid-client": {
+      "dir": "typescript/vaid-client",
+      "npm_workspace_root": "typescript",
+      "verify_bin": "vaid-client-conformance"
+    },
+    "npm/vaid-mint": {
+      "dir": "typescript/vaid-mint",
+      "npm_workspace_root": "typescript",
+      "verify_bin": "vaid-mint-conformance"
+    },
+    "npm/vaid-skill": {
+      "$why_no_workspace": "vaid-skill depends on the PUBLISHED vaid-mint and vaid-pop rather than on this repo's sources, so it breaks when what users actually install breaks rather than when main moves. Workspace membership would resolve those dependencies locally and destroy exactly that property, so it is published from its own directory.",
+      "dir": "skill",
+      "npm_workspace_root": null,
+      "$why_no_verify_bin": "It ships no conformance firewall because it implements no cryptography — the byte-identity it would assert belongs to vaid-mint, which has its own. What IS worth proving from a clean consumer install is that the documented commands run, so `verify_cmd` runs the installed CLI rather than a conformance binary.",
+      "verify_bin": null,
+      "verify_cmd": "./node_modules/.bin/vaid --version && ./node_modules/.bin/vaid --help && ./node_modules/.bin/vaid verify 'not a vaid'; test $? -eq 4"
+    }
+  }
+}

@@ -100,6 +100,9 @@ jobs:
       pkg: ${{ steps.parse.outputs.pkg }}
       version: ${{ steps.parse.outputs.version }}
       dir: ${{ steps.parse.outputs.dir }}
+      ws: ${{ steps.parse.outputs.ws }}
+      verify_bin: ${{ steps.parse.outputs.verify_bin }}
+      verify_cmd: ${{ steps.parse.outputs.verify_cmd }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -116,17 +119,41 @@ jobs:
             exit 1
           fi
           ECO="${BASH_REMATCH[1]}"; PKG="${BASH_REMATCH[2]}"; VERSION="${BASH_REMATCH[3]}"
-          case "$ECO" in
-            rust)   DIR="crates/$PKG" ;;
-            python) DIR="python/$PKG" ;;
-            npm)    DIR="typescript/$PKG" ;;
-          esac
-          if [[ ! -d "$DIR" ]]; then
-            echo "::error::Tag '$TAG' resolves to '$DIR', which does not exist."
+
+          # Where a package lives is a property of the PACKAGE, not of its
+          # ecosystem. Deriving it from the ecosystem (npm -> typescript/<pkg>) is
+          # what made `vaid-skill` unreleasable and got it published by hand three
+          # times — see BACKLOG B2. release-map.json is the declaration; a package
+          # in a new location is one entry there rather than a workflow edit.
+          KEY="$ECO/$PKG"
+          if ! node -e "process.exit(require('./release-map.json').packages['$KEY']?0:1)"; then
+            echo "::error::Tag '$TAG' names $KEY, which is not in release-map.json."
+            echo "::error::Add it there — including its directory, whether it is an npm workspace member, and how to verify it from a clean install."
             exit 1
           fi
-          { echo "eco=$ECO"; echo "pkg=$PKG"; echo "version=$VERSION"; echo "dir=$DIR"; } >> "$GITHUB_OUTPUT"
-          echo "Releasing $PKG $VERSION to $ECO from $DIR"
+          DIR=$(node -p "require('./release-map.json').packages['$KEY'].dir")
+          WS=$(node -p "require('./release-map.json').packages['$KEY'].npm_workspace_root ?? ''")
+          VBIN=$(node -p "require('./release-map.json').packages['$KEY'].verify_bin ?? ''")
+          VCMD=$(node -p "require('./release-map.json').packages['$KEY'].verify_cmd ?? ''")
+
+          if [[ ! -d "$DIR" ]]; then
+            echo "::error::release-map.json puts $KEY at '$DIR', which does not exist."
+            exit 1
+          fi
+          # An npm package must say how a consumer checks it, or the verify job
+          # would silently check nothing — the failure mode that lets a bad publish
+          # look verified.
+          if [[ "$ECO" == "npm" && -z "$VBIN" && -z "$VCMD" ]]; then
+            echo "::error::$KEY declares neither verify_bin nor verify_cmd. A published artifact nobody checks is not a release."
+            exit 1
+          fi
+
+          {
+            echo "eco=$ECO"; echo "pkg=$PKG"; echo "version=$VERSION"; echo "dir=$DIR"
+            echo "ws=$WS"; echo "verify_bin=$VBIN"
+            echo "verify_cmd<<__VCMD__"; echo "$VCMD"; echo "__VCMD__"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $PKG $VERSION to $ECO from $DIR${WS:+ (workspace root $WS)}"
 
   # ── 2. preflight ──────────────────────────────────────────────────────────
   # Everything that must be true BEFORE anything becomes permanent. A publish is
@@ -213,11 +240,23 @@ jobs:
 
       - name: npm build + test
         if: needs.resolve.outputs.eco == 'npm'
+        env:
+          WS: ${{ needs.resolve.outputs.ws }}
+          DIR: ${{ needs.resolve.outputs.dir }}
         run: |
           set -euo pipefail
-          npm ci --prefix typescript
-          npm run build --prefix typescript
-          npm test --prefix typescript
+          # Workspace members build in dependency order through the workspace root.
+          # A standalone package (release-map.json `npm_workspace_root: null`)
+          # installs its own dependencies — for vaid-skill that means resolving the
+          # PUBLISHED SDKs from the registry, which is the property it exists to hold.
+          if [[ -n "$WS" ]]; then
+            npm ci --prefix "$WS"
+            npm run build --prefix "$WS"
+            npm test --prefix "$WS"
+          else
+            npm install --prefix "$DIR"
+            npm test --prefix "$DIR"
+          fi
 
   # ── 3. publish ────────────────────────────────────────────────────────────
   # The only irreversible job. Gated on the `release` environment so a human
@@ -281,13 +320,23 @@ jobs:
         if: needs.resolve.outputs.eco == 'npm'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          WS: ${{ needs.resolve.outputs.ws }}
+          DIR: ${{ needs.resolve.outputs.dir }}
+          PKG: ${{ needs.resolve.outputs.pkg }}
         run: |
           set -euo pipefail
-          npm ci --prefix typescript
-          npm run build --prefix typescript
           # --provenance: see the header. Fails loudly if its preconditions stop
-          # holding, rather than publishing an unattested tarball.
-          npm publish --provenance --access public --workspace ${{ needs.resolve.outputs.pkg }} --prefix typescript
+          # holding, rather than publishing an unattested tarball. It applies to
+          # both shapes below — provenance is a property of the publish, not of the
+          # layout.
+          if [[ -n "$WS" ]]; then
+            npm ci --prefix "$WS"
+            npm run build --prefix "$WS"
+            npm publish --provenance --access public --workspace "$PKG" --prefix "$WS"
+          else
+            npm install --prefix "$DIR"
+            npm publish --provenance --access public --prefix "$DIR"
+          fi
 
   # ── 4. verify the PUBLISHED artifact ──────────────────────────────────────
   # CONTRIBUTING: "Verify the published artifact from a clean install — not from the
@@ -389,12 +438,25 @@ jobs:
         env:
           PKG: ${{ needs.resolve.outputs.pkg }}
           V: ${{ needs.resolve.outputs.version }}
+          VBIN: ${{ needs.resolve.outputs.verify_bin }}
+          VCMD: ${{ needs.resolve.outputs.verify_cmd }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/verify" && cd "$RUNNER_TEMP/verify"
           npm init -y >/dev/null
           npm install "$PKG@$V"
-          "./node_modules/.bin/$PKG-conformance"
+          # How this package is checked from a clean consumer install is declared in
+          # release-map.json, because not every package ships a conformance firewall.
+          # `vaid-skill` implements no cryptography — the byte-identity a firewall
+          # would assert belongs to vaid-mint — so what is worth proving for it is
+          # that the DOCUMENTED COMMANDS run from what a stranger installs. `resolve`
+          # already refused a package declaring neither, so this cannot silently
+          # check nothing.
+          if [[ -n "$VBIN" ]]; then
+            "./node_modules/.bin/$VBIN"
+          else
+            bash -c "$VCMD"
+          fi
           # Prove the provenance attestation actually LANDED, from the consumer
           # side, rather than trusting that --provenance did something. This is
           # the same command a consumer runs. An unattested publish fails here.

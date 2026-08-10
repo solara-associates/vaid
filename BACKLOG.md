@@ -96,7 +96,13 @@ key, which reads like a trust-anchor failure and is not one. Hence the parity te
 
 ## B2 — the release workflow cannot release `vaid-skill`
 
-**Status:** open. `vaid-skill@0.1.0` was published **by hand** on 2026-08-10.
+**Status:** FIXED 2026-08-10 by `release-map.json` + `scripts/verify-release-map.mjs`.
+Three releases (0.1.0, 0.1.1, 0.1.2) were published **by hand** before the fix, and
+so carry no provenance attestation; 0.1.3 is the first released through the
+workflow. The history below is kept because the failure shape — deriving a
+package's location from its ecosystem — is worth recognising again.
+
+**Originally:** open. `vaid-skill@0.1.0` was published **by hand** on 2026-08-10.
 **Observed:** 2026-08-10, preparing that release.
 **Affects:** `.github/workflows/release.yml`.
 
@@ -161,5 +167,24 @@ The publish step also needs to stop assuming `--workspace`/`--prefix typescript`
 and publish from the resolved directory. Both changes are contained; neither
 touches frozen code.
 
-Until then: any `vaid-skill` release is manual, and the checks `release.yml` would
-have run must be run and recorded by hand.
+### What was done
+
+The first option. `release-map.json` declares, per package: its directory, whether
+it is an npm workspace member, and how a consumer verifies the published artifact.
+`resolve` reads it instead of a `case` on the ecosystem, and refuses a tag naming a
+package that is not in it — or an npm package that declares no way to be verified,
+because a published artifact nobody checks is not a release.
+
+`publish` no longer assumes `--workspace`/`--prefix typescript`: a workspace member
+publishes through its root, a standalone package publishes from its own directory.
+`verify-artifact` no longer assumes a `<pkg>-conformance` binary, which `vaid-skill`
+does not ship — it implements no cryptography, so the byte-identity a firewall would
+assert belongs to `vaid-mint`. What is worth proving for it is that the documented
+commands run from what a stranger installs, and that is what its `verify_cmd` does.
+
+`scripts/verify-release-map.mjs` keeps the map from becoming the next instance of
+this bug. It asserts both directions — every entry resolves to the package it names,
+and every publishable package found **in the tree** has an entry — because a list of
+things to check cannot notice something that was never added to it. It runs in CI, so
+a missing entry fails in the PR that adds the package rather than at tag time, after
+a bump and a changelog. Control-tested against all three failure shapes.
