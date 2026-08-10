@@ -70,9 +70,19 @@
 #   repository          vaid
 #   workflow filename   release.yml          (filename only, with extension)
 #   environment         release
-# A package without that configuration cannot be published by this workflow. As of
-# 2026-08-10 only `vaid-skill` is configured; vaid-pop, vaid-mint and vaid-client
-# each need their own entry before their next release.
+# A package without that configuration cannot be published by this workflow. All
+# four — vaid-skill, vaid-pop, vaid-mint, vaid-client — were configured 2026-08-10
+# with identical values (the form has no per-package field; `repository.directory`
+# in package.json is a provenance source-link hint and plays no part in matching).
+#
+# THE CONFIG CANNOT BE READ BACK FROM CI. `npm trust list` requires 2FA, so no step
+# here can assert a package's trusted publisher exists before relying on it. A
+# missing or wrong entry surfaces only at `npm publish`, as ENEEDAUTH — the same
+# error a too-old npm produces, which is why the version floor is asserted
+# separately above. If publish fails ENEEDAUTH on a run whose npm is >= 11.5.1,
+# check the trusted publisher for THAT package before suspecting anything else:
+#
+#   npx npm@11.19.0 trust list <package>      # 2FA; npm 11.15.0+ required
 #
 # Preconditions, all currently met — re-check before assuming this still works:
 #   · the repository is PUBLIC (solara-associates/vaid)          — required
