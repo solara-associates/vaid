@@ -1,6 +1,6 @@
 {
   "name": "vaid-skill",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent Skill for VAID (Verifiable Agent Identity): mint, present, verify and revoke agent credentials from Claude Code, Codex, Cursor, Gemini CLI and Copilot. A thin wrapper over the published vaid-mint SDK.",
   "keywords": [
     "vaid",
@@ -40,6 +40,7 @@
     ".claude-plugin",
     "trust-anchor.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
   ],
