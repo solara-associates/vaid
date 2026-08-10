@@ -55,7 +55,10 @@ scalar or a chat message — the four places it actually gets pasted. It is
 deliberately **not** compressed, so anyone can read it without our tooling:
 
 ```bash
-printf '%s' "${ENVELOPE#vaid1:}" | tr '_-' '/+' | base64 -d | jq .
+# base64url is unpadded and `base64 -d` requires padding, so add it back first.
+b=${ENVELOPE#vaid1:}; b=$(printf '%s' "$b" | tr '_-' '/+')
+while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done
+printf '%s' "$b" | base64 -d | jq .
 ```
 
 The recipient can check it three ways, needing nothing from us for any of them:
@@ -90,13 +93,18 @@ VAIDs from the Solara production substrate need none of this; that key is alread
 pinned in the anchor this package ships (`trust-anchor.json`, byte-checked against
 `docs/kernel-keys.json` in CI).
 
+`--trust` **persists** to `~/.vaid/trusted-keys.json`, so every later `vaid verify`
+on the machine accepts that issuer — a standing decision, not a one-off.
+`vaid verify --trusted` lists what the machine has accepted, and where each key
+came from, so it can be reviewed and withdrawn.
+
 ## Verbs
 
 | verb | |
 |---|---|
 | `vaid mint` | `--class --tenant --scope --caps --ttl --parent --json --quiet` |
 | `vaid present` | round-trips an envelope so a truncated paste fails here, not at the far end |
-| `vaid verify` | `--trust '<tp>=<key>' --at <rfc3339> --json`; exit 0 accepted, 1 rejected/expired, 4 malformed |
+| `vaid verify` | `--trust '<tp>=<key>' --trusted --at <rfc3339> --json`; exit 0 accepted, 1 rejected/expired, 4 malformed |
 | `vaid revoke` | `<vaid_id> --reason "…"` or `--list`; local only |
 
 State lives in `~/.vaid` (`VAID_HOME` to override). `issuer.json` is a private

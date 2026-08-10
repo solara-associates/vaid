@@ -101,8 +101,20 @@ and neither does the open standard. Shorten the TTL instead.
 `mint` prints a single-line `vaid1:` envelope. It is unpadded base64url of a JSON
 object holding the document and any presented ancestors — one token, no
 whitespace, safe in a URL, a shell argument, a YAML scalar or a chat message. It
-is deliberately not compressed, so anyone can `base64 -d` it and read the document
-without trusting our tooling.
+is deliberately not compressed, so anyone can decode it and read the document
+without trusting our tooling:
+
+```bash
+# base64url is unpadded and `base64 -d` requires padding, so add it back first.
+b=${ENVELOPE#vaid1:}; b=$(printf '%s' "$b" | tr '_-' '/+')
+while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done
+printf '%s' "$b" | base64 -d | jq .
+```
+
+(base64url is unpadded and `base64 -d` requires padding. Without the loop the
+command works only when the token length happens to be a multiple of 4 — which is
+worse than never working, because an intermittent failure reads as a problem with
+the credential rather than with the command.)
 
 The recipient can check it three ways, and needs nothing from us for any of them:
 
@@ -118,6 +130,14 @@ and the key down the same wire proves nothing: whoever can rewrite one can
 rewrite the other. `mint` prints the key as a `<thumbprint>=<key>` line for
 exactly this. (VAIDs minted by the Solara production substrate need none of
 this — that key is already pinned in the anchor this skill ships.)
+
+**`--trust` persists.** `vaid verify --trust '<tp>=<key>'` writes that key to
+`~/.vaid/trusted-keys.json` and leaves it there: every later `vaid verify` on the
+machine accepts that issuer, including runs with no `--trust` flag. That is a
+standing trust decision, not a one-off. `vaid verify --trusted` lists everything
+the machine has accepted and where it came from. The browser page keeps such keys
+for the session only — persistent suits a CLI whose whole job is repeated
+verification, session-only suits a page a stranger opens once.
 
 ## Agent guidance
 
