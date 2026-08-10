@@ -536,9 +536,16 @@ async function main() {
     out(`vaid-skill ${PKG.version} (vaid-mint ${PKG.dependencies['vaid-mint']})`);
     return;
   }
-  if (!verb || flags.help || verb === 'help') {
+  // Asking for help is not an error. `--help` and `help` exit 0; only a bare
+  // invocation with nothing to do is a usage error. These were conflated, so
+  // `vaid --help` exited 1 and broke any `vaid --help && …` a reader might write.
+  if (flags.help || verb === 'help') {
     out(USAGE);
-    process.exit(verb ? 0 : 1);
+    process.exit(0);
+  }
+  if (!verb) {
+    out(USAGE);
+    process.exit(1);
   }
 
   switch (verb) {

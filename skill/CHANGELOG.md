@@ -2,6 +2,26 @@
 
 All notable changes to `vaid-skill`. This project follows semantic versioning.
 
+## 0.1.3 — 2026-08-10
+
+### Fixed
+
+- **`vaid --help` exited 1.** Asking for help is not a usage error. A bare `vaid`
+  with nothing to do still exits 1; `--help` and `help` now exit 0, so a reader's
+  `vaid --help && …` no longer stops.
+
+### Added
+
+- **`test/documented-commands.sh`** — runs the commands in README.md and SKILL.md
+  **verbatim, through `npx`, against the published package**, from a clean HOME and
+  cache. This is the check that was missing: every earlier test invoked the program
+  through `node install.mjs` or `./node_modules/.bin`, so all of them passed while
+  the published instruction (`npx vaid-skill-install`) was unrunnable. It pins that
+  defect as a control, asserts `npx` without `-p` cannot reach the `vaid` bin, and
+  fails if a command appears in the docs without coverage here.
+
+  It found the `--help` bug above on its first run.
+
 ## 0.1.2 — 2026-08-10
 
 ### Fixed

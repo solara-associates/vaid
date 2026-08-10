@@ -1,6 +1,6 @@
 {
   "name": "vaid-skill",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Agent Skill for VAID (Verifiable Agent Identity): mint, present, verify and revoke agent credentials from Claude Code, Codex, Cursor, Gemini CLI and Copilot. A thin wrapper over the published vaid-mint SDK.",
   "keywords": [
     "vaid",
@@ -46,7 +46,8 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check:anchor": "node scripts/check-anchor.mjs"
+    "check:anchor": "node scripts/check-anchor.mjs",
+    "test:documented": "bash test/documented-commands.sh"
   },
   "$comment": "No postinstall hook, deliberately. This package's job is verifying credentials, so it does not get to run arbitrary code on install — an install-time script is exactly the supply-chain shape a security tool should not normalise.",
   "dependencies": {
