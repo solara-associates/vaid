@@ -91,3 +91,75 @@ each rediscover this the same way.
 A divergent shim is worth calling out as its own hazard: it does not crash. It
 computes a *wrong thumbprint*, so every VAID is rejected as signed by an unknown
 key, which reads like a trust-anchor failure and is not one. Hence the parity test.
+
+---
+
+## B2 — the release workflow cannot release `vaid-skill`
+
+**Status:** open. `vaid-skill@0.1.0` was published **by hand** on 2026-08-10.
+**Observed:** 2026-08-10, preparing that release.
+**Affects:** `.github/workflows/release.yml`.
+
+### What breaks
+
+`release.yml` resolves a tag to a directory by ecosystem alone:
+
+```bash
+case "$ECO" in
+  rust)   DIR="crates/$PKG" ;;
+  python) DIR="python/$PKG" ;;
+  npm)    DIR="typescript/$PKG" ;;
+esac
+```
+
+Every npm package is assumed to live at `typescript/<pkg>` and to be a member of
+the `typescript` workspace — the publish step is
+`npm publish --workspace <pkg> --prefix typescript`.
+
+`vaid-skill` lives at `skill/`. It is deliberately not in the `typescript`
+workspace: it depends on the **published** `vaid-mint` and `vaid-pop` from the
+registry rather than on this repo's sources, so that it breaks when what users
+actually install breaks, rather than when `main` moves. Being a workspace member
+would resolve those dependencies locally and destroy that property.
+
+So the tag `npm-vaid-skill-v0.1.0` resolves to `typescript/vaid-skill`, which does
+not exist, and the workflow exits at the resolve step:
+
+```
+::error::Tag 'npm-vaid-skill-v0.1.0' resolves to 'typescript/vaid-skill', which does not exist.
+```
+
+That is a correct refusal — the workflow declines rather than publishing something
+wrong — but the consequence is that this package has no automated release path.
+
+### Why the by-hand publish is a real cost, not a formality
+
+`release.yml` is not just a convenience. Its preflight re-runs the repo's own
+verifiers *on the tagged commit* precisely because "a tag can point anywhere", and
+its `release-complete` job uses `if: always()` so a partial publish exits
+non-zero. A manual `npm publish` has none of that: no manifest-equals-tag check,
+no self-consistency check, no post-publish verification that what landed on the
+registry is what was tagged.
+
+For 0.1.0 those were run by hand and recorded — the published tarball's
+`dist.shasum` `7c80c898…` was confirmed to reproduce exactly from `npm pack` at
+`b5e4f10`, and a clean install from the registry was exercised end to end. That is
+evidence for one release, not a property of the next one.
+
+### Fix shape
+
+Make the directory a property of the package rather than of the ecosystem. Either:
+
+- a small `release-map.json` at the repo root mapping `<eco>/<pkg>` → directory,
+  read by the resolve step, so a package in a new location is one entry rather
+  than a workflow edit; **or**
+- keep the `case` but let `npm` fall back to `skill/$PKG`-style lookup by scanning
+  known roots for a `package.json` whose `name` matches `$PKG` — the manifest
+  already states the name, so nothing new has to be kept in step.
+
+The publish step also needs to stop assuming `--workspace`/`--prefix typescript`
+and publish from the resolved directory. Both changes are contained; neither
+touches frozen code.
+
+Until then: any `vaid-skill` release is manual, and the checks `release.yml` would
+have run must be run and recorded by hand.
