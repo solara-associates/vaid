@@ -193,8 +193,13 @@ a bump and a changelog. Control-tested against all three failure shapes.
 
 ## B3 — the release workflow has no npm credential, and had never run
 
-**Status:** resolved by **npm Trusted Publishing (OIDC)** rather than by adding a
-token — the workflow now carries no npm credential at all. Kept because the way it
+**Status:** RESOLVED and **proven live 2026-08-10**. `vaid-skill` 0.1.3 published
+through the workflow with no npm credential anywhere; the registry records
+`_npmUser: "GitHub Actions"` and a SLSA provenance attestation whose subject digest
+equals the published tarball's, bound to this repository, `release.yml`,
+`refs/tags/npm-vaid-skill-v0.1.3` and commit `5f717a1`. Resolved by **npm Trusted
+Publishing (OIDC)** rather than by adding a token — the workflow carries no npm
+credential at all. Kept because the way it
 hid is worth recognising, and because the npm-version trap below will catch the next
 person.
 
