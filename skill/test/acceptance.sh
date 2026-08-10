@@ -70,12 +70,19 @@ printf '\n\033[1mACCEPTANCE TWO — the artifact can leave the machine\033[0m\n\
 # Anyone can read the document with no tooling from us. If this breaks, the
 # envelope has become opaque and the recipient is dependent on our software.
 #
-# The `=` padding loop is not incidental. base64url is UNPADDED, and `base64 -d`
-# rejects unpadded input — so the recipe without it works only when the token
-# length happens to be a multiple of 4. The envelope's length varies run to run
-# (the signature is an array of 1-to-3-digit numbers), so a recipe missing this
-# succeeds about a quarter of the time, which is far worse than always failing:
-# it reads as an intermittent bug in the credential rather than in the command.
+# The `=` padding loop is not incidental, and the reason is worse than it looks.
+# base64url is UNPADDED, and `base64 -d` does NOT reject unpadded input: it
+# accepts it and SILENTLY DROPS the final partial group, returning a document
+# short by one or two bytes, with no error and nothing on stderr. What comes back
+# is JSON missing its last brace — so the failure presents as "your credential is
+# invalid JSON" when the credential is perfectly intact and the command is wrong.
+#
+# Measured on this machine: without the padding loop, 27 of 40 freshly minted
+# envelopes decoded to truncated JSON. Envelope length varies run to run (the
+# signature is an array of 1-to-3-digit numbers), and only length ≡ 0 mod 4
+# survives — so it works often enough to look like an intermittent bug in the
+# credential rather than a constant bug in the instructions.
+#
 # This is the exact recipe printed in README.md and SKILL.md; keep them in step.
 B64=$(printf '%s' "${ROOT#vaid1:}" | tr '_-' '/+')
 while [ $(( ${#B64} % 4 )) -ne 0 ]; do B64="${B64}="; done

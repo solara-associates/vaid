@@ -105,16 +105,19 @@ is deliberately not compressed, so anyone can decode it and read the document
 without trusting our tooling:
 
 ```bash
-# base64url is unpadded and `base64 -d` requires padding, so add it back first.
+# base64url is unpadded. `base64 -d` does not reject unpadded input — it silently
+# drops the last partial group, handing back JSON short of its final brace. Pad first.
 b=${ENVELOPE#vaid1:}; b=$(printf '%s' "$b" | tr '_-' '/+')
 while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done
 printf '%s' "$b" | base64 -d | jq .
 ```
 
-(base64url is unpadded and `base64 -d` requires padding. Without the loop the
-command works only when the token length happens to be a multiple of 4 — which is
-worse than never working, because an intermittent failure reads as a problem with
-the credential rather than with the command.)
+(The padding loop matters more than it looks. base64url is unpadded, and
+`base64 -d` does **not** reject unpadded input — it accepts it and silently drops
+the final partial group, returning JSON short of its last brace, with no error and
+nothing on stderr. Without the loop the command only fully succeeds when the token
+length happens to be a multiple of 4, so the failure presents as *your credential
+is invalid JSON* when the credential is intact and the command is wrong.)
 
 The recipient can check it three ways, and needs nothing from us for any of them:
 

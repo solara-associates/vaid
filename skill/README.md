@@ -55,7 +55,8 @@ scalar or a chat message — the four places it actually gets pasted. It is
 deliberately **not** compressed, so anyone can read it without our tooling:
 
 ```bash
-# base64url is unpadded and `base64 -d` requires padding, so add it back first.
+# base64url is unpadded. `base64 -d` does not reject unpadded input — it silently
+# drops the last partial group, handing back JSON short of its final brace. Pad first.
 b=${ENVELOPE#vaid1:}; b=$(printf '%s' "$b" | tr '_-' '/+')
 while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done
 printf '%s' "$b" | base64 -d | jq .
