@@ -100,7 +100,29 @@ if (!jobs.has('verify-artifact')) {
   }
 }
 
-// 3. The dry-run gate belongs in preflight, exactly once.
+// 3. release-complete is only a gate if it runs when an upstream job did not.
+if (!jobs.has('release-complete')) {
+  problems.push('no `release-complete` job — a partial release would report no failure at all');
+} else {
+  const rc = body('release-complete');
+  if (!/if:\s*always\(\)/.test(rc)) {
+    problems.push(
+      '`release-complete` lacks `if: always()`. Without it the job is SKIPPED whenever an upstream job ' +
+        'fails or is cancelled — so the exact runs it exists to catch are the runs it does not run on, ' +
+        'and a release that published without verifying would report no failure.',
+    );
+  }
+  if (!/release-outcome\.mjs/.test(rc)) {
+    problems.push('`release-complete` does not run release-outcome.mjs — it would report that something failed without saying whether the artifact is live or whether anything checked it');
+  }
+  for (const need of ['resolve', 'preflight', 'publish', 'verify-artifact']) {
+    if (!new RegExp(`${need}=\\$\\{\\{\\s*needs\\.${need}\\.result`).test(rc)) {
+      problems.push(`\`release-complete\` does not pass ${need}'s result to the reporter — that stage's outcome would be invisible in the summary`);
+    }
+  }
+}
+
+// 4. The dry-run gate belongs in preflight, exactly once.
 const dryRunJobs = [...jobs.keys()].filter((j) => body(j).includes('npm publish --dry-run'));
 if (dryRunJobs.length !== 1 || dryRunJobs[0] !== 'preflight') {
   problems.push(
@@ -109,7 +131,7 @@ if (dryRunJobs.length !== 1 || dryRunJobs[0] !== 'preflight') {
   );
 }
 
-// 4. Anything that publishes needs an npm that can do OIDC.
+// 5. Anything that publishes needs an npm that can do OIDC.
 for (const j of [...jobs.keys()]) {
   const b = body(j);
   if (!/npm publish/.test(b)) continue;
