@@ -62,6 +62,35 @@ jobs:
       - name: node --test conformance suite (vaid-pop + vaid-mint + vaid-client)
         run: npm test --prefix typescript
 
+  skill:
+    name: Agent Skill (vaid-skill) — unit, acceptance, anchor parity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      # The skill wraps the PUBLISHED packages rather than this repo's sources, on
+      # purpose: it must break when what users actually install breaks, not when
+      # main moves. So this installs from the registry and does NOT use the
+      # workspace build above.
+      - name: Install from the registry (not from this checkout)
+        run: npm install --prefix skill
+      # The vendored trust anchor must be byte-identical to docs/kernel-keys.json,
+      # and every key in it must hash to the thumbprint it is filed under. A stale
+      # anchor does not degrade verification — it makes `vaid verify` accept
+      # documents signed by whoever holds the key it still lists.
+      - name: Trust-anchor parity with docs/kernel-keys.json
+        run: node skill/scripts/check-anchor.mjs
+      - name: Unit tests (with negative controls)
+        run: npm test --prefix skill
+      # Crosses process boundaries deliberately: the claim is that one program's
+      # VAID can be checked by another that shares no memory with it.
+      - name: End-to-end acceptance
+        run: bash skill/test/acceptance.sh
+
   conformance-drift:
     name: PoP conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
