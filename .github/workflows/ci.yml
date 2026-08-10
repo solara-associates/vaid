@@ -62,6 +62,23 @@ jobs:
       - name: node --test conformance suite (vaid-pop + vaid-mint + vaid-client)
         run: npm test --prefix typescript
 
+  release-map:
+    name: Every publishable package is reachable by the release workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      # A package with no release-map.json entry cannot be released except by hand
+      # — which is how vaid-skill 0.1.0, 0.1.1 and 0.1.2 went out unsigned. The
+      # workflow refuses such a tag correctly, but that refusal arrives after a
+      # version bump, a changelog and a tag. This moves it into the PR.
+      - name: Verify the release map covers the tree
+        run: node scripts/verify-release-map.mjs
+
   skill:
     name: Agent Skill (vaid-skill) — unit, acceptance, anchor parity
     runs-on: ubuntu-latest
