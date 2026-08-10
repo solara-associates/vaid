@@ -311,3 +311,92 @@ floor is already ruled out and the trusted publisher is the thing to check.
 `--allow-stage-publish` was deliberately not granted. The workflow only runs
 `npm publish`, and an unused permission widens what a compromised workflow could do
 for no benefit.
+
+---
+
+## B4 — a wrong digest delists the skill from the `skills` channel with no error anyone would see
+
+**Status:** mitigated, not fixable. The mitigation is a scheduled check that must not
+be removed — see "Why the scheduled job is not redundant" below.
+**Observed:** 2026-08-10, publishing `skill/skills/vaid/SKILL.md` at
+`https://solara.associates/.well-known/agent-skills/index.json`.
+**Affects:** distribution of `vaid-skill` through `npx skills add https://solara.associates`.
+Not the npm package, and not `npx vaid-skill`.
+
+### What breaks
+
+The agentskills.io discovery v0.2.0 index publishes a `digest` beside each artifact,
+and the `skills` CLI (`vercel-labs/skills`, `src/providers/wellknown.ts`) gates the
+install on it:
+
+```js
+const bytes = new Uint8Array(await response.arrayBuffer());
+if (this.computeDigest(bytes) !== entry.digest) return null;
+```
+
+That is the correct behaviour and the reason to publish a digest at all. The defect
+is in **how the refusal presents**.
+
+### How it presents — which is not how it is described
+
+`fetchArtifactSkillByEntry` returns `null`. `fetchAllSkills` filters nulls, gets an
+empty array, and the CLI falls through to its direct-download fallback, which fails
+on an index file. The installing user sees:
+
+```
+◇  No well-known skills found; trying direct download...
+■  Downloaded URL is not a valid SKILL.md file or supported archive
+└  Installation failed
+```
+
+There is **no checksum error, no digest, no mention of verification**. The message is
+indistinguishable from "this domain publishes no skills" — that is, from us never
+having published at all. Verified by running the real CLI against the real production
+artifact with one hex character of the digest changed: exit 1, nothing written to
+disk, and no output naming the cause.
+
+### Why that is worse than a loud failure
+
+Nothing reports back to us. There is no webhook, no error budget, no failed request
+in our logs — the fetch of the artifact **succeeds**, and the rejection happens on a
+stranger's machine. The only observable symptom on our side is that the skills.sh
+install counter stops moving, which is indistinguishable from nobody installing it.
+
+The window is real because deploy of the site is manual and has no trigger: the
+repository can be correct and green while the origin serves something else. That is
+the same shape as the stale trust anchor on 2026-08-10, where every copy in git was
+byte-identical and correct while the origin served a note corrected three days
+earlier.
+
+### Why the scheduled job is not redundant
+
+`synthera-site-redesign` guards this in two places, and they are **not** duplicates:
+
+| check | where | proves |
+|---|---|---|
+| `check-agent-skills-index.mjs` | `vector-drift.yml`, PR gate | the committed index and the committed artifact agree with each other, and with this repo at a resolved head SHA |
+| `check-agent-skills-index.mjs --live` | `anchor-origin.yml`, scheduled | the **origin** serves an index and an artifact that agree |
+
+The PR gate cannot see a stale or failed deploy, because it never looks at the origin.
+The scheduled job is the only thing that observes what an installer actually
+downloads. It looks redundant precisely because it usually agrees with the PR gate —
+it earns its place on the day it does not, and on that day nothing else is watching.
+
+A served artifact also cannot gate the pull request that fixes it: such a check would
+fail on the very PR that corrects the index and stay failing until that PR merged
+**and** deployed. That is why it is scheduled rather than PR-gated, and why moving it
+into the PR suite to "consolidate" would break it.
+
+### Fix shape
+
+None available on our side. The presentation is the CLI's, and we do not control it.
+The mitigation is detection, and it is already in place. Two things must hold:
+
+1. `agent-skills-origin` in `anchor-origin.yml` stays scheduled and stays enabled.
+2. The digest is never hand-written. `npm run revendor:agent-skills-index` regenerates
+   it from the artifact bytes; the check recomputes rather than trusting the written
+   value, because a publisher that does not recompute is asking consumers to run a
+   check it never ran itself.
+
+Worth reporting upstream: the CLI could distinguish "digest mismatch" from "no index
+here" in its output at no cost to the security property. Not filed.
