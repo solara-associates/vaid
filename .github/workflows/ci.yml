@@ -80,6 +80,24 @@ jobs:
       - name: Check the README for stale enumerations and hardcoded versions
         run: node scripts/check-readme-drift.mjs
 
+  release-workflow:
+    name: Release workflow structure (verify-artifact stays a consumer)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      # A step landing in the wrong job is invisible until a release. It happened:
+      # an unbounded edit put `npm publish --dry-run` into verify-artifact, which
+      # has no checkout by design, so the job died on its first step and every real
+      # verification in it — the consumer install, the declared verify command,
+      # `npm audit signatures` — was skipped while the release still published.
+      - name: Check release.yml structural invariants
+        run: node scripts/verify-release-workflow.mjs
+
   release-map:
     name: Every publishable package is reachable by the release workflow
     runs-on: ubuntu-latest
