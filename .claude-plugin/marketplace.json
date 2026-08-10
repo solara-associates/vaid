@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "vaid",
+  "description": "The VAID standard — Verifiable Agent Identity. Signed, short-lived, offline-verifiable credentials for agents, with capability attenuation across delegation chains.",
+  "owner": {
+    "name": "solara.associates",
+    "email": "info@solara.associates"
+  },
+  "plugins": [
+    {
+      "name": "vaid",
+      "description": "Mint, present, verify and revoke VAIDs. Four verbs over the published vaid-mint SDK: verification is offline, needs only a public key, and reports authenticity, expiry, delegation and issuer identity separately — and always reports that revocation was NOT checked, because there is no published revocation list.",
+      "author": { "name": "solara.associates" },
+      "category": "security",
+      "source": "./skill",
+      "homepage": "https://solara.associates/vaid"
+    }
+  ]
+}
