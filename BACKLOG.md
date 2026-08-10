@@ -188,3 +188,70 @@ and every publishable package found **in the tree** has an entry — because a l
 things to check cannot notice something that was never added to it. It runs in CI, so
 a missing entry fails in the PR that adds the package rather than at tag time, after
 a bump and a changelog. Control-tested against all three failure shapes.
+
+---
+
+## B3 — the release workflow has no npm credential, and had never run
+
+**Status:** open. **Blocks every automated npm release**, including `vaid-skill`
+0.1.3, which is tagged-ready and cannot publish.
+**Observed:** 2026-08-10, running the workflow for the first time.
+
+### What breaks
+
+`publish` fails with:
+
+```
+npm error code ENEEDAUTH
+npm error need auth This command requires you to be logged in to https://registry.npmjs.org/
+```
+
+`secrets.NPM_TOKEN` does not exist. Confirmed as a real absence rather than a
+permissions artifact — the API returns `200` with `total_count: 0` at both scopes,
+through the same access that successfully reads the environment list, its protection
+rules, and its pending deployments:
+
+```
+repo secrets:            total_count 0
+release env secrets:     total_count 0
+```
+
+### Why nobody noticed
+
+**The workflow had never run.** `gh run list --workflow Release` returns exactly two
+entries, both from 2026-08-10 and both mine. It was added on 2026-08-07 as "the first
+publish automation" and every release since — `vaid-skill` 0.1.0, 0.1.1 and 0.1.2 —
+was published by hand, for the unrelated reason recorded as B2. So the credential gap
+sat behind a gap that stopped execution earlier, and fixing B2 is what exposed it.
+
+That is the general shape worth remembering: **a workflow that has never executed has
+not been tested, however carefully it was reviewed.** Its preflight, its resolve step
+and its gates were all correct on the first run; the parts that touch the outside
+world were not, and could not have been.
+
+### Not a partial release
+
+Both failed runs stopped before any upload. The registry showed `0.1.0, 0.1.1,
+0.1.2` with `latest = 0.1.2` throughout, so `0.1.3` is **not burned** and the tag can
+be re-pushed once this is fixed. `release-complete` reported `PARTIAL RELEASE`
+correctly on both, and its instruction to check the registry by hand before
+re-tagging is what established that.
+
+### Fix shape
+
+Two options, and the second is better:
+
+1. **An npm automation token** in the `release` environment as `NPM_TOKEN`. Simple,
+   and it is what the workflow already expects. It is also a long-lived credential
+   with publish rights sitting in CI.
+
+2. **npm Trusted Publishing (OIDC).** npm supports publishing authenticated by the
+   GitHub Actions OIDC token, with no stored secret at all. The `publish` job already
+   has `id-token: write` for provenance, so the token this needs is already being
+   minted — this is close to free here, and it removes a standing credential rather
+   than adding one.
+
+Either way the fix is not code: nothing in the workflow changes for (1), and (2) is a
+registry-side configuration plus dropping `NODE_AUTH_TOKEN`. **Do not work around it
+by publishing by hand** — that is what produced three unattested releases, and the
+fourth would be for a reason that is one configuration step away from fixed.
