@@ -118,6 +118,39 @@ if (existsSync(tsDir)) for (const d of readdirSync(tsDir)) {
   });
 }
 
+// ── npm packages living OUTSIDE typescript/, from release-map.json.
+//
+// The three loops above walk fixed roots, so a package anywhere else is invisible
+// to them — and invisible is not the same as passing. `vaid-skill` at `skill/` was
+// checked by none of them while reporting "9 package(s), each self-consistent",
+// which reads exactly like coverage. That is the same shape as BACKLOG B2, one
+// layer up: a check that cannot see what was never added to its list.
+//
+// release-map.json is now the declaration of what is releasable, so it is the
+// right source. Anything already collected above is skipped rather than
+// double-counted.
+const seen = new Set(packages.map((p) => p.dir));
+try {
+  const map = JSON.parse(read('release-map.json'));
+  for (const [key, cfg] of Object.entries(map.packages ?? {})) {
+    if (!key.startsWith('npm/') || !cfg?.dir || seen.has(cfg.dir)) continue;
+    if (!existsSync(abs(`${cfg.dir}/package.json`))) continue;
+    let pkg;
+    try { pkg = JSON.parse(read(`${cfg.dir}/package.json`)); }
+    catch (e) { failures.push(`  ✗ [${cfg.dir}] package.json is not parseable: ${e.message}`); continue; }
+    if (!pkg.name || pkg.private === true) continue;
+    packages.push({
+      dir: cfg.dir, name: pkg.name, manifest: pkg.version,
+      code: null, codeSource: 'n/a (package.json is the single source)',
+      changelog: changelogTopVersion(cfg.dir),
+    });
+  }
+} catch (e) {
+  // Fail closed: without the map this check silently narrows to the three fixed
+  // roots, which is the state that hid vaid-skill.
+  failures.push(`  ✗ release-map.json is unreadable, so packages outside the fixed roots cannot be checked: ${e.message}`);
+}
+
 for (const p of packages) {
   if (!p.manifest) {
     failures.push(`  ✗ [${p.dir}] ${p.name}: could not read a literal manifest version (failing closed)`);
