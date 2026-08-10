@@ -5,6 +5,12 @@
 [![PyPI](https://img.shields.io/pypi/v/vaid-mint?label=PyPI%20vaid-mint)](https://pypi.org/project/vaid-mint/)
 [![npm](https://img.shields.io/npm/v/vaid-mint?label=npm%20vaid-mint)](https://www.npmjs.com/package/vaid-mint)
 [![Conformance: byte-for-byte](https://img.shields.io/badge/conformance-byte--for--byte-brightgreen.svg)](#three-languages-one-set-of-vectors)
+<!-- The skills.sh badge counts the `solara.associates` SOURCE, not the vaid skill:
+     skills.sh has no per-skill badge (…/api/badge/<source>/<skill> 404s). Identical
+     today because that source publishes one skill; it stops being if we publish a
+     second. The source is the hostname because install telemetry reports the
+     .well-known origin — there is no solara-associates/vaid form to point at. -->
+[![skills.sh installs](https://img.shields.io/endpoint?url=https%3A%2F%2Fwww.skills.sh%2Fapi%2Fbadge%2Fsolara.associates)](https://www.skills.sh/skills/solara.associates/vaid)
 
 The open standard layer for verifiable agent-action identity (VAID).
 
