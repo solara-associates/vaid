@@ -193,8 +193,12 @@ a bump and a changelog. Control-tested against all three failure shapes.
 
 ## B3 — the release workflow has no npm credential, and had never run
 
-**Status:** open. **Blocks every automated npm release**, including `vaid-skill`
-0.1.3, which is tagged-ready and cannot publish.
+**Status:** resolved by **npm Trusted Publishing (OIDC)** rather than by adding a
+token — the workflow now carries no npm credential at all. Kept because the way it
+hid is worth recognising, and because the npm-version trap below will catch the next
+person.
+
+**Originally:** open, blocking every automated npm release.
 **Observed:** 2026-08-10, running the workflow for the first time.
 
 ### What breaks
@@ -251,7 +255,33 @@ Two options, and the second is better:
    minted — this is close to free here, and it removes a standing credential rather
    than adding one.
 
-Either way the fix is not code: nothing in the workflow changes for (1), and (2) is a
-registry-side configuration plus dropping `NODE_AUTH_TOKEN`. **Do not work around it
-by publishing by hand** — that is what produced three unattested releases, and the
-fourth would be for a reason that is one configuration step away from fixed.
+### What was done
+
+Option 2. `NODE_AUTH_TOKEN` is gone from the workflow entirely; `npm publish`
+exchanges the Actions OIDC token — already minted for provenance — for a short-lived
+credential. Nothing long-lived with publish rights sits in CI.
+
+A useful side effect: with no token to fall back to, a trusted-publishing
+misconfiguration **cannot** quietly publish an unattested tarball. It fails
+ENEEDAUTH. The attestation is structurally guaranteed rather than flag-dependent,
+which is why no `--provenance` flag is passed — npm generates it automatically under
+trusted publishing, and `verify-artifact`'s `npm audit signatures` is the positive
+proof it landed.
+
+### The trap this exposed, worth its own note
+
+Trusted publishing requires **npm >= 11.5.1 and node >= 22.14.0**.
+`node-version: 22` gives node 22.23.1 — fine — and **npm 10.9.8**, which has no OIDC
+support whatsoever. That mismatch does not announce itself: npm 10 looks for a token,
+finds none, and fails **ENEEDAUTH** — indistinguishable from the missing-secret
+failure this entry was originally about, and it would have sent the next person
+looking for a secret that should not exist.
+
+The workflow now installs a pinned npm and **asserts the floor**, so a bad pin fails
+with "npm X is below the 11.5.1 floor" rather than as a phantom auth problem.
+
+### Configured per PACKAGE, not per repository
+
+Only `vaid-skill` has a trusted publisher as of 2026-08-10. `vaid-pop`, `vaid-mint`
+and `vaid-client` each need their own entry on npmjs.com before their next release,
+or they will fail ENEEDAUTH for the real reason.
