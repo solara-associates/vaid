@@ -223,7 +223,7 @@ async function cmdMint(flags) {
   out(dim(`  envelope can rewrite the key beside it. The second channel is the security.`));
   out();
   out(dim(`  They can check it at ${VERIFY_URL} without installing anything,`));
-  out(dim(`  or with:  npx vaid-skill verify '<the vaid1: line>' --trust '<the key line>'`));
+  out(dim(`  or with:  npx -p vaid-skill vaid verify '<the vaid1: line>' --trust '<the key line>'`));
 
   if (isSpecialUseTrustDomain(vaid.trust_domain)) {
     out();
