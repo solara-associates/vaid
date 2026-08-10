@@ -1,0 +1,60 @@
+{
+  "name": "vaid-skill",
+  "version": "0.1.3",
+  "description": "Agent Skill for VAID (Verifiable Agent Identity): mint, present, verify and revoke agent credentials from Claude Code, Codex, Cursor, Gemini CLI and Copilot. A thin wrapper over the published vaid-mint SDK.",
+  "keywords": [
+    "vaid",
+    "agent-skill",
+    "claude-code",
+    "agent-identity",
+    "ed25519",
+    "delegation",
+    "verifiable-credentials",
+    "synthera"
+  ],
+  "license": "Apache-2.0",
+  "author": "solara.associates <info@solara.associates>",
+  "homepage": "https://github.com/solara-associates/vaid/tree/main/skill",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solara-associates/vaid.git",
+    "directory": "skill"
+  },
+  "bugs": "https://github.com/solara-associates/vaid/issues",
+  "type": "module",
+  "exports": {
+    ".": "./src/verify-core.mjs",
+    "./envelope": "./src/envelope.mjs",
+    "./trust-anchor.json": "./trust-anchor.json",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "vaid": "src/cli.mjs",
+    "vaid-skill": "install.mjs",
+    "vaid-skill-install": "install.mjs"
+  },
+  "files": [
+    "src",
+    "install.mjs",
+    "skills",
+    ".claude-plugin",
+    "trust-anchor.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check:anchor": "node scripts/check-anchor.mjs",
+    "test:documented": "bash test/documented-commands.sh"
+  },
+  "$comment": "No postinstall hook, deliberately. This package's job is verifying credentials, so it does not get to run arbitrary code on install — an install-time script is exactly the supply-chain shape a security tool should not normalise.",
+  "dependencies": {
+    "vaid-mint": "^0.6.0",
+    "vaid-pop": "^0.3.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "vaid",
+  "version": "0.1.3",
+  "description": "Mint, present, verify and revoke VAIDs — short-lived, cryptographically signed agent credentials proving which agent is acting, for which tenant, within which scope, under whose delegation. Verification is offline and needs no credential from the issuer.",
+  "author": {
+    "name": "solara.associates",
+    "email": "info@solara.associates"
+  },
+  "homepage": "https://github.com/solara-associates/vaid/tree/main/skill",
+  "repository": "https://github.com/solara-associates/vaid",
+  "license": "Apache-2.0",
+  "keywords": [
+    "vaid",
+    "agent-identity",
+    "verifiable-credentials",
+    "ed25519",
+    "delegation",
+    "security"
+  ]
+}
