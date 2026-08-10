@@ -287,6 +287,27 @@ with "npm X is below the 11.5.1 floor" rather than as a phantom auth problem.
 
 ### Configured per PACKAGE, not per repository
 
-Only `vaid-skill` has a trusted publisher as of 2026-08-10. `vaid-pop`, `vaid-mint`
-and `vaid-client` each need their own entry on npmjs.com before their next release,
-or they will fail ENEEDAUTH for the real reason.
+All four packages were configured on 2026-08-10 with identical values — the form
+has no per-package field, and `repository.directory` is a provenance source-link
+hint that plays no part in publisher matching.
+
+Configuration is possible from the CLI as well as the web UI, which was not obvious:
+`npm trust github <pkg> --file release.yml --repo solara-associates/vaid --env
+release --allow-publish`, requiring **npm >= 11.15.0** (`npx npm@11` resolves to the
+locally installed npm, so the version must be pinned explicitly; `npm@latest` is 12.x
+and refuses Node 22.17). There is also a documented REST endpoint,
+`POST /-/package/{package}/trust`.
+
+**Every trust operation requires 2FA, including `list`.** So nothing in CI can assert
+that a package's trusted publisher exists before depending on it, and only
+`vaid-skill` has been *proven* by an actual release. The other three are configured
+as reported, not as observed; the first release of each is what confirms it.
+
+A missing or wrong entry surfaces as **ENEEDAUTH at publish** — the same error a
+too-old npm produces. That ambiguity is why the npm version floor is asserted
+separately: if publish fails ENEEDAUTH on a run whose npm is >= 11.5.1, the version
+floor is already ruled out and the trusted publisher is the thing to check.
+
+`--allow-stage-publish` was deliberately not granted. The workflow only runs
+`npm publish`, and an unused permission widens what a compromised workflow could do
+for no benefit.
