@@ -43,7 +43,8 @@
 # so a tag push alone cannot publish. A tag is cheap to create and impossible to
 # un-publish.
 #
-# NPM PROVENANCE IS ENABLED (`--provenance`). It publishes a signed, public
+# NPM PROVENANCE IS ENABLED. Under trusted publishing npm generates it
+# automatically, so no `--provenance` flag is passed. It publishes a signed, public
 # attestation binding each npm tarball to the workflow, repository and commit that
 # produced it, verifiable by anyone via `npm audit signatures` and shown as a
 # "Built and signed on GitHub Actions" badge on npmjs.com.
@@ -55,14 +56,33 @@
 # tell you a tarball was built from this repo, and an attestation cannot tell you
 # the bytes reproduce the frozen vectors.
 #
+# HOW IT AUTHENTICATES: npm TRUSTED PUBLISHING (OIDC). There is NO npm token in
+# this workflow and no `NODE_AUTH_TOKEN` anywhere. `npm publish` exchanges the
+# GitHub Actions OIDC token — the same one provenance needs — for a short-lived
+# publish credential. Nothing long-lived with publish rights sits in CI.
+#
+# That also makes the attestation structurally guaranteed rather than flag-dependent:
+# with no token to fall back to, a trusted-publishing misconfiguration cannot quietly
+# publish an UNATTESTED tarball. It fails ENEEDAUTH.
+#
+# Configured per PACKAGE on npmjs.com (Settings -> Trusted Publisher), not per repo:
+#   organization/user   solara-associates
+#   repository          vaid
+#   workflow filename   release.yml          (filename only, with extension)
+#   environment         release
+# A package without that configuration cannot be published by this workflow. As of
+# 2026-08-10 only `vaid-skill` is configured; vaid-pop, vaid-mint and vaid-client
+# each need their own entry before their next release.
+#
 # Preconditions, all currently met — re-check before assuming this still works:
 #   · the repository is PUBLIC (solara-associates/vaid)          — required
 #   · each package.json `repository.url` matches the repo         — required, verified
 #   · the job has `id-token: write`                               — set on `publish`
-#   · npm >= 9.5.0                                                — node 22 ships npm 10
-# If any of these stops holding, `npm publish` FAILS rather than silently omitting
-# the attestation — which is the behaviour we want, and the reason this is safe to
-# leave on. A provenance flag that quietly no-ops would be worse than none.
+#   · npm >= 11.5.1 AND node >= 22.14.0                           — NOT the default:
+#     `node-version: 22` gives node 22.23.1 (fine) but npm 10.9.8 (no OIDC at all),
+#     so the workflow installs a pinned npm and ASSERTS the floor. Without that,
+#     npm 10 looks for a token, finds none, and fails ENEEDAUTH — which reads as a
+#     missing secret rather than as too-old a client.
 #
 # NOT ENABLED: Rust and Python have no equivalent here. crates.io has no provenance
 # mechanism, and PyPI attestations need Trusted Publishing (OIDC) instead of the
@@ -229,6 +249,28 @@ jobs:
       # the same rules — so a publish that cannot even FIND its package fails here
       # rather than after a tag, an approval, and a burned version number. The
       # absence of this step is why `npm publish --prefix` reached production.
+      # Trusted publishing needs npm >= 11.5.1 (and node >= 22.14.0). `node-version: 22`
+      # resolves to a node new enough — 22.23.1 on the runner — but ships **npm
+      # 10.9.8**, which has no OIDC support at all. That mismatch does not announce
+      # itself: npm 10 simply looks for a token, finds none, and fails ENEEDAUTH,
+      # which reads as a missing secret rather than as too-old a client.
+      #
+      # Pinned rather than `@latest` so a future npm major cannot change publishing
+      # behaviour without a commit, and the floor is asserted so a bad pin fails
+      # here rather than at publish.
+      - name: Install an npm new enough for trusted publishing
+        if: needs.resolve.outputs.eco == 'npm'
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.7.0
+          V=$(npm --version)
+          node -e '
+            const [a,b,c] = process.argv[1].split(".").map(Number);
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)));
+            if (!ok) { console.error(`::error::npm ${process.argv[1]} is below the 11.5.1 floor trusted publishing requires.`); process.exit(1); }
+            console.log(`npm ${process.argv[1]} — at or above the 11.5.1 trusted-publishing floor`);
+          ' "$V"
+
       - name: npm publish --dry-run (packages exactly as the real publish will)
         if: needs.resolve.outputs.eco == 'npm'
         env:
@@ -354,30 +396,58 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm >= 11.5.1 (and node >= 22.14.0). `node-version: 22`
+      # resolves to a node new enough — 22.23.1 on the runner — but ships **npm
+      # 10.9.8**, which has no OIDC support at all. That mismatch does not announce
+      # itself: npm 10 simply looks for a token, finds none, and fails ENEEDAUTH,
+      # which reads as a missing secret rather than as too-old a client.
+      #
+      # Pinned rather than `@latest` so a future npm major cannot change publishing
+      # behaviour without a commit, and the floor is asserted so a bad pin fails
+      # here rather than at publish.
+      - name: Install an npm new enough for trusted publishing
+        if: needs.resolve.outputs.eco == 'npm'
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.7.0
+          V=$(npm --version)
+          node -e '
+            const [a,b,c] = process.argv[1].split(".").map(Number);
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)));
+            if (!ok) { console.error(`::error::npm ${process.argv[1]} is below the 11.5.1 floor trusted publishing requires.`); process.exit(1); }
+            console.log(`npm ${process.argv[1]} — at or above the 11.5.1 trusted-publishing floor`);
+          ' "$V"
+
       - name: npm publish
         if: needs.resolve.outputs.eco == 'npm'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           WS: ${{ needs.resolve.outputs.ws }}
           DIR: ${{ needs.resolve.outputs.dir }}
           PKG: ${{ needs.resolve.outputs.pkg }}
         run: |
           set -euo pipefail
-          # --provenance: see the header. Fails loudly if its preconditions stop
-          # holding, rather than publishing an unattested tarball. It applies to
-          # both shapes below — provenance is a property of the publish, not of the
-          # layout.
+          # No `--provenance` flag: under trusted publishing npm generates and
+          # publishes the attestation automatically. The flag is documented as
+          # unnecessary there, and this flow has failed twice already — an
+          # unnecessary flag is not what should make a third attempt interesting.
+          #
+          # The guarantee does not rest on the flag anyway. There is NO npm token
+          # anywhere in this workflow, so a trusted-publishing misconfiguration
+          # cannot fall back to publishing an unattested tarball — it fails
+          # ENEEDAUTH. And `verify-artifact` runs `npm audit signatures` from a
+          # clean consumer install, which is positive proof the attestation landed
+          # rather than trust that a flag did something.
           if [[ -n "$WS" ]]; then
             npm ci --prefix "$WS"
             npm run build --prefix "$WS"
-            npm publish --provenance --access public --workspace "$PKG" --prefix "$WS"
+            npm publish --access public --workspace "$PKG" --prefix "$WS"
           else
             npm install --prefix "$DIR"
             # `cd`, NOT `--prefix`. npm publish IGNORES --prefix when locating the
             # package: it reads package.json from the CWD, so `--prefix skill` from
             # the repo root looked for a package.json at the root and died ENOENT.
             # --prefix works for install/test, which is what made this look right.
-            ( cd "$DIR" && npm publish --provenance --access public )
+            ( cd "$DIR" && npm publish --access public )
           fi
 
   # ── 4. verify the PUBLISHED artifact ──────────────────────────────────────
