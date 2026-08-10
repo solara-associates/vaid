@@ -62,6 +62,24 @@ jobs:
       - name: node --test conformance suite (vaid-pop + vaid-mint + vaid-client)
         run: npm test --prefix typescript
 
+  readme-drift:
+    name: README describes the repository that exists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      # The README drifted for months while every other check stayed green: it said
+      # TypeScript was not on npm a week after it was, said "two languages" when
+      # there were three, named five vectors when there were nine, and carried
+      # version numbers several releases stale. Every one of those sentences was
+      # true when written, which is why reading never caught them.
+      - name: Check the README for stale enumerations and hardcoded versions
+        run: node scripts/check-readme-drift.mjs
+
   release-map:
     name: Every publishable package is reachable by the release workflow
     runs-on: ubuntu-latest

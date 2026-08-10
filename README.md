@@ -1,99 +1,207 @@
 # Synthera VAID
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![SDKs: Rust + Python + TypeScript](https://img.shields.io/badge/SDKs-Rust%20%2B%20Python%20%2B%20TypeScript-orange.svg)](#what-this-is)
-[![Conformance: byte-for-byte](https://img.shields.io/badge/conformance-byte--for--byte-brightgreen.svg)](#two-languages-one-vector)
+[![crates.io](https://img.shields.io/crates/v/vaid-mint?label=crates.io%20vaid-mint)](https://crates.io/crates/vaid-mint)
+[![PyPI](https://img.shields.io/pypi/v/vaid-mint?label=PyPI%20vaid-mint)](https://pypi.org/project/vaid-mint/)
+[![npm](https://img.shields.io/npm/v/vaid-mint?label=npm%20vaid-mint)](https://www.npmjs.com/package/vaid-mint)
+[![Conformance: byte-for-byte](https://img.shields.io/badge/conformance-byte--for--byte-brightgreen.svg)](#three-languages-one-set-of-vectors)
 
 The open standard layer for verifiable agent-action identity (VAID).
 
 A VAID is a portable identity bound to an action that an autonomous agent takes.
-This repository defines how a VAID-bound request is canonicalized and signed, and
-ships reference SDKs — in **Rust, Python and TypeScript** — that produce and verify those
-signatures. It is the interoperability contract: any client that follows it
-produces bytes that any conforming verifier accepts, with no shared runtime and
-no network service in between. All three reference SDKs reproduce the same frozen
-conformance vector byte-for-byte — that is the cross-language proof, made
-concrete (see [Two languages, one vector](#two-languages-one-vector)).
+This repository defines how a VAID document and a VAID-bound request are
+canonicalized and signed, and ships reference SDKs — in **Rust, Python and
+TypeScript** — that produce and verify those signatures. It is the
+interoperability contract: any client that follows it produces bytes that any
+conforming verifier accepts, with no shared runtime and no network service in
+between.
 
-## Evaluate VAID in 15 minutes
+All three reference implementations reproduce the same frozen conformance vectors
+byte-for-byte. That is the cross-language proof, made concrete — see
+[Three languages, one set of vectors](#three-languages-one-set-of-vectors).
 
-Everything below installs from **PyPI / crates.io** — no repo checkout, no server, no API key.
+> **Version numbers are not written in this file, deliberately.** They went stale
+> here repeatedly and a stale number reads exactly like a current one. The badges
+> above resolve live from the registries; what is runnable today lives in
+> [`docs/capabilities.json`](docs/capabilities.json), which CI fails on if it
+> drifts from reality. `scripts/check-readme-drift.mjs` fails this file if a
+> version is hardcoded back into it, or if it names some of the languages,
+> registries or vectors without naming all of them.
 
-**Python** (PyPI):
+## Check a VAID right now, with nothing installed
 
+Someone sent you a VAID and you want to know if it is real.
+
+**<https://solara.associates/vaid/verify>** — paste it in. The page is fully
+client-side: it holds the published kernel key, makes no request when it verifies,
+and works with the network switched off. Nothing is uploaded.
+
+The verdict tells you what it establishes — authenticity, expiry, delegation
+containment, issuer identity — and what it does not. **Revocation is never
+checked**, because there is no published revocation list to consult and an offline
+verifier could not reach one if there were. Read a pass as *genuinely issued and in
+date*, never as *currently authorised*.
+
+## Use it from a coding agent
+
+```sh
+npx vaid-skill
 ```
-pip install vaid-pop vaid-mint vaid-langchain
+
+`vaid-skill` is an Agent Skill wrapping the published SDKs. It detects and installs
+into **Claude Code, Codex, Cursor, Gemini CLI and GitHub Copilot**, and teaches the
+agent four verbs and no more:
+
+| verb | |
+|---|---|
+| `mint` | issue a VAID, or with `--parent` an attenuated child whose authority is a strict subset of yours |
+| `present` | package one into the single line you send to someone |
+| `verify` | check one you received, offline, against a pinned trust anchor |
+| `revoke` | mark one revoked **on that machine only** — see below |
+
+A minted VAID is a single `vaid1:` line, designed to be pasted into a chat message
+and checked by whoever receives it — with `npx -p vaid-skill vaid verify`, on the
+verify page, or by any conforming implementation. Details in
+[`skill/README.md`](skill/README.md).
+
+(`npx <name>` resolves `<name>` as a *package*, so reaching the `vaid` bin without
+installing needs `-p`.)
+
+## Evaluate the standard in 15 minutes
+
+Everything below installs from **crates.io / PyPI / npm** — no repo checkout, no
+server, no API key.
+
+```sh
+cargo add vaid-pop vaid-client vaid-mint     # Rust
+pip install vaid-pop vaid-mint vaid-langchain # Python
+npm install vaid-pop vaid-client vaid-mint    # TypeScript
 ```
 
-**Rust** (crates.io):
+Then check the artifact you actually received, rather than taking this README's
+word for it. **Each ecosystem ships a packaged conformance firewall**, so the check
+runs against the installed package:
 
-```
-cargo add vaid-pop vaid-mint vaid-client
-```
-
-Then prove the interoperability contract against the frozen vector that ships **inside the package you just installed** — one file, one command ([`examples/conformance_harness.py`](examples/conformance_harness.py), which imports only the installed `vaid-pop`):
-
-```
-pip install vaid-pop
-python conformance_harness.py       # PASS/FAIL per vector, byte-level diff on failure
+```sh
+cargo install vaid-mint && vaid-mint-conformance    # crates.io
+pip install vaid-mint && vaid-mint-conformance      # PyPI
+npx -p vaid-mint vaid-mint-conformance              # npm
 ```
 
-To certify **your own** implementation, replace the single `digest_fn` in that file with your JCS (RFC 8785) → SHA-256 and re-run: matching bytes = conformant, a diff shows exactly where you drifted.
+Rust shipped its firewall as an installable binary in the release recorded in
+[`crates/vaid-mint/CHANGELOG.md`](crates/vaid-mint/CHANGELOG.md); before that the
+check needed a checkout, which made the reference implementation the only ecosystem
+you could not verify in one command ([#22](https://github.com/solara-associates/vaid/issues/22)).
 
-**What is and isn't runnable today** lives in the capabilities manifest — [`docs/capabilities.json`](docs/capabilities.json), rendered at `/capabilities` — not in this prose; trust that, because CI fails if it drifts from reality. Installable today: request proof-of-possession (`vaid-pop`), the reference mint with attenuated delegation `child ⊆ parent` (`vaid-mint`), cross-language conformance, and the LangChain request-signing adapter (`vaid-langchain`).
+To certify **your own** implementation, take the vectors and reproduce their
+digests and signatures. Matching bytes = conformant; a diff shows exactly where you
+drifted.
 
-**One thing is *not* reproducible from published packages:** the framework-governance claim — *one governance layer, not one per framework* — runs against the private substrate. It is presented as **read-only evidence**: the dated conformance artifact `forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md` (ADK 7/7, OpenAI 9/9 PASS, live). Reproducing it requires substrate access; the published packages give you the client + reference-mint half.
+**What is and isn't runnable today** lives in
+[`docs/capabilities.json`](docs/capabilities.json) — not in this prose — because CI
+fails if it drifts from reality.
+
+**One thing is *not* reproducible from published packages:** the
+framework-governance claim — *one governance layer, not one per framework* — runs
+against the private substrate and is presented as read-only, dated evidence.
+Reproducing it needs substrate access; the published packages give you the client
+and reference-mint half.
 
 ## What this is
 
-The byte-level standard, reference implementations in two languages, a reference mint with delegation, a LangChain integration, and completion records:
+The byte-level standard, reference implementations in three languages, a reference
+mint with delegation, an agent skill, a LangChain integration, and completion
+records.
 
-- **`vaid-pop`** (Rust, `crates/vaid-pop`) is the proof-of-possession (PoP)
-  primitive. It defines one canonicalization path: RFC 8785 JSON Canonicalization
-  Scheme (JCS), then SHA-256 over the canonical bytes, then a pure Ed25519
-  signature over the 32-byte digest. It also defines the request payload that gets
-  signed and the VAID identity types that payload binds. This is the byte-level
-  specification, written as code.
+- **`vaid-pop`** — the proof-of-possession primitive, in all three languages. It
+  defines one canonicalization path: RFC 8785 JSON Canonicalization Scheme (JCS),
+  then SHA-256 over the canonical bytes, then a pure Ed25519 signature over the
+  32-byte digest. It also defines the request payload that gets signed and the VAID
+  identity types that payload binds. This is the byte-level specification, written
+  as code.
 
-- **`vaid-client`** (Rust, `crates/vaid-client`) is the reference SDK built on
-  that primitive. It turns a minted VAID document and a holder key into the four
-  signed headers a request carries, and it does not reimplement any of the
-  canonicalization. It depends only on `vaid-pop`.
+- **`vaid-client`** — the reference request signer, in Rust and TypeScript. It
+  turns a minted VAID document and a holder key into the signed headers a request
+  carries, and reimplements none of the canonicalization. Python's request signer
+  lives inside `vaid-pop` rather than in a separate package; that is a packaging
+  choice, not a missing implementation.
 
-- **`vaid-pop`** (Python, `python/vaid-pop`) is the Python reference signer — the
-  single Python definition of the same PoP contract. It mirrors the Rust
-  canonicalization path exactly (RFC 8785 JCS → SHA-256 → pure Ed25519) and is
-  locked to the same frozen vector. It depends only on `cryptography` and
-  `rfc8785`, nothing else.
+- **`vaid-mint`** — the reference mint, in all three languages. It issues VAIDs and
+  supports attenuated delegation, where a child's authority is always a subset of
+  its parent's. All three enforce TTL at verification and expose a pluggable
+  three-state, lineage-aware `RevocationCheck` seam
+  ([`docs/spec/revocation.md`](docs/spec/revocation.md) R.4). Revoking a parent
+  revokes its attenuated children, and verification fails closed when revocation
+  status is unavailable.
 
-- **`vaid-mint`** (Rust + Python, `crates/vaid-mint`, `python/vaid-mint`) is the reference mint. It issues VAIDs, supports attenuated delegation (`mint_child`, where a child's authority is always a subset of its parent's), and documents its trust model plainly. Both implementations enforce TTL at verification and expose a pluggable `RevocationCheck` seam — three-state and lineage-aware as of 0.2.0 (replacing the 0.1.2 boolean, leaf-only check), specified in [`docs/spec/revocation.md`](docs/spec/revocation.md) R.4. Revoking a parent revokes its attenuated children, and verification fails closed when revocation status is unavailable. Read the README that matches the implementation you're using for what's durable and what isn't.
+- **`vaid-skill`** — the Agent Skill above ([`skill/`](skill/)), published on npm.
+  A thin wrapper over the published SDKs; it implements no cryptography.
 
-- **`vaid-langchain`** (Python, `python/vaid-langchain`) is a LangChain integration that signs requests using the VAID contract via an `httpx.Auth` adapter.
+- **`vaid-langchain`** (Python) — a LangChain integration that signs requests using
+  the VAID contract via an `httpx.Auth` adapter.
 
-- **`vaid-pop`, `vaid-mint`, `vaid-client`** (TypeScript, `typescript/`) are the
-  third conforming implementation: the same PoP primitive, the same reference mint
-  with attenuated delegation and the three-state revocation seam, and the same
-  request signer. They reproduce **all five** frozen vectors byte-for-byte, in the
-  same CI drift jobs as Rust and Python. Published on npm at **0.3.0**:
+- **completion records** (`vaid-pop`) — a self-reported provenance record for what
+  an agent claims it did. Single-tier assurance today: self-reported only, and the
+  type's own documentation says so.
 
-  ```sh
-  npm install vaid-pop vaid-mint vaid-client
-  ```
+That is the entire open scope. There is no server, no database and no runtime to
+stand up beyond the mint if you choose to self-host it.
 
-  Each ships a packaged conformance firewall, so you can check the artifact you
-  actually received rather than taking this README's word for it:
+## Third-party verification
 
-  ```sh
-  npx -p vaid-mint vaid-mint-conformance     # and vaid-pop / vaid-client
-  ```
+The part worth understanding, because it is what the standard is *for*: a party who
+holds nothing but a published public key can check a VAID, with no cooperation from
+whoever issued it.
 
-- **completion records** (`vaid-pop`, `completion_v1.json` vector) — a self-reported provenance record for what an agent claims it did. Single-tier assurance today: self-reported only, and the type's own documentation says so.
+**Authenticity** — `verify_vaid_authenticity` answers *was this genuinely issued
+under this key, and is it internally consistent*: the signature-scheme version, the
+Ed25519 signature over the canonical document, and the consistency of
+`lineage_hash`. It deliberately does not consult expiry or revocation, which are
+separate questions with separate answers.
 
-That is the entire open scope. There is no server, no database, and no runtime to
-stand up beyond the mint if you choose to self-host it. You add the Rust crates to a Cargo project, `pip install` the Python packages, or `npm install` the TypeScript ones, and call them.
+**Attenuation, by detached chain presentation**
+([ADR-0003](docs/adr/0003-attenuation-verification-via-detached-chain.md)) — a leaf
+carries its own scope and capabilities, not its ancestors', so authenticity alone
+cannot answer *was this authority legitimately derived*. The presenter supplies the
+ancestor documents alongside the leaf and the verifier walks them. No new signed
+field was needed: `parent_vaid` is already inside the canonical signing bytes, so
+the chain is pinned by the signature that already exists.
+
+The result is deliberately four-valued rather than boolean —
+`Attenuated`, `Inauthentic`, `Unverifiable`, `NotAttenuated` — because collapsing
+them is how a verifier reports *attenuation satisfied* when it means *attenuation
+unverifiable*.
+
+**Cross-issuer delegation needs consent.** When a hop crosses kernel keys, the
+child must present a **consent attestation** signed by the issuer that minted the
+parent, for exactly that `(parent, child)` pair. Without it, an issuer holding its
+own key could mint a document naming another issuer's root as its parent and have
+it verify as attenuated, while that issuer delegated nothing. An attestation that is
+authentic but outside its validity window returns `ConsentExpired`, kept distinct
+because *renew the attestation* and *you were never authorized* are different
+instructions.
+
+**A verifier canonicalizes the bytes it was presented, not its own projection**
+([ADR-0006](docs/adr/0006-verify-over-presented-bytes.md)). A verifier that parses a
+document into its own struct and re-serializes silently drops any field it does not
+know, so a valid document carrying an additive extension verifies as **invalid** —
+the signature covered bytes the verifier never reconstructed. All three
+implementations now canonicalize over the presented bytes, and `roundtrip_v1.json`
+pins it.
+
+**Scope containment is segment-bounded**
+([ADR-0005](docs/adr/0005-segment-bounded-scope-containment.md)). Bare prefix
+matching decided containment, so a boundary of `data.governance` contained
+`data.governance-secret` — a sibling counted as a child. All three implementations
+agreed, and all three were wrong; `scope_v1.json` pins the corrected matcher. The
+release it landed in is in
+[`crates/vaid-mint/CHANGELOG.md`](crates/vaid-mint/CHANGELOG.md); if you are below
+it, scope containment is wider than you think.
+
+## The spec, and where the surface stops
 
 The vectors are the byte-level specification; the prose beside them says where the
-conformance surface starts and stops. Two documents, taking opposite postures:
+conformance surface starts and stops.
 
 - [`docs/spec/encoding.md`](docs/spec/encoding.md) is **normative and inside** the
   surface. It writes down the rules that decide the bytes — snake_case documents
@@ -102,16 +210,14 @@ conformance surface starts and stops. Two documents, taking opposite postures:
   wrong choice actually produces. It exists because those rules previously lived
   only in reference source, so a fourth implementer could not derive the bytes
   without reading Rust. They can now.
+- [`docs/spec/scope.md`](docs/spec/scope.md) is normative: how scope containment is
+  decided, over two reserved separators.
 - [`docs/spec/revocation.md`](docs/spec/revocation.md) is **non-normative and
   outside** it. It specifies the `RevocationCheck` seam and states plainly that
   revocation sits outside the conformance surface
-  ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)). Its R.6
-  table records what ships today versus what is planned.
+  ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)).
 
 ## What it does
-
-A developer can create a VAID identifier, sign a request against it, and verify
-that signature, standalone, using only these crates.
 
 ### Sign and verify directly with the primitive
 
@@ -161,8 +267,8 @@ assert!(verified);
 ### Produce request headers with the SDK
 
 For the common case of authenticating an HTTP request, the SDK takes the minted
-VAID document and your key and returns the four headers to attach. It hashes the
-body, generates a fresh nonce, and stamps a current timestamp for you.
+VAID document and your key and returns the headers to attach. It hashes the body,
+generates a fresh nonce, and stamps a current timestamp for you.
 
 ```rust
 use ring::signature::Ed25519KeyPair;
@@ -178,107 +284,74 @@ for (name, value) in headers.into_pairs() {
 }
 ```
 
-A runnable version of this path is in
-`crates/vaid-client/examples/emit_pop.rs`.
+A runnable version is in `crates/vaid-client/examples/emit_pop.rs`.
 
-### Proof that the bytes are portable
+## Three languages, one set of vectors
 
-The signing path is pinned by a frozen test vector,
-`crates/vaid-client/tests/vectors/operator_pop_v1.json`. The conformance test
-reproduces that vector's exact SHA-256 digest and its exact Ed25519 signature from
-the fixed inputs. That is the interoperability guarantee made concrete: an
-independent implementation that hits the same vector is byte-compatible with this
-one.
+The frozen vectors are the single source of truth. Each implementation vendors a
+byte-identical copy and reproduces the same digests and the same Ed25519
+signatures from the same fixed inputs.
 
-```
-cargo test
-```
+The cross-language set:
 
-The conformance suite and the primitive's own round-trip and tamper-rejection
-tests run with nothing else present.
+| vector | pins |
+|---|---|
+| `operator_pop_v1.json` | the request proof-of-possession path |
+| `mint_v1.json` | the signed VAID document |
+| `mint_pop_v1.json` | the mint-time proof-of-possession |
+| `chain_v1.json` | detached chain presentation |
+| `attestation_v1.json` | cross-issuer consent attestations |
+| `scope_v1.json` | segment-bounded scope containment |
+| `roundtrip_v1.json` | verification over presented bytes |
+| `pathquery_v1.json` | path-with-query canonicalization |
+| `completion_v1.json` | completion records |
 
-## Two languages, one vector
+A CI drift job `cmp`s every language's copy of each and runs each gate, so a
+divergence fails the build rather than being discovered by a consumer. Byte
+agreement is asserted at the vectors, **never at the version number** — the three
+implementations version independently, and a fix lands only in the language that
+had the defect.
 
-The frozen vector `crates/vaid-client/tests/vectors/operator_pop_v1.json` is the
-single source of truth. The Python reference signer under `python/vaid-pop`
-vendors a byte-identical copy of it and reproduces the **same SHA-256 digest and
-the same Ed25519 signature** from the same fixed inputs — proven from the
-installed package, with no repo checkout required:
-
-```
-pip install vaid-pop        # from PyPI
-vaid-pop-conformance        # PASS = installed signer == frozen vector, byte-for-byte
-```
-
-(From a repo checkout instead: `cd python/vaid-pop && pip install .`)
-
-So the interoperability guarantee is not a claim about a spec document — it is two
-independent implementations, in two languages, with no shared runtime, hitting the
-same bytes. The Rust `cargo test` above and the Python `vaid-pop-conformance`
-assert against the same vector; the repo's `pop-conformance` CI job runs both and
-fails on any divergence. That is the standard, proven.
-
-**A third language, from the repo.** The TypeScript packages under `typescript/`
-vendor byte-identical copies of the same five vectors and reproduce every digest
-and signature, and each conformance-drift CI job now `cmp`s the TypeScript copy and
-runs its gate alongside the Rust and Python ones. Because they are not on npm yet,
-this is provable only from a checkout:
-
-```
-cd typescript && npm ci && npm run build && npm test
-node typescript/vaid-mint/dist/bin/conformance.js   # the packaged firewall
-```
-
-Three independent implementations agreeing byte-for-byte is a stronger statement
-than two — a two-language agreement can hide a shared assumption that neither
-author questioned. It is worth saying exactly what it is not: a claim about
-installability, which waits on the npm publish.
+Independent implementations agreeing byte-for-byte is a stronger statement the more
+of them there are: a narrow agreement can hide a shared assumption no author
+questioned. That is not hypothetical here — ADR-0005 and ADR-0006 above are both
+cases where every implementation agreed and every implementation was wrong, caught
+by a vector rather than by review.
 
 ## What is deliberately not here
 
-This repository is the standard, its reference signer, a reference mint, a LangChain integration, and completion records. Two things remain closed and commercial:
+Two things remain closed and commercial:
 
 - The policy language for expressing what a VAID is permitted to do.
-- The hosted authority that runs a mint in production — KMS-backed kernel keys, an audit-of-record, durable hash-chained revocation, and a policy/mesh/federation control plane.
+- The hosted authority that runs a mint in production — KMS-backed kernel keys, an
+  audit-of-record, durable hash-chained revocation, and a policy/mesh/federation
+  control plane.
 
-The reference mint here proves the shape of delegation and attenuation; it is not that hosted authority. Revocation is the seam worth naming plainly rather than filing under "commercial": **both reference SDKs** have a three-state, lineage-aware `RevocationCheck` seam (0.2.0; see [`docs/spec/revocation.md`](docs/spec/revocation.md) R.4), with a non-durable in-memory default, and with VAID expiry (TTL) hard-enforced at verification (1-hour default) — so a self-hoster can wire their own revocation backend in either language without patching the SDK. What stays commercial is *durable* revocation itself: both ship the seam, not a durable, restart-surviving hash-chained store.
+The reference mint proves the shape of delegation and attenuation; it is not that
+hosted authority. Two seams deserve a precise line rather than a blanket "not
+included", because the blanket version is falsifiable by reading this repo:
 
-**Both languages ship this behavior** — the Rust crate on crates.io (`vaid-mint` 0.1.2) and the Python package on PyPI (`vaid-mint` 0.1.3, docs-only on top of the same 0.1.2 behavior) — so the two reference implementations are at behavioral parity. The version numbers differ because each package versions independently (see `CONTRIBUTING.md`); parity is in behavior, not in the number. Note that expiry enforcement is a **breaking behavioral change** in both, despite the patch version bump: a caller relying on expired-but-signed VAIDs continuing to verify will see `verify_vaid` start rejecting them. See each package's `CHANGELOG.md` before upgrading. For exactly what's durable, what isn't, and how to mitigate it if you're running this in production today, see `crates/vaid-mint`'s and `python/vaid-mint`'s own trust-model documentation.
+- **Audit** — the *seam* is here and Apache-2.0: the `AuditSink` interface with
+  in-memory and no-op implementations in every language. What is closed is the
+  **durable, hash-chained ledger**, not the ability to audit.
+- **Revocation** — likewise: the `RevocationCheck` seam ships here with a
+  non-durable in-memory default, and VAID expiry is hard-enforced at verification.
+  A self-hoster can wire their own backend without patching the SDK. What is closed
+  is **durable, restart-surviving** revocation.
 
-## The commercial boundary
-
-The production control plane is a separate commercial product and is not in this
-repository. That product provides the hosted VAID authority that issues and
-revokes identities, the policy engine that decides what each VAID may do, the
-federation layer that routes action across tenants, the enforcement mesh that
-applies those decisions at call time, and the *durable, hash-chained*
-audit-of-record that retains a verifiable history. None of that is required to
-use what is here. This repository stands on its own as the open standard.
-
-Two of those deserve a precise line rather than a blanket "not included here",
-because the blanket version is falsifiable by reading this repo:
-
-- **Audit** — the *seam* is here and Apache-2.0: the `AuditSink` trait with
-  `InMemoryAudit` and `NoopAudit` (`crates/vaid-mint/src/audit.rs`, mirrored in
-  `python/vaid-mint/vaid_mint/audit.py`). What is closed is the **durable,
-  hash-chained ledger**, not the ability to audit.
-- **Revocation** — likewise: the `RevocationCheck` seam ships here with an
-  in-memory default. What is closed is **durable, restart-surviving**
-  revocation. See the paragraph above.
-
-The hosted authority itself is a **name for the aggregate** of those durable
-pieces — KMS-backed keys, the durable audit-of-record, durable revocation, and
-the policy/mesh/federation control plane. It is described here as an offering,
-not as a component you will find implemented in some other directory.
+The hosted authority is a **name for the aggregate** of those durable pieces. It is
+described here as an offering, not as a component you will find implemented in some
+other directory.
 
 ## Contributing & community
 
-VAID is an interoperability contract, so the bar for contributions is concrete:
-any change must keep both reference SDKs reproducing the frozen conformance vector
-byte-for-byte.
+VAID is an interoperability contract, so the bar is concrete: any change must keep
+all three reference SDKs reproducing the frozen vectors byte-for-byte.
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — dev setup (Rust + Python), the
-  conformance bar, and how to propose standard-affecting changes.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — dev setup, the conformance bar, and how
+  to propose standard-affecting changes.
+- **[BACKLOG.md](BACKLOG.md)** — known defects and deferred work, with what breaks
+  and why it has not been done.
 - **[SECURITY.md](SECURITY.md)** — report vulnerabilities privately
   (`info@solara.associates`); please don't open public issues for them.
 - **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — Contributor Covenant 2.1.
