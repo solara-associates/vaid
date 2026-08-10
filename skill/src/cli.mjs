@@ -103,6 +103,9 @@ function readInput(arg) {
       return arg;
     }
   }
+  if (process.stdin.isTTY) {
+    die('no VAID given. Pass one as an argument, a file path, or pipe it in on stdin.');
+  }
   try {
     return readFileSync(0, 'utf8');
   } catch {
@@ -283,10 +286,14 @@ function cmdPresent(positional, flags) {
 
 // --- verify ------------------------------------------------------------------
 function cmdVerify(positional, flags) {
-  const input = readInput(positional[0]);
+  // Before readInput: with no envelope argument that blocks on stdin, and listing
+  // the keys you have accepted is not a verification of anything.
+  if (flags.trusted) return listTrusted();
 
   // --trust accepts the `<thumbprint>=<key>` line `mint` prints. Saying so takes
   // the key on the operator's authority, which is what a trust decision is.
+  // Handled BEFORE the envelope is read, so `vaid verify --trust '<line>'` with
+  // nothing to verify is a complete command rather than a wait on empty stdin.
   if (flags.trust) {
     const line = String(flags.trust).trim();
     const eq = line.indexOf('=');
@@ -307,10 +314,20 @@ function cmdVerify(positional, flags) {
       $local: true,
       $note: 'Added locally with `vaid verify --trust`. Its thumbprint was recomputed before it was stored.',
     };
-    saveTrustedKeys(doc);
-    if (!flags.json && !flags.quiet) err(`${dim('note')}: now trusting ${actual}`);
+    const at = saveTrustedKeys(doc);
+    if (!flags.json && !flags.quiet) {
+      err(`${yellow('note')}: now trusting ${actual}`);
+      err(dim(`      Stored in ${at}. This PERSISTS: every later 'vaid verify' on this`));
+      err(dim("      machine accepts this issuer, including runs without --trust."));
+      err(dim("      'vaid verify --trusted' lists what you have accepted."));
+    }
+    // No envelope argument means there is nothing to verify: storing the key was
+    // the whole command. Not gated on isTTY — in CI stdin is inherited and stays
+    // open, so an isTTY check would still hang exactly where a hang costs most.
+    if (positional.length === 0) process.exit(0);
   }
 
+  const input = readInput(positional[0]);
   const anchor = loadedAnchor();
   const now = flags.at ? new Date(String(flags.at)) : new Date();
   if (Number.isNaN(now.getTime())) die('--at is not a parseable timestamp');
@@ -332,6 +349,40 @@ function cmdVerify(positional, flags) {
   // documented rather than inferred: 0 accepted, 1 rejected/expired, 4 malformed.
   if (result.headline === Headline.Malformed) process.exit(4);
   if (result.headline === Headline.Rejected || result.headline === Headline.Expired) process.exit(1);
+  process.exit(0);
+}
+
+/**
+ * Show the keys this machine has accepted beyond the shipped anchor.
+ *
+ * The counterpart to `--trust` persisting. A stored trust decision that cannot be
+ * listed is one that cannot be reviewed or withdrawn, which is how a machine ends
+ * up accepting an issuer nobody remembers vouching for.
+ */
+function listTrusted() {
+  const local = loadTrustedKeys().keys ?? {};
+  const entries = Object.entries(local);
+  out();
+  out(`  ${bold('Shipped with this package')} ${dim('(published by solara.associates)')}`);
+  const published = JSON.parse(readFileSync(join(HERE, '..', 'trust-anchor.json'), 'utf8')).keys ?? {};
+  for (const [tp, k] of Object.entries(published)) {
+    out(`  ${green('✓')} ${tp}`);
+    out(`    ${dim(k.deployment ?? k.key_id ?? '')}`);
+  }
+  out();
+  out(`  ${bold('Added on this machine with --trust')} ${dim(`(${vaidHome()}/trusted-keys.json)`)}`);
+  if (entries.length === 0) {
+    out(`  ${dim('(none)')}`);
+  } else {
+    for (const [tp] of entries) out(`  ${yellow('!')} ${tp}`);
+    out();
+    out(dim(wrap(
+      'These are YOUR trust decisions, not ours, and they apply to every `vaid verify` on this machine. ' +
+        'Remove any you no longer vouch for by deleting the entry from that file.',
+      '  ',
+    )));
+  }
+  out();
   process.exit(0);
 }
 
@@ -460,6 +511,13 @@ const USAGE = `${bold('vaid')} — mint, present, verify and revoke Verifiable A
       Verify offline against the published trust anchor. Reports authenticity,
       expiry, delegation and issuer identity separately, and always reports that
       revocation was NOT checked. Exit 0 accepted, 1 rejected or expired, 4 malformed.
+
+      --trust adds an issuer key you obtained out of band, for VAIDs from a
+      self-hosted mint. ${bold('It is written to')} ${vaidHome()}/trusted-keys.json
+      ${bold('and stays there')} — every later 'vaid verify' on this machine accepts
+      that issuer, including runs you did not pass --trust to. List what you have
+      accepted with 'vaid verify --trusted', and delete entries you no longer
+      vouch for. (The browser page keeps such keys for the session only.)
 
   ${bold('vaid revoke')}   <vaid_id> [--reason "…"]  |  --list
       Mark a VAID revoked ON THIS MACHINE ONLY. There is no published revocation

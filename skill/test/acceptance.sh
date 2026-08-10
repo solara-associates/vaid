@@ -69,7 +69,17 @@ printf '\n\033[1mACCEPTANCE TWO — the artifact can leave the machine\033[0m\n\
 
 # Anyone can read the document with no tooling from us. If this breaks, the
 # envelope has become opaque and the recipient is dependent on our software.
-DECODED=$(printf '%s' "${ROOT#vaid1:}" | tr '_-' '/+' | base64 -d 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).vaid.tenant_id" 2>/dev/null)
+#
+# The `=` padding loop is not incidental. base64url is UNPADDED, and `base64 -d`
+# rejects unpadded input — so the recipe without it works only when the token
+# length happens to be a multiple of 4. The envelope's length varies run to run
+# (the signature is an array of 1-to-3-digit numbers), so a recipe missing this
+# succeeds about a quarter of the time, which is far worse than always failing:
+# it reads as an intermittent bug in the credential rather than in the command.
+# This is the exact recipe printed in README.md and SKILL.md; keep them in step.
+B64=$(printf '%s' "${ROOT#vaid1:}" | tr '_-' '/+')
+while [ $(( ${#B64} % 4 )) -ne 0 ]; do B64="${B64}="; done
+DECODED=$(printf '%s' "$B64" | base64 -d 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).vaid.tenant_id" 2>/dev/null)
 check "the envelope decodes with base64 + no VAID tooling" "$DECODED" "acme"
 
 # Mangled the way a mail client mangles a long line.
@@ -111,6 +121,27 @@ ALONE=$(env VAID_HOME="$OTHER_HOME" node src/cli.mjs verify "$LEAF_ONLY" --json 
   | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).findings.find(f=>f.id==='attenuation').state")
 check "CONTROL — the leaf alone reports attenuation as a caveat, never a pass" "$ALONE" "caveat"
 rm -rf "$OTHER_HOME"
+
+printf '\n\033[1mTRUST PERSISTENCE IS VISIBLE\033[0m\n\n'
+
+# --trust is a standing decision, so it must be listable. A stored trust decision
+# nobody can enumerate is one nobody can review or withdraw.
+H3="$(mktemp -d)"
+env VAID_HOME="$H3" node src/cli.mjs verify --trusted 2>/dev/null | grep -q "(none)"
+check "--trusted lists nothing on a fresh machine" "$?" "0"
+
+env VAID_HOME="$H3" node src/cli.mjs verify "$ROOT" --trust "$KEYLINE" >/dev/null 2>&1
+# The key must still be accepted on a LATER run that passes no --trust at all —
+# that is what "persists" means, and it is the part worth asserting.
+env VAID_HOME="$H3" node src/cli.mjs verify "$ROOT" >/dev/null 2>&1
+check "a --trust key is still accepted on a later run without --trust" "$?" "0"
+
+env VAID_HOME="$H3" node src/cli.mjs verify --trusted 2>/dev/null | grep -q "Added on this machine"
+check "--trusted shows the added key" "$?" "0"
+
+env VAID_HOME="$H3" node src/cli.mjs verify --trust "$KEYLINE" 2>&1 | grep -qi "PERSISTS"
+check "--trust says at the point of use that it persists" "$?" "0"
+rm -rf "$H3"
 
 printf '\n\033[1mREVOCATION HONESTY\033[0m\n\n'
 
