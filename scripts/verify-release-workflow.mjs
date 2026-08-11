@@ -201,6 +201,45 @@ for (const j of [...jobs.keys()]) {
   }
 }
 
+// 7. No publish path may depend on a stored secret.
+//
+// THE DEFECT THIS EXISTS TO CATCH (BACKLOG B14)
+//
+// All three ecosystems now authenticate by OIDC — npm natively, crates.io through
+// `crates-io-auth-action`, PyPI through twine's built-in exchange. None needs a
+// secret, and the 0.7.0 release failed on two legs precisely because two of them
+// still asked for one that did not exist: `secrets.CARGO_REGISTRY_TOKEN` expanded
+// to the empty string, and `secrets.PYPI_API_TOKEN` likewise.
+//
+// The empty-secret case is worse than a missing one, because on BOTH registries an
+// empty credential is indistinguishable from a misconfigured trusted publisher —
+// crates.io says "please provide a non-empty token" and PyPI says 403, which are
+// exactly the messages you get when the publisher itself is wrong. And on PyPI an
+// empty `TWINE_PASSWORD` is actively harmful: twine treats a set-but-empty password
+// as a credential, so it never ATTEMPTS the OIDC exchange.
+//
+// WHAT IS ASSERTED: no `secrets.` reference in a publishing job. This is presence,
+// not validity — a check cannot prove a trusted publisher is configured without
+// spending a publish, and that bound is stated in B14. What it can do is stop the
+// repository drifting back to tokens, which is the change that would silently
+// reintroduce both failure modes.
+{
+  for (const [job, jobLines] of jobs) {
+    const b = jobLines.join('\n');
+    if (!/npm publish|cargo publish|twine upload/.test(b)) continue;
+    const offenders = jobLines.filter((l) => /\$\{\{\s*secrets\./.test(l));
+    if (offenders.length > 0) {
+      problems.push(
+        `job \`${job}\` publishes and references a stored secret: ${offenders.map((l) => l.trim()).join('; ')}. ` +
+          'All three registries authenticate by OIDC. A secret that does not exist expands to the ' +
+          'empty string, which crates.io reports as "non-empty token" and PyPI as 403 — the same ' +
+          'messages a misconfigured trusted publisher produces. On PyPI an empty TWINE_PASSWORD is ' +
+          'worse still: twine counts it as a credential and never attempts the exchange. See BACKLOG B14.',
+      );
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error(`\n✗ RELEASE WORKFLOW STRUCTURE CHECK FAILED\n`);
   for (const p of problems) console.error(`  · ${p}\n`);
@@ -209,4 +248,4 @@ if (problems.length > 0) {
 
 console.log(`✓ ${FILE} — verify-artifact is checkout-free and proves the attestation;`);
 console.log(`  the publish dry-run gate is in preflight only; every publishing job upgrades npm`);
-console.log(`  and installs before it packages.`);
+console.log(`  and installs before it packages; no publish path depends on a stored secret.`);

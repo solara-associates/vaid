@@ -374,12 +374,32 @@ jobs:
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: "1.88"
+      # `cargo publish` CANNOT do OIDC. Unlike npm, where the CLI performs the
+      # exchange itself, cargo only ever reads `CARGO_REGISTRY_TOKEN` — so trusted
+      # publishing on crates.io needs this action to mint a short-lived token and
+      # hand it over. The action revokes the token when the job ends.
+      #
+      # This is the crates.io equivalent of npm's version floor: a difference that
+      # does not announce itself. Configuring the trusted publisher on crates.io
+      # and leaving `cargo publish` to find it would fail with "please provide a
+      # non-empty token" — the SAME message an absent secret produces, which is
+      # what BACKLOG B14 was.
+      - name: Mint a short-lived crates.io token (trusted publishing, no secret)
+        if: needs.resolve.outputs.eco == 'rust'
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
       - name: cargo publish
         if: needs.resolve.outputs.eco == 'rust'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          # From the OIDC exchange above, NOT from a secret. The previous
+          # `secrets.CARGO_REGISTRY_TOKEN` is deliberately gone rather than kept as
+          # a fallback: an empty secret would shadow the minted token and fail with
+          # the message that sent the last release down the wrong path.
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
         run: |
           set -euo pipefail
+          test -n "$CARGO_REGISTRY_TOKEN" || {
+            echo "::error::the crates.io auth action produced no token — the trusted publisher is missing or does not match (owner/repo/workflow/environment)"; exit 1; }
           cargo publish --locked -p ${{ needs.resolve.outputs.pkg }}
 
       # The npm mirror of `cargo publish --dry-run` above. It resolves and packages
@@ -392,14 +412,36 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
+      # NO `TWINE_USERNAME` / `TWINE_PASSWORD`. Their absence is what ENABLES
+      # trusted publishing, and this is the PyPI trap — the exact analogue of npm's
+      # version floor.
+      #
+      # twine resolves credentials in priority order and only attempts the OIDC
+      # exchange when it finds NONE. An explicitly set `TWINE_PASSWORD` satisfies
+      # the credential lookup even when it is the EMPTY STRING, which is what a
+      # missing secret expands to. twine then never tries trusted publishing, sends
+      # empty credentials, and PyPI answers **403 Forbidden** — indistinguishable
+      # from a missing or mismatched trusted publisher. That 403 is what BACKLOG
+      # B14 recorded, and it would recur identically after configuring PyPI if
+      # these two lines were left in place.
+      #
+      # twine >= 6.1.0 is required: trusted publishing landed there (2025-01-17).
+      # An older twine has no OIDC path at all and fails the same 403 way, so the
+      # floor is ASSERTED rather than assumed — the same discipline as npm's.
       - name: build sdist+wheel and twine upload
         if: needs.resolve.outputs.eco == 'python'
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip build twine
+          python -m pip install --upgrade pip build "twine>=6.1.0"
+          python - <<'PY'
+          import sys
+          from importlib.metadata import version
+          v = version("twine")
+          parts = tuple(int(x) for x in v.split(".")[:3] if x.isdigit())
+          if parts < (6, 1, 0):
+              sys.exit(f"::error::twine {v} is below the 6.1.0 floor trusted publishing requires")
+          print(f"twine {v} — at or above the 6.1.0 trusted-publishing floor")
+          PY
           rm -rf "${{ needs.resolve.outputs.dir }}/dist"
           python -m build --outdir "${{ needs.resolve.outputs.dir }}/dist" "${{ needs.resolve.outputs.dir }}"
           twine check "${{ needs.resolve.outputs.dir }}"/dist/*
