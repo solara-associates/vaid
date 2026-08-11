@@ -9,7 +9,7 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
-## [Unreleased]
+## [0.7.0]
 
 ### Fixed — a verifier canonicalizes the member VALUES it was presented (BACKLOG B7)
 
