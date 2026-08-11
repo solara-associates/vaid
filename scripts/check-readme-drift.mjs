@@ -35,8 +35,13 @@
  *   · cross-language vectors    <- the vector files actually present in the
  *                                  reference crates
  *
- * Add a fourth language, or a tenth vector, and every stale sentence here fails on
- * the next run without anyone editing this file. That is the point.
+ * Add a tenth vector and every stale sentence here fails on the next run without
+ * anyone editing this file. That is the point.
+ *
+ * A fourth LANGUAGE is the one case that needs a hand: ecosystem keys have to be
+ * translated to a language and registry name, and that table lives here. An
+ * ecosystem this file cannot translate HALTS the check rather than being skipped —
+ * see the guard below for why silently narrowing the set was the worse option.
  *
  * SUPPRESSION REQUIRES A REASON. An `allow` entry needs a substring and a written
  * justification. A bare exemption is not expressible, because an escape hatch
@@ -82,6 +87,35 @@ const ECO_TO_REGISTRY = { rust: 'crates.io', python: 'PyPI', npm: 'npm' };
 
 const map = JSON.parse(readFileSync(join(ROOT, 'release-map.json'), 'utf8'));
 const ecos = [...new Set(Object.keys(map.packages ?? {}).map((k) => k.split('/')[0]))];
+
+// An ecosystem present in release-map.json but absent from the two tables above was
+// silently discarded by the `.filter(Boolean)` below, and the derived sets kept their
+// old size. A fourth language could therefore ship while every "three languages"
+// sentence in the README still passed — this file's own defect class, reappearing
+// inside the checker that exists to catch it. Verified before fixing: adding a `go/`
+// entry to release-map.json left the languages set at three and the check green.
+//
+// Fail closed instead, on the same principle the packaged conformance firewall
+// settled on — a check that cannot see the whole set must never report PASS. These
+// two tables are the one place a new ecosystem has to be taught, and skipping that
+// step now halts the check rather than quietly narrowing it.
+const untranslated = ecos.filter((e) => !ECO_TO_LANGUAGE[e] || !ECO_TO_REGISTRY[e]);
+if (untranslated.length > 0) {
+  console.error(
+    `✗ README DRIFT CHECK CANNOT RUN — release-map.json names ecosystem(s) this ` +
+      `check cannot translate: ${untranslated.join(', ')}`,
+  );
+  console.error(
+    '\n  Add them to ECO_TO_LANGUAGE and ECO_TO_REGISTRY in scripts/check-readme-drift.mjs.',
+  );
+  console.error(
+    '  Until then the derived sets would be too small, and every sentence naming',
+  );
+  console.error(
+    '  the old number of languages or registries would pass while being wrong.\n',
+  );
+  process.exit(1);
+}
 
 /** The cross-language vectors, from the reference crates rather than a list. */
 function crossLanguageVectors() {
