@@ -9,8 +9,11 @@
      skills.sh has no per-skill badge (…/api/badge/<source>/<skill> 404s). Identical
      today because that source publishes one skill; it stops being if we publish a
      second. The source is the hostname because install telemetry reports the
-     .well-known origin — there is no solara-associates/vaid form to point at. -->
-[![skills.sh installs](https://img.shields.io/endpoint?url=https%3A%2F%2Fwww.skills.sh%2Fapi%2Fbadge%2Fsolara.associates)](https://www.skills.sh/skills/solara.associates/vaid)
+     .well-known origin — there is no solara-associates/vaid form to point at.
+     The link is /site/<host>/<skill>. /skills/<...> is the GitHub-repo form and
+     soft-404s for well-known sources: HTTP 200, with the title built from the URL
+     you typed, so status and <title> both "pass" on the dead page. -->
+[![skills.sh installs](https://img.shields.io/endpoint?url=https%3A%2F%2Fwww.skills.sh%2Fapi%2Fbadge%2Fsolara.associates)](https://www.skills.sh/site/solara.associates/vaid)
 
 The open standard layer for verifiable agent-action identity (VAID).
 
