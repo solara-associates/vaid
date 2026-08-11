@@ -359,6 +359,16 @@ pub fn verify_vaid_standing_from_json(
     document_json: &str,
     revocation: crate::revocation::RevocationStatus,
 ) -> VaidVerdict {
+    // A duplicate member name is checked FIRST, and on the raw text, because that
+    // is the only place the evidence survives: every parser here resolves the
+    // collision before returning, so by the time there is a document to inspect
+    // the duplicate is gone. `serde` refuses a repeated struct field but resolves
+    // a repeated nested or unrecognised one by last-wins, exactly as `json.loads`
+    // and `JSON.parse` do — so without this the three agree on some duplicates and
+    // not others. See `docs/spec/encoding.md` E.7a.
+    if crate::document::has_duplicate_member_names(document_json) {
+        return VaidVerdict::Unparseable;
+    }
     match serde_json::from_str::<Vaid>(document_json) {
         Ok(vaid) => verify_vaid_standing(kernel_public_key, &vaid, revocation),
         Err(_) => VaidVerdict::Unparseable,

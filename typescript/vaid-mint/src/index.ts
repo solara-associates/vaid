@@ -119,6 +119,7 @@ export {
 export {
   VaidVerdict,
   isVerdictValid,
+  hasDuplicateMemberNames,
   parseVaidDocument,
   verdictFromCode,
   verifyLineageHash,

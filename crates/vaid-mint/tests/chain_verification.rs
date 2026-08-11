@@ -256,8 +256,13 @@ fn tampered_parent_vaid_is_inauthentic() {
         leaf.agent_class().clone(),
         leaf.version().to_string(),
         leaf.tenant_id().clone(),
-        leaf.issued_at(),
-        leaf.expires_at(),
+        // `issued_at`/`expires_at` are now Option: the field holds the presented
+        // string and is parsed on demand (ADR-0006 Req. 3). This leaf was minted
+        // here, so both are present — `expect` documents that rather than hiding it.
+        leaf.issued_at()
+            .expect("a minted leaf has a readable issued_at"),
+        leaf.expires_at()
+            .expect("a minted leaf has a readable expires_at"),
         leaf.public_key_der().to_vec(),
         Vec::new(),
         Some(vid(&privileged_id)),
