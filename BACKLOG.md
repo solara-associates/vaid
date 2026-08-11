@@ -598,10 +598,13 @@ larger change than the defect justifies on its own. Recorded rather than rushed.
 
 ## B7 — the Rust verifier re-projects typed field values and returns a verdict anyway, so the three implementations disagree on eight classes of document
 
-**Status:** open — **decided 2026-08-11: preserve.** The rule below is settled;
-the implementation is tracked on the branch carrying the negative vectors, which
-lands describing the decided behaviour rather than the current one. Fixing changes
-which documents verify, so it ships with a version bump.
+**Status:** **fixed** 2026-08-11 by *preserve*. All eight classes now return the
+same verdict AND the same reason in all three implementations — verified by
+re-running the differential probe that found them, which went from eight
+divergences to zero across thirty-four inputs. Each class is pinned by a case in
+`verdict_v1.json`, so the agreement is a contract rather than a fact about one
+afternoon. Shipped unreleased; changes which documents verify, so it needs a
+version bump (breaking in Rust).
 
 Preserve was chosen because it is what ADR-0006 already requires, not as a
 preference between two open options. Requirement 3 ("MUST round-trip

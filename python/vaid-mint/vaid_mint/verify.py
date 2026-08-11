@@ -219,10 +219,29 @@ def _is_uuid(value: object) -> bool:
         return False
 
 
-def _is_timestamp(value: object) -> bool:
-    from vaid_mint.document import _parse_rfc3339
+def _reject_duplicate_members(pairs: list[tuple[str, object]]) -> dict:
+    """``object_pairs_hook`` that refuses an object with a repeated member name.
 
-    return _parse_rfc3339(value) is not None
+    Raises :class:`ValueError`, which :func:`parse_vaid_document` turns into
+    ``UNPARSEABLE``. Applies at every depth, because ``json`` calls this for every
+    object it builds.
+
+    **Why the default is wrong here (spec E.7a, BACKLOG B7).** ``json.loads`` keeps
+    the LAST occurrence and discards the earlier ones silently, as does
+    ``JSON.parse``; ``serde`` refuses a repeated struct field. So
+    ``{"sig_version": 3, "sig_version": 2}`` was read as ``2`` here and declined
+    outright by Rust — one implementation refusing to parse a document the others
+    called authentic. Last-wins is the dangerous half: a signed document is a
+    statement about a specific byte string, and quietly picking one of two
+    competing values means the reader and the signer may disagree about what was
+    signed with nothing in the verdict to show it.
+    """
+    seen: set[str] = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise ValueError(f"duplicate member name {key!r}")
+        seen.add(key)
+    return dict(pairs)
 
 
 #: The structural contract a VAID document must satisfy to be *parseable at all*,
@@ -241,8 +260,12 @@ _REQUIRED_MEMBERS: tuple[tuple[str, object], ...] = (
     ("agent_class", lambda v: isinstance(v, str)),
     ("version", lambda v: isinstance(v, str)),
     ("tenant_id", lambda v: isinstance(v, str)),
-    ("issued_at", _is_timestamp),
-    ("expires_at", _is_timestamp),
+    # Timestamps must be STRINGS, not necessarily readable ones. A document
+    # whose expiry cannot be parsed still has an identity; "cannot be shown to
+    # be unexpired" is a verdict (`is_expired` fails closed), not a parse
+    # failure. Rust now holds these as presented strings for the same reason.
+    ("issued_at", lambda v: isinstance(v, str)),
+    ("expires_at", lambda v: isinstance(v, str)),
     ("public_key_der", _is_byte_list),
     ("kernel_signature", _is_byte_list),
     ("scope_boundary", _is_str_list),
@@ -276,7 +299,7 @@ def parse_vaid_document(document_json: str) -> dict | None:
     and present-null both mean "root".
     """
     try:
-        document = json.loads(document_json)
+        document = json.loads(document_json, object_pairs_hook=_reject_duplicate_members)
     except (ValueError, TypeError):
         return None
     if not isinstance(document, dict):

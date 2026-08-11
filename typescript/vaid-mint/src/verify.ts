@@ -220,10 +220,117 @@ const isByteList = (v: unknown): boolean =>
 const isStringList = (v: unknown): boolean =>
   Array.isArray(v) && v.every((s) => typeof s === 'string');
 
-const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const HEX8_4_4_4_12 = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+/**
+ * The UUID spellings a VAID member may be *presented* in.
+ *
+ * Deliberately permissive, and deliberately matched to the other two: Rust's
+ * `Uuid::parse_str` and Python's `uuid.UUID()` both accept the hyphenated, braced,
+ * `urn:uuid:` and hyphenless forms in either case. A stricter grammar here would
+ * mean TypeScript reporting UNPARSEABLE where the other two report INAUTHENTIC —
+ * the same refusal for a different stated reason, which is exactly the divergence
+ * class `verdict_v1.json` exists to catch.
+ *
+ * Accepting a non-canonical spelling is not the same as honouring it. The document
+ * is canonicalized over the bytes as presented (ADR-0006 Req. 3), so a `vaid_id`
+ * rewritten into an equivalent spelling after signing changes the signed bytes and
+ * the signature fails. Parsing permissively and verifying strictly is what puts
+ * that refusal on the signature, where it belongs and where it is the same in all
+ * three, rather than on three separately-written grammars.
+ */
+const UUID_RE = new RegExp(
+  `^(?:${HEX8_4_4_4_12}|\\{${HEX8_4_4_4_12}\\}|urn:uuid:${HEX8_4_4_4_12}|[0-9a-fA-F]{32})$`,
+);
 const isUuid = (v: unknown): boolean => typeof v === 'string' && UUID_RE.test(v);
 
-const isTimestamp = (v: unknown): boolean => typeof v === 'string' && !Number.isNaN(Date.parse(v));
+/**
+ * Does `json` contain a repeated member name inside any single object, at any
+ * depth?
+ *
+ * **Why this is checked explicitly rather than left to the parser (spec E.7a,
+ * BACKLOG B7).** The three languages disagree, silently. `serde` refuses a
+ * repeated struct field; `JSON.parse` and `json.loads` both keep the LAST
+ * occurrence and discard the earlier ones without a word. So
+ * `{"sig_version": 3, "sig_version": 2}` was read as `2` here and declined
+ * outright by Rust — one implementation refusing to parse a document the others
+ * called authentic.
+ *
+ * Last-wins is the dangerous half. A signed document is a statement about a
+ * specific byte string; silently choosing one of two competing values for a member
+ * and verifying the result means the reader and the signer may disagree about what
+ * was signed, with nothing in the verdict to indicate it. The safe direction is the
+ * one that refuses.
+ *
+ * Scans the raw text because that is the only place the evidence survives — by the
+ * time `JSON.parse` has returned, the duplicate is gone.
+ */
+export function hasDuplicateMemberNames(json: string): boolean {
+  // One set of seen names per open object; `null` marks an open array, which has
+  // no member names of its own but must still be tracked so that a string inside
+  // it is never mistaken for a key.
+  const stack: Array<Set<string> | null> = [];
+  let i = 0;
+  while (i < json.length) {
+    const c = json[i]!;
+    if (c === '{') {
+      stack.push(new Set());
+      i += 1;
+    } else if (c === '[') {
+      stack.push(null);
+      i += 1;
+    } else if (c === '}' || c === ']') {
+      stack.pop();
+      i += 1;
+    } else if (c === '"') {
+      const scanned = scanJsonString(json, i);
+      // Unterminated string: not our error to report. Whatever parses this next
+      // will refuse it, and claiming "duplicate" here would be the wrong reason.
+      if (scanned === null) return false;
+      const [text, next] = scanned;
+      let j = next;
+      while (j < json.length && /\s/.test(json[j]!)) j += 1;
+      if (j < json.length && json[j] === ':') {
+        const seen = stack[stack.length - 1];
+        if (seen instanceof Set) {
+          if (seen.has(text)) return true;
+          seen.add(text);
+        }
+      }
+      i = next;
+    } else {
+      i += 1;
+    }
+  }
+  return false;
+}
+
+/**
+ * Read a JSON string starting at `start` (the opening quote), returning its
+ * decoded-enough text and the index just past the closing quote.
+ *
+ * "Decoded enough" means escapes are consumed so they cannot hide a quote, and
+ * `\uXXXX` is left as written: two member names differing only by escaping are the
+ * same name to a conforming parser, but treating them as different here can only
+ * MISS a duplicate, never invent one — and missing leaves the existing parsers in
+ * charge rather than overruling them.
+ */
+function scanJsonString(json: string, start: number): [string, number] | null {
+  let out = '';
+  let i = start + 1;
+  while (i < json.length) {
+    const c = json[i]!;
+    if (c === '"') return [out, i + 1];
+    if (c === '\\') {
+      if (i + 1 >= json.length) return null;
+      out += c + json[i + 1]!;
+      i += 2;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return null;
+}
 
 /**
  * The structural contract a VAID document must satisfy to be *parseable at all*,
@@ -243,8 +350,12 @@ const REQUIRED_MEMBERS: ReadonlyArray<readonly [string, (v: unknown) => boolean]
   ['agent_class', (v) => typeof v === 'string'],
   ['version', (v) => typeof v === 'string'],
   ['tenant_id', (v) => typeof v === 'string'],
-  ['issued_at', isTimestamp],
-  ['expires_at', isTimestamp],
+  // Timestamps must be STRINGS, not necessarily readable ones. A document whose
+  // expiry cannot be parsed still has an identity; "cannot be shown to be
+  // unexpired" is a verdict (`isExpired` fails closed), not a parse failure. Rust
+  // now holds these as presented strings for the same reason.
+  ['issued_at', (v) => typeof v === 'string'],
+  ['expires_at', (v) => typeof v === 'string'],
   ['public_key_der', isByteList],
   ['kernel_signature', isByteList],
   ['scope_boundary', isStringList],
@@ -277,6 +388,9 @@ const REQUIRED_MEMBERS: ReadonlyArray<readonly [string, (v: unknown) => boolean]
  * present-null both mean "root".
  */
 export function parseVaidDocument(documentJson: string): Vaid | null {
+  // Checked FIRST and on the raw text: every parser here resolves a duplicate
+  // before returning, so this is the only point at which the evidence exists.
+  if (hasDuplicateMemberNames(documentJson)) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(documentJson);
