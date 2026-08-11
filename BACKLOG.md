@@ -1055,3 +1055,78 @@ not the command.
 Bounded honestly: the invariant cannot tell whether the install covers the right
 directory, only that packaging is preceded by one. That is the error that actually
 occurred; a wrong `--prefix` is a different check.
+
+---
+
+## B14 — the Rust and Python publish legs depend on secrets that do not exist, and had never been run
+
+**Status:** open. **0.7.0 is published on npm and not on crates.io or PyPI**, so
+the release is PARTIAL and registry parity stays red on `main` until this is
+closed.
+**Observed:** 2026-08-11, runs `31480913884` (rust) and `31480913945` (python).
+**Affects:** `.github/workflows/release.yml`, the `publish` job.
+
+### What breaks
+
+The `publish` job authenticates each ecosystem differently:
+
+| ecosystem | credential | result |
+|---|---|---|
+| npm | trusted publishing (OIDC), **no secret** | **published** |
+| rust | `secrets.CARGO_REGISTRY_TOKEN` | `please provide a non-empty token` |
+| python | `secrets.PYPI_API_TOKEN` via `TWINE_PASSWORD` | `403 Forbidden from upload.pypi.org` |
+
+Checked directly: `repos/.../environments/release/secrets` and
+`repos/.../actions/secrets` are **both empty**. Neither token exists at either
+scope. Rust received an empty string and said so plainly; Python sent an empty
+password and PyPI answered 403, which reads as a permissions problem rather than
+as a missing secret — the same misdirection B3 recorded for npm's `ENEEDAUTH`.
+
+npm succeeded for exactly the reason the other two failed: it is the only leg that
+needs no stored credential.
+
+### Why this survived every check
+
+Because no check can see it. `verify-release-workflow.mjs` asserts the workflow's
+*structure*; a secret's existence is repository state, not file content. And the
+Rust and Python legs had **never run** — the workflow's only prior executions were
+three `vaid-skill` npm tags. B3 recorded "the release workflow has no npm
+credential, and had never run", fixed npm, and closed. The other two legs were
+left in the same condition and the entry did not say so, so "the release workflow
+works" was established for one ecosystem and assumed for three.
+
+That is the same shape as B12 one layer up: proven on the case that was exercised,
+generalised without being re-proven.
+
+### The failure was safe, again
+
+Both legs stopped at `publish` with `verify-artifact: skipped`, and both reported:
+
+> NOT RELEASED — vaid-mint@0.7.0 never reached the registry. This is the SAFE
+> failure. The version is NOT burned. Fix the cause below, then re-tag the same
+> version.
+
+`0.7.0` is unclaimed on both registries. No re-numbering is needed.
+
+### Fix shape
+
+1. Add `CARGO_REGISTRY_TOKEN` and `PYPI_API_TOKEN` to the `release` environment —
+   or, better and matching npm, move both to **trusted publishing**: crates.io and
+   PyPI both support OIDC now, which removes the stored credential rather than
+   supplying one. That also removes the failure mode where a token expires
+   silently between releases.
+2. Re-run the two failed `publish` jobs, or delete and re-cut
+   `rust-vaid-mint-v0.7.0` and `python-vaid-mint-v0.7.0`. The commit is correct
+   (`b8b29c8`) and the version is not burned, so nothing else changes.
+
+The durable half is harder than B12's and worth stating rather than pretending
+otherwise: a check cannot prove a token is *valid* without spending it. What it
+**can** assert is that every ecosystem in `release-map.json` has a publish path
+whose credential is either OIDC or a named secret that exists — presence, not
+validity. That would have caught this, and it is the honest bound.
+
+### The wider point
+
+A release path is not "working" until every leg has run. Three ecosystems, one
+proven, and the two unproven ones failed on the first attempt — which is the
+expected rate for anything never exercised, not bad luck.
