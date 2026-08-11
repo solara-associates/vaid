@@ -9,6 +9,22 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [Unreleased]
+
+### Added — mint-side E.6 conformance gate
+
+Asserts that a freshly minted document carries whole-second `Z` timestamps
+(`docs/spec/encoding.md` E.6).
+
+**This implementation was not affected** by the defect that prompted it — the
+Rust mint emitted sub-second timestamps (BACKLOG B8) while this one formats the
+profile explicitly at the point the timestamp becomes a string. The gate is added
+here anyway, for the reason the roundtrip gate already gives for testing the
+implementation that happened to be right: that is the one that silently
+regresses, because nobody is watching it.
+
+No behaviour change.
+
 ## [0.6.0]
 
 ### Fixed — a verifier canonicalizes the bytes it was PRESENTED (SECURITY / correctness)
