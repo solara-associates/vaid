@@ -494,3 +494,102 @@ requirement.
 Not done because it belongs in `synthera-site-redesign` (where the index and the
 existing checks live), not here, and because it wants an issue in that repo rather than
 a drive-by commit. Recorded here so the reasoning is not re-derived.
+
+---
+
+## B6 — a check that derives its subject set, then translates it through a hand-written table, narrows silently when the table misses
+
+**Status:** the one unsafe instance is fixed (PR #56). Recorded because the
+construction recurs and nothing stops the next one being written the unsafe way.
+**Observed:** 2026-08-11, auditing `scripts/check-readme-drift.mjs`.
+**Affects:** the `scripts/` checks generally; three use the construction today.
+
+### The shape
+
+Deriving a check's subject set from the tree instead of hardcoding it is the right
+instinct, and this repo does it deliberately — `check-readme-drift.mjs` says so in
+its header: *"A second hardcoded list would drift the same way the first one did. So
+the sets come from the tree."*
+
+Derivation alone is not sufficient. If the derived keys are **translated** through a
+hand-written table before use, that table is a second hardcoded list — the exact
+thing derivation was meant to remove — and it sits where nobody looks for one. The
+failure is not that the lookup errors. It is that the lookup *succeeds* at producing
+nothing, and the set quietly comes out smaller than reality.
+
+```js
+const ecos = [...new Set(Object.keys(map.packages).map((k) => k.split('/')[0]))];
+members: ecos.map((e) => ECO_TO_LANGUAGE[e]).filter(Boolean)   // <- the drop
+```
+
+`.filter(Boolean)` is the tell. So are `?? []`, `.filter((x) => TABLE[x])`, and
+`for (…) { if (!TABLE[k]) continue }`. Each reads as defensive hygiene and each
+converts *"I was not told about this"* into *"this does not exist."*
+
+### What it cost here
+
+`check-readme-drift.mjs` exists to catch stale enumerations in `README.md`, and its
+header promised the derivation guaranteed it: *"Add a fourth language … and every
+stale sentence here fails on the next run without anyone editing this file."*
+
+It did not. Proven by adding a `go/` entry to `release-map.json`:
+
+```
+ecosystems parsed from release-map: [ 'rust', 'python', 'npm', 'go' ]
+after map+filter(Boolean):          [ 'Rust', 'Python', 'TypeScript' ]
+DROPPED SILENTLY:                   [ 'go' ]
+
+✓ README.md — no stale enumerations, no hardcoded versions, every vector named.
+```
+
+A fourth language could have shipped with every "three languages" sentence in the
+README still passing — this file's own defect class, reproduced inside the file
+written to catch it. Fixed by halting on an untranslated ecosystem, on the principle
+the packaged conformance firewall had already settled: **a check that cannot see the
+whole set must never report PASS.**
+
+The vector half of the same file was never affected: those come from `readdirSync`
+with no translation step, so a tenth vector genuinely does appear on its own. The
+difference between the two halves is precisely the lookup table.
+
+### The other two instances, audited — both fail closed
+
+Neither reproduces the defect. Recording the finding so this is not re-derived:
+
+| script | table | behaviour on an unknown key |
+|---|---|---|
+| `release-outcome.mjs` | `REGISTRY` | `REGISTRY[ECO]?.(…)` → `url` undefined → `isPublished()` returns `null`, reported as `COULD NOT BE REACHED` and handled as a distinct third state. **Correct.** |
+| `verify-package-versions.mjs` | `ECO` | `ECO[p.registry]` → `undefined` → `releaseTagFor` builds `undefined-<pkg>-v<ver>`, matches no tag, so every published version reports as untagged. **Fails closed, but misdiagnoses.** |
+
+`release-outcome.mjs` is the model: an unreachable answer is a third state, not a
+false negative. It degrades to "unknown" and says so.
+
+`verify-package-versions.mjs` is safe but unhelpful — the remedy it prints tells you
+to tag `undefined-vaid-pop-v0.2.1`, which is not a fix for anything. A reader would
+eventually work out the table was the problem, having first gone looking for missing
+tags that are not missing.
+
+### Fix shape
+
+Not another assertion — a rule about where these tables live:
+
+1. **Every derive-then-translate site validates its table against the derived keys
+   before use, and halts on a miss.** One guard at the derivation point, not a check
+   per consumer. This is what PR #56 added to `check-readme-drift.mjs`.
+2. **`verify-package-versions.mjs` gets the same guard**, so an unknown registry says
+   so instead of blaming the tags.
+3. Optionally, a lint over `scripts/` for `.filter(Boolean)` / `?? []` sitting
+   between a derivation and an assertion. Deliberately listed last: the idiom appears
+   in four of these scripts and in three of them it is the legitimate
+   `split(…).filter(Boolean)` for dropping empty lines, so a naive rule is mostly
+   false positives and would get muted.
+
+Items 1 and 2 are small and worth doing. Item 3 probably is not, and is written down
+mainly so the next person does not spend an afternoon discovering why.
+
+### Why it has not been done
+
+Item 1 is done for the file where it mattered. Item 2 is a real but low-severity
+polish item on a check that already fails safely, and it wants to land with the guard
+factored into something shared rather than pasted a second time — which is a slightly
+larger change than the defect justifies on its own. Recorded rather than rushed.
