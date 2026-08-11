@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SubsecRound, Utc};
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 
@@ -49,6 +49,37 @@ pub const DEFAULT_VAID_TTL_HOURS: i64 = 1;
 /// The issuer seam. The mint holds one of these and asks it to issue signed
 /// documents. Sync (not async): issuing is CPU-only (key handling + one Ed25519
 /// sign); no I/O is on this path in the reference.
+/// The current instant, truncated to a whole second — the only clock read that
+/// may reach a signed document (spec `docs/spec/encoding.md` E.6).
+///
+/// # Why this exists as a named function rather than as a `.trunc_subsecs(0)` at
+/// each call site
+///
+/// Because the omission it prevents is invisible. `chrono` serializes a
+/// `DateTime<Utc>` with whatever precision it carries, and `Utc::now()` carries
+/// microseconds, so a mint that simply stores the clock emits
+/// `2026-08-11T08:04:18.165623Z` — RFC 3339, and **not** the whole-second `Z`
+/// profile E.6 requires. Nothing in the type system distinguishes a conforming
+/// instant from a non-conforming one: both are `DateTime<Utc>`, the field is
+/// serialized by a derived `Serialize` nobody reads, and the document verifies
+/// against itself, so no test that mints and then verifies can see it.
+///
+/// That is exactly how it shipped (BACKLOG B8). **Rust was the only implementation
+/// where the omission could hide.** Python formats with
+/// `strftime("%Y-%m-%dT%H:%M:%SZ")` and TypeScript routes through
+/// `utcWholeSecondRfc3339` — in both, the profile is written out at the point the
+/// timestamp becomes a string, so a reader sees it and an author choosing
+/// otherwise has to do so deliberately. `vaid-client` shows the same thing inside
+/// Rust: its request timestamp goes through
+/// `to_rfc3339_opts(SecondsFormat::Secs, true)` and has always been conforming,
+/// because there the rendering is explicit code. The mint's was a derive.
+///
+/// Naming the function is the fix for that: a clock read that is *not* this one is
+/// now visibly a clock read that is not this one.
+pub fn whole_second_now() -> DateTime<Utc> {
+    Utc::now().trunc_subsecs(0)
+}
+
 pub trait VaidIssuer: Send + Sync {
     /// Issue a VAID under a caller-supplied public key (the BYO-key path — the
     /// mint has already verified proof-of-possession of the matching private
@@ -267,13 +298,21 @@ impl ReferenceIssuer {
         // `expires_at` is a REQUIRED parameter with no default and no derived
         // fallback: consent that outlives its purpose must be somebody's stated
         // intention, never a value that arrived by omission.
+        //
+        // Both are truncated to a whole second (E.6). The caller's `expires_at` is
+        // truncated too, because a caller-supplied instant is just as capable of
+        // carrying sub-second precision as a clock read and the profile is a
+        // property of the SIGNED BYTES, not of who chose the value. Truncation
+        // moves an expiry EARLIER by under a second, so it can only ever shorten
+        // consent — the safe direction, and the reason this is a truncation rather
+        // than a rejection of the caller's argument.
         let unsigned = crate::attestation::ConsentAttestation::new(
             parent_vaid,
             child_vaid,
             child_trust_domain,
             child_tenant_id,
-            Utc::now(),
-            expires_at,
+            whole_second_now(),
+            expires_at.trunc_subsecs(0),
             scope_boundary,
             capability_set,
             self.trust_domain.clone(),
@@ -333,7 +372,9 @@ impl ReferenceIssuer {
         public_key_der: Vec<u8>,
     ) -> MintResult<Vaid> {
         let agent_id = AgentId::new();
-        let now = Utc::now();
+        // Whole-second, per E.6 — see `whole_second_now`. `expires` stays whole
+        // because a whole number of hours added to a whole second is one.
+        let now = whole_second_now();
         let expires = now + Duration::hours(self.vaid_ttl_hours);
         let lineage_hash = compute_lineage_hash(parent_vaid, &agent_id);
 
