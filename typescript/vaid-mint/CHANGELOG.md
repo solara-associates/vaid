@@ -11,7 +11,7 @@ the Rust crate is at 0.4.2, and that is correct rather than drift. Byte-identity
 between the three is asserted by the frozen conformance vectors, never by the
 version number.
 
-## [Unreleased]
+## [0.7.0]
 
 ### Fixed — a verifier canonicalizes the member VALUES it was presented (BACKLOG B7)
 
