@@ -64,7 +64,27 @@ use crate::document::{Vaid, VaidId};
 /// Defensive bound on lineage depth. A resolver map corrupted into a cycle, or an
 /// implausibly deep chain, yields [`LineageAssembly::Incomplete`] rather than
 /// looping — incomplete assembly fails closed, so this never fails *open*.
-pub const MAX_LINEAGE_DEPTH: usize = 1024;
+///
+/// **64, lowered from 1024 in 0.4.0.** Three reasons, in order of weight:
+///
+/// 1. **Exposure.** [`assemble_lineage`] is reachable over attacker-supplied
+///    input: [`crate::chain::verify_chain`] runs it against a `PresentedBundle`
+///    the *presenter* assembled. The bound therefore caps work a third party can
+///    make a verifier do, and 1024 was the loosest bound sitting on the most
+///    exposed path.
+/// 2. **Cost is quadratic.** The walk calls `chain.contains(&pid)` per hop — a
+///    linear scan of what it has already collected — so a depth-`d` walk is
+///    O(d²). 1024 admits ~500k comparisons per verification; 64 admits ~2k.
+/// 3. **Nothing legitimate is near it.** Delegation chains are single-digit deep
+///    in practice. 64 leaves roughly sixty times the observed headroom.
+///
+/// Lowering it cannot turn a rejection into an acceptance: exceeding the bound
+/// yields [`LineageAssembly::Incomplete`], which the verifier maps to
+/// [`RevocationStatus::Unavailable`] and `verify_chain` maps to
+/// [`ChainVerification::Unverifiable`](crate::chain::ChainVerification::Unverifiable).
+/// Both fail closed. The only behaviour that changes is that a chain **deeper
+/// than 64** stops verifying where it previously did — see CHANGELOG 0.4.0.
+pub const MAX_LINEAGE_DEPTH: usize = 64;
 
 /// The three-state result of a revocation check (spec R.4.3). Not a boolean.
 ///

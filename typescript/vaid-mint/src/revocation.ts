@@ -67,8 +67,26 @@ import type { Vaid } from './document.js';
  * Defensive bound on lineage depth. A resolver map corrupted into a cycle, or an
  * implausibly deep chain, yields an incomplete assembly rather than looping —
  * incomplete fails closed, so this never fails *open*.
+ *
+ * **64, lowered from 1024 in 0.4.0.** Three reasons, in order of weight:
+ *
+ * 1. **Exposure.** `assembleLineage` is reachable over attacker-supplied input:
+ *    `verifyChain` runs it against a `PresentedBundle` the *presenter*
+ *    assembled. The bound caps work a third party can make a verifier do, and
+ *    1024 was the loosest bound sitting on the most exposed path.
+ * 2. **Cost is quadratic.** The walk calls `chain.includes(...)` per hop — a
+ *    linear scan of what it has already collected — so a depth-`d` walk is
+ *    O(d²). 1024 admits ~500k comparisons per verification; 64 admits ~2k.
+ * 3. **Nothing legitimate is near it.** Delegation chains are single-digit deep
+ *    in practice. 64 leaves roughly sixty times the observed headroom.
+ *
+ * Lowering it cannot turn a rejection into an acceptance: exceeding the bound
+ * yields an incomplete assembly, which maps to `RevocationStatus.Unavailable`
+ * and `ChainVerification.Unverifiable`. Both fail closed. The only behaviour
+ * that changes is that a chain **deeper than 64** stops verifying where it
+ * previously did — see CHANGELOG 0.4.0.
  */
-export const MAX_LINEAGE_DEPTH = 1024;
+export const MAX_LINEAGE_DEPTH = 64;
 
 /**
  * The three-state result of a revocation check (spec R.4.3). Not a boolean.
