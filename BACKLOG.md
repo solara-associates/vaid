@@ -593,3 +593,299 @@ Item 1 is done for the file where it mattered. Item 2 is a real but low-severity
 polish item on a check that already fails safely, and it wants to land with the guard
 factored into something shared rather than pasted a second time — which is a slightly
 larger change than the defect justifies on its own. Recorded rather than rushed.
+
+---
+
+## B7 — the Rust verifier re-projects typed field values and returns a verdict anyway, so the three implementations disagree on eight classes of document
+
+**Status:** open — **decided 2026-08-11: preserve.** The rule below is settled;
+the implementation is tracked on the branch carrying the negative vectors, which
+lands describing the decided behaviour rather than the current one. Fixing changes
+which documents verify, so it ships with a version bump.
+
+Preserve was chosen because it is what ADR-0006 already requires, not as a
+preference between two open options. Requirement 3 ("MUST round-trip
+byte-exactly... so that canonicalization is a function of the input alone") is
+unconditional and Rust violates it; Decision 2's reject branch is scoped to
+refusing a document *as unrecognised*, and a valid-RFC-3339 timestamp is a
+recognised field in a non-canonical form, so reject would have extended the ADR
+rather than applied it. B8 settled it empirically: under reject, every document
+the Rust mint has ever produced stops verifying everywhere, including in Rust.
+**Observed:** 2026-08-11, by differential probe while building `verdict_v1.json`.
+Reproduced against untouched `main` (`9f47657`) through the pre-existing public
+API only — `serde_json::from_str::<Vaid>` followed by `verify_vaid_authenticity`.
+Nothing here depends on the graded verdict added alongside it.
+**Affects:** `crates/vaid-mint`, `python/vaid-mint`, `typescript/vaid-mint`.
+
+### What breaks
+
+ADR-0006 states the rule plainly:
+
+> An implementation MUST either verify over the presented bytes or reject the
+> document explicitly; it MUST NOT re-project and return a verdict.
+
+ADR-0006 closed this for unknown *members* — the `unknown_fields` flatten map on
+`Vaid`. It did not close it for **typed field values**. `Vaid` deserializes
+`vaid_id`/`parent_vaid` into `Uuid` and `issued_at`/`expires_at` into
+`DateTime<Utc>`, both of which **normalize on re-serialization**. The verifier
+then canonicalizes its normalized projection rather than the bytes it was handed.
+
+Eight document classes on which the three implementations disagree:
+
+| document | Rust | Python | TypeScript |
+|---|---|---|---|
+| `vaid_id` uppercased after signing | **valid** | inauthentic | inauthentic |
+| `vaid_id` braced (`{…}`) after signing | **valid** | inauthentic | unparseable |
+| `vaid_id` as `urn:uuid:…` after signing | **valid** | inauthentic | unparseable |
+| `vaid_id` hyphenless after signing | **valid** | inauthentic | unparseable |
+| `parent_vaid: null` deleted after signing | **valid** | inauthentic | inauthentic |
+| `expires_at` as `…+00:00` (signed) | inauthentic | **valid** | **valid** |
+| `expires_at` as `….000Z` (signed) | inauthentic | **valid** | **valid** |
+| duplicate JSON keys | unparseable | **valid** | **valid** |
+
+Both directions are live defects, and they are different defects.
+
+**Rust accepts documents that were altered after signing.** The first five rows
+were signed over one byte string and presented as a different one, and Rust
+vouches for them. The alterations are all identity-preserving today — the same
+UUID, the same absent parent — so no privilege changes hands, and that is the
+only reason this is a correctness defect rather than a forgery bypass. It is not
+a property anyone should rely on continuing to hold: it rests on the current
+field set happening to contain no typed value whose normalization is semantically
+significant.
+
+**Python and TypeScript accept documents Rust rejects.** Rows six and seven are
+an interop break, not a hypothetical: `Date.prototype.toISOString()` emits
+`….000Z` *by default*, so a TypeScript caller who lets the platform format a
+timestamp mints a document that verifies in two implementations and fails in the
+third. There is no error message anywhere that would explain why.
+
+**Duplicate keys** are a parser differential: `serde` rejects a repeated struct
+field, `json.loads` and `JSON.parse` both take last-wins.
+
+### How it presents
+
+As a signature failure with no explanation — `verify_vaid_authenticity` returns
+`false` and says nothing, because that is its documented contract. The holder has
+a document that another implementation calls genuine.
+
+Rust's own ADR-0006 gate would catch every row: `every_case_round_trips_byte_exactly`
+asserts exactly the property being violated. It passes because no case in
+`roundtrip_v1.json` uses an alternate UUID spelling, an omitted `parent_vaid`, or
+a non-`Z` timestamp. The test is right and its inputs are too narrow — the
+vector, not the assertion, is what is missing.
+
+### A documented safety property that is not held
+
+All three implementations carry this sentence on `has_conforming_timestamps`:
+
+> *Not consulted by authenticity verification: a document that reached a verifier
+> with a non-conforming timestamp will already fail the signature check, because
+> the verifier re-serializes into the profile and recomputes different bytes.*
+
+That is true of Rust and **false of Python and TypeScript**, which pass the
+timestamp string through verbatim. Measured directly: for `…+00:00` and `….000Z`,
+Python reports `has_conforming_timestamps=False` **and** `verify_vaid_authenticity=True`
+on the same document. The comment describes one implementation's behaviour and is
+asserted in all three.
+
+### Why `verdict_v1.json` does not cover these
+
+Deliberately. A vector encoding the current behaviour would freeze the defect as
+the specification — the failure mode this repository has already recorded as
+"tests encoding vulnerabilities as requirements". These rows belong in a vector
+only once the rule below is decided, and then the vector pins the decision.
+
+### Fix shape
+
+Pick one rule and apply it in all three:
+
+- **Preserve.** Keep `vaid_id`, `parent_vaid`, `issued_at` and `expires_at` as
+  presented strings inside the signed projection, validating them separately.
+  Rust stops normalizing; Python and TypeScript are already correct. Strictly
+  honours ADR-0006 and makes Rust match the other two rather than the reverse.
+- **Reject.** Have every implementation refuse any non-canonical spelling
+  outright — lowercase hyphenated UUIDs and whole-second `Z` timestamps only.
+  ADR-0006 permits this ("an implementation MAY refuse a document carrying
+  members it does not recognise") provided the refusal is explicit. Narrower, and
+  it makes E.6 enforced rather than advisory.
+
+Preserve is the smaller change and the one consistent with ADR-0006's stated
+preference. Either way the duplicate-key rule needs stating explicitly, because
+"whatever three JSON parsers happen to do" is not a specification.
+
+Whichever is chosen, the fix belongs with a version bump: it changes which
+documents verify.
+
+---
+
+## B8 — the Rust mint emits timestamps that fail the repo's own E.6 profile
+
+**Status:** open. Independent of B7's outcome and worth fixing either way, but it
+**decides** B7: it is the reason the "reject non-canonical forms" option would
+invalidate the reference mint's own output.
+**Observed:** 2026-08-11, minting a root VAID through `MintService::mint_root`
+and inspecting the serialized document.
+**Affects:** `crates/vaid-mint` (the mint side, not the verifier).
+
+### What breaks
+
+The Rust issuer timestamps documents with `Utc::now()` and truncates nowhere.
+`chrono`'s `Serialize for DateTime<Utc>` emits sub-second precision whenever the
+value has any, so a freshly minted document carries:
+
+```
+issued_at  = "2026-08-11T08:04:18.165623Z"
+expires_at = "2026-08-12T08:04:18.165623Z"
+```
+
+`docs/spec/encoding.md` E.6 specifies whole-second RFC 3339 in UTC with a literal
+`Z`. The document above does not match it, and `has_conforming_timestamps`
+returns `false` for it — the repository's own predicate, applied to the
+repository's own reference mint.
+
+The other two mints truncate explicitly and are conforming: Python formats with
+`strftime("%Y-%m-%dT%H:%M:%SZ")`, TypeScript routes through
+`utcWholeSecondRfc3339`. Rust is the only one that does not, and it is the one
+whose language makes the omission invisible — nothing in the type system marks
+`Utc::now()` as carrying more precision than the profile allows.
+
+### How it presents
+
+It does not, today. A Rust-minted document verifies everywhere: Rust signs over
+the sub-second form and Python and TypeScript canonicalize the presented string
+verbatim, so all three agree. The defect is silent precisely because the
+verifiers are permissive about a form the spec says they should not accept.
+
+### Why it decides B7
+
+Under B7's **reject** option — every implementation refuses non-whole-second
+timestamps — every document this mint has ever produced stops verifying, in every
+implementation including Rust's own. That is not a migration; it is the reference
+mint invalidating its own output. Reject only becomes tenable if this is fixed
+first *and* no already-issued Rust-minted document needs to keep verifying.
+
+Under B7's **preserve** option nothing here changes, because preserve leaves
+permissive timestamp handling exactly as it is.
+
+### Fix shape
+
+Truncate at the issuer: `Utc::now().trunc_subsecs(0)` for `issued_at`, and the
+same for the derived `expires_at`. One line each, on the mint side only.
+
+Nothing frozen moves. Every vector supplies fixed whole-second timestamps
+(verified: no vector in the tree carries a sub-second or offset timestamp), so no
+digest changes and no vector is re-frozen. It changes the bytes *future* mints
+produce, which is a behaviour change deserving a version bump but not a wire
+change.
+
+The durable half is a test asserting `has_conforming_timestamps` on a
+freshly-minted document in each language. It is a one-line assertion that nobody
+had written, which is why a non-conforming mint shipped.
+
+---
+
+## B9 — `is_expired` takes an evaluation instant in one implementation and not the others
+
+**Status:** open. Recorded rather than fixed: aligning it is an API change, and
+which direction to align is a design decision.
+**Observed:** 2026-08-11, while writing `verdict_v1.json`.
+**Affects:** `crates/vaid-mint`, `python/vaid-mint`, `typescript/vaid-mint`.
+
+### What breaks
+
+The three expiry predicates do not have the same shape:
+
+| implementation | signature |
+|---|---|
+| TypeScript | `isExpired(vaid, now = new Date())` — accepts an instant |
+| Rust | `Vaid::is_expired(&self)` — reads the wall clock, no parameter |
+| Python | `is_expired(vaid)` — reads the wall clock, no parameter |
+
+A caller can ask TypeScript "was this expired at time T". The other two can only
+be asked "is this expired now". Behaviour agrees whenever the default is used, so
+nothing currently gives a wrong answer.
+
+### Why it matters, and what it already cost
+
+It is a **testability** defect more than a correctness one, and it constrained
+`verdict_v1.json` directly. A conformance vector cannot pin a verdict against a
+chosen instant, because two of the three implementations are structurally unable
+to be given one. Expiry is therefore pinned by *distance* instead — cases use a
+timestamp two decades past and nine centuries hence — which works but cannot
+express the case that actually matters: a document expiring at a boundary, and
+whether the comparison is inclusive or exclusive at exactly `expires_at`.
+
+That boundary is untested in all three implementations, and untestable across
+them while this asymmetry stands. Rust and Python use `>` against the wall clock;
+whether TypeScript agrees at the exact millisecond of expiry is unverified.
+
+`verify_vaid_standing` deliberately does **not** forward TypeScript's parameter,
+so the graded verdict does not widen the asymmetry — but it does not close it
+either.
+
+### Fix shape
+
+Add an optional instant to Rust and Python, defaulting to now, so all three take
+the same argument. Additive in all three: no existing call site changes. Then
+vector the boundary case, which is the point of doing it.
+
+The alternative — removing the parameter from TypeScript — is smaller but wrong:
+it deletes the only implementation's ability to answer the question, to buy
+symmetry.
+
+---
+
+## B10 — the structural parse gate is a hand-written mirror of a Rust struct, and nothing checks it still mirrors
+
+**Status:** open. Introduced knowingly alongside `verdict_v1.json`; recorded here
+because the weakness is in the design, not in the current contents.
+**Observed:** 2026-08-11, on writing the gate.
+**Affects:** `python/vaid-mint` (`_REQUIRED_MEMBERS`), `typescript/vaid-mint`
+(`REQUIRED_MEMBERS`).
+
+### What breaks
+
+Rust's `Vaid` is a typed struct, so "is this JSON a VAID document at all" is a
+question `serde` answers for free. Python and TypeScript hand their verifiers a
+plain map and have no such gate, so one was written: a table of required members
+and their types, in each of the two languages, mirroring the Rust struct
+field-for-field.
+
+**Nothing verifies that the mirrors still match the struct.** Add a field to
+`Vaid` and Rust starts requiring it while Python and TypeScript keep accepting
+documents without it. The two languages diverge from the reference silently, and
+the failure is an *absence* — a member nobody listed — which no directory walk,
+no type check and no existing conformance vector can see.
+
+### How it presents
+
+As a fresh instance of B7: the three implementations return different verdicts on
+the same bytes, with the untyped two accepting what Rust rejects. It would be
+found the way B7 was found — by differential probe — rather than by any check.
+
+### The honest caveat this places on `verdict_v1.json`
+
+The malformed-input cases in that vector currently agree across all three
+implementations. That agreement is **constructed, not discovered**: the Python and
+TypeScript gates were written to mirror Rust's behaviour, so the vector confirms
+a mirror was built correctly rather than establishing that three independent
+implementations happened to converge.
+
+That is a materially weaker claim than the vector's other cases, where the
+authenticity check order was already identical in all three before anything was
+written, and the agreement was observed rather than arranged. Both kinds of case
+live in one file and the file does not distinguish them; this entry is where the
+distinction is recorded.
+
+### Fix shape
+
+Derive the required-member set instead of restating it — emit it from the Rust
+struct at build time into a small JSON manifest, vendor that alongside the
+vectors, and have the Python and TypeScript gates read it. The existing
+freeze/`cmp` machinery then covers it for free, and adding a field to `Vaid`
+becomes a change all three see at once.
+
+Failing that, the minimum is a check that the three member lists are the same
+set — which catches drift without catching type drift, and is strictly better
+than the nothing that guards it now.
