@@ -114,6 +114,67 @@ came from, so it can be reviewed and withdrawn.
 State lives in `~/.vaid` (`VAID_HOME` to override). `issuer.json` is a private
 signing seed, created `0600`.
 
+## Working in this directory: `main` is published
+
+**Anything committed to `skill/` on `main` can reach a new user before it is
+released.** This directory is not staged behind a version tag or a release branch.
+Three channels read it, and two of them read `main` directly:
+
+| channel | what it takes | when |
+|---|---|---|
+| npm (`vaid-skill`) | the published tarball | only on release |
+| `.well-known` index → `npx skills add` | `skills/vaid/SKILL.md` at the vendored digest | on site deploy |
+| Claude Code plugin marketplace | **whatever `.claude-plugin/` and `skills/` contain at `main` head** | nightly, automatically |
+
+The marketplace catalog pins each plugin to a commit SHA and re-pins it as the
+repository moves. Nothing declares which commit is a release: tags do not hold the
+pin — entries declaring `v1.0.1` and `v0.1.0` are pinned to their default branch
+instead — so the pin follows head. A fresh `/plugin install` clones at that pin.
+
+So the rule is:
+
+> **`skill/` on `main` should only ever carry shippable state.** Work in progress
+> belongs on a branch until it is good enough for a stranger to install.
+
+The operational consequence, stated so nobody has to discover it when CI turns red:
+
+> **Any change to `skill/` on `main` needs a release tag to follow it, or the pin
+> check goes red.** That includes documentation-only changes — a plugin install
+> clones this whole directory, so a README edit is a change to what users receive.
+> The check compares the git tree hash of `skill/` at the catalog's pin against the
+> tree at `vaid-skill-v<version>`; any difference is a difference, and it does not
+> care whether the change was cosmetic.
+>
+> That is the cost of not having a release branch, and it is the intended shape
+> rather than a rough edge: it makes "`main` drifted past the release" a red X in
+> `anchor-origin.yml` instead of something a user finds first. If a change to this
+> directory is not worth tagging a release for, it is not worth landing on `main`.
+
+Two things soften this, and neither removes it:
+
+- `version` in `.claude-plugin/plugin.json` gates **updates for people who already
+  installed** — they do not move until it is bumped. It does **nothing** for new
+  installs, which take the pin regardless.
+- A pin that advances to a commit where `skill/` is byte-identical is harmless. Only
+  a *content* change to this directory can reach anyone.
+
+The alternatives — a release branch, or splitting this directory into its own
+repository — were considered and declined: they buy a guarantee at the cost of a
+second release credential and a cross-repo synchronisation problem. Recorded so the
+trade is revisited deliberately if this ever bites, rather than re-argued from
+scratch. See vaid `BACKLOG.md` for the evidence behind the pin behaviour.
+
+### Do not put this note in `SKILL.md`
+
+`skills/vaid/SKILL.md` is a **digest-gated artifact**. Its bytes are hashed into
+`https://solara.associates/.well-known/agent-skills/index.json`, and the `skills`
+CLI refuses any artifact whose recomputed digest disagrees with the published one.
+Editing that file — even to add a comment — invalidates the published digest until
+the site index is re-vendored *and* redeployed. In the window between, the refusal is
+silent: installers are told "no well-known skills found", with no checksum error and
+nothing reported back to us (`BACKLOG.md` B4). Notes for humans go here; that file
+changes only when the skill's behaviour does.
+
 ## Tests
 
 ```bash
