@@ -1159,8 +1159,20 @@ expected rate for anything never exercised, not bad luck.
 
 ## B15 — the PyPI release carries no provenance attestation
 
-**Status:** open. Everything else about the Python leg is sound; this is the one
-claim it cannot currently support.
+**Status:** **fixed in the workflow** 2026-08-11, and **unproven until the next
+release** — proving it needs a version to publish, and cutting one solely to
+demonstrate a fix is not a reason to burn a version number. Verify at source on
+the next release, not from the JSON pointer.
+
+**Correction to the first draft of this entry**, in the same class as B12's: the
+conclusion was right and one line of the evidence was not. It cited
+`/pypi/{pkg}/{version}/json → provenance: null` as proof. That field is null for
+**every package on PyPI** — measured against cryptography, pydantic, urllib3,
+attrs, rich, packaging and build, all of which return null, and cryptography
+demonstrably *does* attest. It proves nothing either way. The load-bearing
+evidence is the **integrity endpoint**, which was also cited and is the real
+signal: 404 `No provenance available` for vaid-mint, HTTP 200 with a full bundle
+for cryptography.
 **Observed:** 2026-08-11, immediately after `vaid-mint` 0.7.0 published to PyPI
 through trusted publishing.
 **Affects:** `.github/workflows/release.yml`, the Python publish step.
@@ -1171,9 +1183,12 @@ The package published, through OIDC, with no stored credential — and with **no
 740 attestation**. Measured at source rather than inferred:
 
 ```
-pypi.org/pypi/vaid-mint/0.7.0/json  →  provenance: None   (both sdist and wheel)
-pypi.org/integrity/.../provenance   →  HTTP 404
+pypi.org/integrity/vaid-mint/0.7.0/<file>/provenance  →  404 No provenance available
+pypi.org/integrity/cryptography/50.0.0/<file>/provenance → 200, 1 attestation, pyca/cryptography
 ```
+
+(The JSON API's `provenance` key is null for both and for every other package
+checked; it is not the signal. See the status note above.)
 
 Trusted publishing and attestation are **two different things**, and having the
 first does not give you the second. `twine upload` does not generate attestations
@@ -1195,20 +1210,42 @@ something rather than by reading a page. "This artifact was built from this comm
 by this workflow" is exactly such a claim, and on PyPI it currently rests on
 trusting the release notes.
 
-### Fix shape
+### Fix, as landed — and `--attestations` alone is a NO-OP
 
-Add `--attestations` to the `twine upload` invocation. It requires trusted
-publishing (satisfied) and twine >= 6.1.0 (already asserted for the OIDC floor, so
-no new version constraint). The alternative — switching to
-`pypa/gh-action-pypi-publish` — would get attestations by default but replaces a
-step whose behaviour is now understood with one whose is not, for no other gain.
+The fix shape first written here was wrong, and wrong in the way that matters:
+**`twine upload --attestations` does not generate anything.** twine only
+*discovers* adjacent `{dist}.*.attestation` files and uploads them; generation is
+deliberately kept out of twine. Shipping the flag by itself would have looked like
+a fix, changed nothing, and left the gap with a closed ticket over it.
 
-The durable half belongs in `verify-artifact`, which already proves the npm
-attestation from a clean consumer install (`npm audit signatures`). The Python
-equivalent is to assert the `provenance` field is non-null on the published files.
-Note the ordering constraint: that check can only run **after** publish, so it
-fails a release rather than preventing one — which is the right trade, because the
-alternative is not checking at all.
+What landed is generation plus upload:
+
+```
+python -m pip install ... pypi-attestations
+python -m pypi_attestations sign <dir>/dist/*
+twine upload --attestations <dir>/dist/*
+```
+
+`pypi_attestations sign` uses the workflow's **ambient OIDC identity** — the same
+`id-token: write` trusted publishing already requires — so it adds no credential
+and no new trust relationship. PyPI rejects an attestation whose identity is not a
+configured Trusted Publisher, so this cannot succeed unless the publisher is the
+one already configured.
+
+`pypa/gh-action-pypi-publish` would do both by default, and was still declined: it
+would replace the build, `twine check`, floor assertion and directory handling —
+all now understood — with one opaque step, to save two lines.
+
+The durable half landed in `verify-artifact`, the Python counterpart of
+`npm audit signatures`: for every file PyPI lists, query the integrity endpoint and
+require at least one attestation. Proven in both directions before shipping —
+vaid-mint 0.7.0 fails it, naming both files; cryptography 50.0.0 passes across all
+46 of its files.
+
+It runs **after** publish, so it fails a release rather than preventing one. That
+is the right trade: the alternative is not checking, which is what this entry was.
+`release-outcome.mjs` already separates a published-but-unverified release from an
+unpublished one, so the report stays accurate.
 
 ---
 
@@ -1254,3 +1291,73 @@ Both settings live beside the publisher configuration that is already in place:
 crates.io under the crate's Trusted Publishing settings, PyPI under the project's
 Publishing settings. Neither needs a workflow change — the workflow already uses
 no token.
+
+---
+
+## B17 — the release environment's approval gate cannot be approved from the GitHub UI
+
+**Status:** open, and **worked around** on every release so far. The workaround is
+not obvious and should not have to be rediscovered.
+**Observed:** twice, on both 0.7.0 attempts — runs `31480913884` / `31480913945` /
+`31480914087`, then `31485249456` / `31485249478`.
+**Affects:** anyone releasing this repository.
+
+### What breaks
+
+The `publish` job is gated on the `release` environment, whose reviewer is the
+`solara-associates` account. Approving through the GitHub web UI **does not
+register**: the run stays `waiting` and
+`GET /actions/runs/{id}/pending_deployments` continues to return the pending
+entry. Observed twice, on separate releases, more than ten minutes after
+approving, and once after a further 90-second wait.
+
+The cause is not established. What *is* established is that the API route works
+and the UI route did not, on both occasions.
+
+### The workaround, exactly
+
+```bash
+ENVID=$(gh api repos/solara-associates/vaid/actions/runs/$RUN/pending_deployments \
+          -q '.[0].environment.id')
+
+echo "{\"environment_ids\":[$ENVID],\"state\":\"approved\",\"comment\":\"...\"}" \
+  | gh api -X POST repos/solara-associates/vaid/actions/runs/$RUN/pending_deployments --input -
+```
+
+**`environment_ids` must be a real JSON array of integers.** The obvious `gh api`
+form is wrong and fails unhelpfully:
+
+```
+gh api -X POST .../pending_deployments -f "environment_ids[]=$ENVID" -f state=approved
+  → HTTP 422: For 'items', "19439529798" is not an integer.
+```
+
+`-f` sends every value as a string, and the endpoint rejects a stringified id. So
+the payload has to be built as JSON and piped through `--input -`. That is the
+whole trick, and it is the reason this entry exists rather than a one-line note.
+
+### Check the commit before approving
+
+Related, and sharper than it sounds: a release may have **more than one run
+pending for the same tag** if the tags were re-cut while earlier runs were waiting.
+That happened here — two full sets of runs, on different commits, both showing
+`vaid-mint-v0.7.0`, one of them from a commit whose vector was two cases short.
+Nothing in the UI distinguishes them.
+
+Always confirm what you are approving:
+
+```bash
+gh run list --workflow=release.yml --limit 6 \
+  --json databaseId,headBranch,headSha,status
+```
+
+and cancel the stale runs before approving the current ones. A publish cannot be
+taken back.
+
+### Fix shape
+
+Diagnose the UI failure first — it may be an account/permission quirk rather than
+anything about this repository, and if so the finding belongs upstream rather than
+here. Until then the API route is the release procedure, and it should be written
+into `CONTRIBUTING.md` beside the tag instructions rather than living only in a
+backlog entry, because the person who needs it is mid-release when they need it.
