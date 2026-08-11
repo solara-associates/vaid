@@ -969,9 +969,18 @@ common case and still strictly more than the nothing that guards it now.
 
 ---
 
-## B12 — the release workflow never installs workspace dependencies, so no npm workspace package can be released through it
+## B12 — the release workflow packaged an npm workspace member before installing it
 
-**Status:** open. **Blocking the npm half of the 0.7.0 release**, observed live.
+**Status:** **fixed** 2026-08-11, unreleased. Blocked the first 0.7.0 attempt.
+
+**Correction to the first draft of this entry.** It said "neither job runs
+`npm ci`". That was wrong, and wrong in a way worth recording: `preflight` *had*
+the install all along, in a step that ran **after** the dry-run, and `publish`
+installs correctly inside its own `run:` block and was never broken. The defect is
+one misordered step in one job — an **ordering** error, not an absence. The
+correct fix was to move an existing step, not to add a new one; the first attempt
+at this fix added a duplicate install to both jobs and would have papered over the
+real shape.
 **Observed:** 2026-08-11, run `31478285695` for tag `npm-vaid-mint-v0.7.0` — the
 first attempt to release an npm **workspace** package through this workflow.
 **Affects:** `.github/workflows/release.yml`, both the `preflight` and `publish`
@@ -979,10 +988,9 @@ jobs, for every package under `typescript/`.
 
 ### What breaks
 
-Neither job runs `npm ci` before it packages. `preflight` installs a
-trusted-publishing-capable npm and goes straight to
-`npm publish --dry-run --workspace vaid-mint --prefix typescript`; `publish` does
-the same and goes straight to `npm publish`.
+`preflight` ran `npm publish --dry-run` **before** its `npm build + test` step —
+the step that runs `npm ci --prefix typescript && npm run build --prefix typescript`.
+The install existed; it simply came second.
 
 `vaid-mint`'s `prepublishOnly` is `npm run build && npm test`, so packaging
 compiles the package. With no `node_modules` there is no `typescript`, no
@@ -1020,73 +1028,30 @@ the first time. The historical failures ran the dry-run *inside* verify-artifact
 after publishing; this one runs it in preflight, before. A version number was not
 consumed and the same tag can be re-cut.
 
-### Fix shape
+### Fix, as landed
 
-Install and build the workspace before packaging, in **both** jobs, mirroring what
-CI already does:
+`npm build + test` moved to immediately **before** the dry-run in `preflight`. One
+step relocated; no step added, and `publish` untouched because it was already
+correct. Building and testing before packaging is also the right order on its own
+terms: prove it compiles and its suite passes, then prove it packages.
 
-```yaml
-- name: Install + build the TypeScript workspace
-  if: needs.resolve.outputs.eco == 'npm' && needs.resolve.outputs.ws != ''
-  run: npm ci --prefix "$WS" && npm run build --prefix "$WS"
-```
+The durable half is a new invariant in `verify-release-workflow.mjs`: **in any job
+that packages, an install must appear, and appear before the first packaging
+step.** Ordering, not mere presence — presence was already satisfied by the broken
+version, so a presence check would have passed it.
 
-Guarded on `ws` being non-empty so the non-workspace case (`skill/`) is unchanged.
+Proven to fire in both directions, and against the real defect: run against the
+unfixed workflow it reports *"job `preflight` runs `npm ci` AFTER it packages"*;
+with the step deleted it reports *"packages without ever running `npm ci`"*; with
+the fix in place it is green.
 
-The durable half is a check that the release workflow packages every releasable
-npm package the way CI builds it — `verify-release-workflow.mjs` already asserts
-structural invariants about *which job* steps live in, and this is the same class
-of invariant about *what must precede* packaging. Without it the next package with
-a build step in its publish path fails the same way.
+One trap found while writing it: matching `npm publish` naively also matches the
+step's `- name:` line, which necessarily precedes the `run:` block that installs —
+so the check reported that `publish` installs after it packages, the exact opposite
+of what that job does. Step names are now excluded on both sides. Same lesson as
+the comment-stripping already in that file: something that *mentions* a command is
+not the command.
 
----
-
-## B13 — the substrate carries the B7 defect in production
-
-**Status:** open, and **deliberately not fixed here**. This is SYNTHERA's code and
-another session's ground; this entry exists so it is not discovered a third time.
-**Observed:** recorded in ADR-0006's own Consequences (7 August 2026), confirmed
-still open when B7 was fixed in the reference on 2026-08-11.
-**Affects:** `synthera-types` — **not** this repository.
-
-### What breaks
-
-ADR-0006 says it plainly, under "Costs, accepted knowingly":
-
-> **The same defect exists in the substrate** (`synthera-types`
-> `canonical_vaid_signing_bytes` projects through its typed `Vaid`), and it is in
-> production. Confirmed by test: a valid 17-key document is re-projected to 16 and
-> rejected. That is a synthera fix, tracked separately, and this ADR is the
-> normative statement it will cite.
-
-That was the *unknown-member* half. B7 established that the same re-projection
-also applies one level down, to the **values** of members the type does name —
-UUID spellings, timestamp forms, and the difference between an absent member and a
-present null. A typed `Vaid` in any language normalizes those on re-serialization
-unless it is written not to.
-
-So the substrate plausibly carries **both** halves: the one ADR-0006 recorded, and
-the one B7 found. The reference implementation now holds neither.
-
-### Why this entry exists rather than a fix
-
-Three reasons, in order:
-
-1. It is not this repository's code. A cross-repo edit from here would be a change
-   nobody in that repo reviewed.
-2. It is in production, and the fix changes which documents verify — the same
-   property that made B7 a release-gated change here.
-3. **It has now been recorded twice and fixed zero times.** ADR-0006 noted it in
-   August and tracked it "separately"; B7 rediscovered the same class from first
-   principles four days later without anyone connecting the two. A defect that
-   gets re-found rather than fixed is a defect with no owner, and the next
-   rediscovery costs the same again.
-
-### What the substrate fix should cite
-
-`docs/spec/encoding.md` **E.1a** — values are canonicalized as presented; absent
-and present-null are different documents; parse permissively and verify strictly —
-together with ADR-0006 Requirement 3, which E.1a makes explicit at the value level.
-`verdict_v1.json` is the executable form: it pins all eight classes, so a substrate
-implementation can be held to the same contract by running it rather than by
-reading this.
+Bounded honestly: the invariant cannot tell whether the install covers the right
+directory, only that packaging is preceded by one. That is the error that actually
+occurred; a wrong `--prefix` is a different check.
