@@ -13,6 +13,31 @@ version number.
 
 ## [Unreleased]
 
+### Fixed — a verifier canonicalizes the member VALUES it was presented (BACKLOG B7)
+
+ADR-0006 closed re-projection for unrecognised *members*. It stayed open for
+recognised members whose **values** have more than one spelling, and the three
+implementations disagreed on eight classes of document as a result. All eight now
+return the same verdict and the same reason; the differential probe that found
+them reports zero divergences across thirty-four inputs, and each class is pinned
+by a case in `verdict_v1.json`.
+
+Normative, in `docs/spec/encoding.md`: **E.1a** (values are canonicalized as
+presented; absent and present-null are different documents; parse permissively and
+verify strictly) and **E.7a** (a duplicate member name at any depth is not a
+document). E.6's stated rationale was corrected — it claimed verifiers re-serialize
+timestamps into the profile, which described one implementation and was never true
+of the other two. E.6 binds **producers**; a non-conforming timestamp still
+verifies, because the signature covers the bytes actually carried.
+
+### Fixed — duplicate member names are refused (spec E.7a)
+
+`serde` refused a repeated struct field while `json.loads` and `JSON.parse` kept
+the last occurrence silently, so the same bytes were unparseable to one
+implementation and authentic to two. All three now refuse, at any depth, scanning
+the raw text — the only place the evidence survives, since every parser resolves
+the collision before returning.
+
 ### Added — mint-side E.6 conformance gate
 
 Asserts that a freshly minted document carries whole-second `Z` timestamps

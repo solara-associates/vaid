@@ -54,7 +54,9 @@ use vaid_mint::document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, scope_contains, Vaid, SCOPE_SEPARATORS,
 };
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
-use vaid_mint::verify::verify_vaid_authenticity;
+use vaid_mint::mint::scope_attenuates_within;
+use vaid_mint::revocation::RevocationStatus;
+use vaid_mint::verify::{verify_vaid_authenticity, verify_vaid_standing_from_json, VaidVerdict};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_vectors.rs"));
 
@@ -501,6 +503,201 @@ fn check_roundtrip(v: &Value) -> Check {
     Ok(())
 }
 
+/// `verdict_v1.json` — the negative path (graded verdicts).
+///
+/// The other checks in this file ask "does the installed mint produce the same
+/// bytes as everyone else". This one asks "does it REFUSE the same way, and say
+/// the same thing about why". The happy-path vectors cannot answer that: they only
+/// ever exercise documents that work.
+///
+/// It asserts the REASON, not just the boolean. Three implementations that reject
+/// the same document for three different reasons agree on every boolean and
+/// disagree about what happened — and a `cargo install` consumer whose build
+/// disagrees with the vector on a reason has a mint that will log, alert and retry
+/// differently from every other deployment.
+///
+/// It also refuses to pass a vector that has lost its teeth: no positive control
+/// on either surface, a single refusal reason across every negative case, or a
+/// vocabulary that has drifted from [`VaidVerdict::ALL`] are all BLOCKERs. A green
+/// firewall over a vector that asserts nothing is the masked-green defect this
+/// crate keeps finding.
+fn check_verdict(v: &Value) -> Check {
+    let cases = match v["cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("verdict vector carries no cases"),
+    };
+    let pk = unhex(
+        v["ed25519"]["kernel_public_key_hex"]
+            .as_str()
+            .unwrap_or_default(),
+    );
+
+    let mut positives = (0usize, 0usize); // (standing, attenuation)
+    let mut negatives = (0usize, 0usize);
+    let mut refusal_reasons: BTreeSet<String> = BTreeSet::new();
+    let mut exercised: BTreeSet<String> = BTreeSet::new();
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or_default();
+        let why = case["why"].as_str().unwrap_or_default();
+        let expected_reason = match case["expected_reason"].as_str() {
+            Some(r) => r,
+            None => return err(format!("verdict case {name:?} has no expected_reason")),
+        };
+        let expected_valid = match case["expected_valid"].as_bool() {
+            Some(b) => b,
+            None => {
+                return err(format!(
+                    "verdict case {name:?} has no boolean expected_valid"
+                ))
+            }
+        };
+
+        let (reason, valid) = match case["surface"].as_str() {
+            Some("standing") => {
+                let text = match case["document_json"].as_str() {
+                    Some(t) => t,
+                    None => return err(format!("standing case {name:?} has no document_json")),
+                };
+                let rev = match case["revocation"].as_str() {
+                    Some("not_revoked") => RevocationStatus::NotRevoked,
+                    Some("revoked") => RevocationStatus::Revoked,
+                    Some("unavailable") => RevocationStatus::Unavailable,
+                    other => {
+                        return err(format!(
+                            "standing case {name:?} names unknown revocation state {other:?}"
+                        ))
+                    }
+                };
+                let verdict = verify_vaid_standing_from_json(&pk, text, rev);
+                (verdict.code().to_string(), verdict.is_valid())
+            }
+            Some("attenuation") => {
+                let scope_of = |k: &str| -> Vec<String> {
+                    case[k]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .map(|s| s.as_str().unwrap_or_default().to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                let ok =
+                    scope_attenuates_within(&scope_of("parent_scope"), &scope_of("child_scope"));
+                (
+                    if ok { "attenuated" } else { "scope_escalation" }.to_string(),
+                    ok,
+                )
+            }
+            other => {
+                return err(format!(
+                    "verdict case {name:?} names unknown surface {other:?}"
+                ))
+            }
+        };
+
+        if reason != expected_reason {
+            return err(format!(
+                "verdict case {name:?}: reason {reason:?} != frozen {expected_reason:?} — {why}\n  \
+                 A reason mismatch is a divergence even where the boolean agrees: this \
+                 build and the vector disagree about WHAT HAPPENED."
+            ));
+        }
+        if valid != expected_valid {
+            return err(format!(
+                "verdict case {name:?}: valid={valid}, frozen {expected_valid} — {why}"
+            ));
+        }
+
+        let is_standing = case["surface"] == "standing";
+        if expected_valid {
+            if is_standing {
+                positives.0 += 1;
+            } else {
+                positives.1 += 1;
+            }
+        } else {
+            if is_standing {
+                negatives.0 += 1;
+            } else {
+                negatives.1 += 1;
+            }
+            refusal_reasons.insert(reason.clone());
+        }
+        exercised.insert(expected_reason.to_string());
+    }
+
+    // The vector must still have teeth. Each of these is a way it could be edited
+    // into something that passes for every implementation regardless of behaviour.
+    if positives.0 == 0 || positives.1 == 0 {
+        return err(
+            "the verdict vector has lost a positive control (standing and attenuation \
+             each need one) — an implementation that refused every input would pass it",
+        );
+    }
+    if negatives.0 == 0 || negatives.1 == 0 {
+        return err(
+            "the verdict vector has lost a negative case on one of its surfaces — an \
+             implementation that accepted every input would pass it",
+        );
+    }
+    if refusal_reasons.len() < 2 {
+        return err(format!(
+            "every refusing case expects the same reason ({refusal_reasons:?}) — a \
+             boolean-only implementation would pass this vector, so the reason \
+             assertions would be checking nothing"
+        ));
+    }
+
+    // Vocabulary agreement, both directions: a reason the vector declares that this
+    // build cannot return means the vector was written against a different
+    // implementation; a verdict this build can return that the vector never names
+    // is a state shipping unchecked.
+    let declared: BTreeSet<String> = v["reasons"]["standing"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|s| s.as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let implemented: BTreeSet<String> = VaidVerdict::ALL
+        .iter()
+        .map(|r| r.code().to_string())
+        .collect();
+    if declared != implemented {
+        return err(format!(
+            "the verdict vector's standing vocabulary and this build's VaidVerdict \
+             disagree\n  only in the vector:         {:?}\n  only in the implementation: {:?}",
+            declared.difference(&implemented).collect::<Vec<_>>(),
+            implemented.difference(&declared).collect::<Vec<_>>(),
+        ));
+    }
+    let all_declared: BTreeSet<String> = declared
+        .iter()
+        .cloned()
+        .chain(
+            v["reasons"]["attenuation"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|s| s.as_str().unwrap_or_default().to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )
+        .collect();
+    let unexercised: Vec<_> = all_declared.difference(&exercised).collect();
+    if !unexercised.is_empty() {
+        return err(format!(
+            "reason(s) declared by the vector but exercised by no case: {unexercised:?} \
+             — a state with no case behind it is a claim with no evidence"
+        ));
+    }
+    Ok(())
+}
+
 /// Every vector this firewall knows how to check, by filename.
 ///
 /// The embedded set is enumerated by `build.rs`; this table says what each one
@@ -512,6 +709,7 @@ const VECTOR_CHECKS: &[VectorCheck] = &[
     ("attestation_v1.json", check_attestation),
     ("scope_v1.json", check_scope),
     ("roundtrip_v1.json", check_roundtrip),
+    ("verdict_v1.json", check_verdict),
 ];
 
 /// Run every check against every embedded vector, returning `(name, digest)` pairs.

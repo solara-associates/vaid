@@ -312,8 +312,22 @@ The cross-language set:
 | `attestation_v1.json` | cross-issuer consent attestations |
 | `scope_v1.json` | segment-bounded scope containment |
 | `roundtrip_v1.json` | verification over presented bytes |
+| `verdict_v1.json` | the negative path — which failure, not just that one occurred |
 | `pathquery_v1.json` | path-with-query canonicalization |
 | `completion_v1.json` | completion records |
+
+Every vector above `verdict_v1.json` pins a success. That leaves a gap those
+vectors cannot close: they prove the implementations agree on documents that
+*work*, and say nothing about whether they agree on documents that do not. A
+verifier accepting an expired VAID in one language and rejecting it in another is
+a worse defect than a mint mismatch, and it would pass every one of them.
+
+`verdict_v1.json` closes it, and asserts the **reason** rather than the verdict.
+Implementations that reject the same document for different reasons agree on every
+boolean while disagreeing about what happened — one reports a forgery, another an
+unreachable revocation list — and only a reason-level assertion can see it. The
+same vector pins that "could not determine" stays its own answer instead of
+collapsing into either a pass or an accusation.
 
 A CI drift job `cmp`s every language's copy of each and runs each gate, so a
 divergence fails the build rather than being discovered by a consumer. Byte

@@ -57,6 +57,13 @@ import {
   type ConsentAttestation,
 } from './attestation.js';
 import { PresentedBundle, verifyChain } from './chain.js';
+import { scopeAttenuatesWithin } from './mint.js';
+import { RevocationStatus } from './revocation.js';
+import {
+  isVerdictValid,
+  VaidVerdict,
+  verifyVaidStandingFromJson,
+} from './verify.js';
 import { buildMintPopPayload, type MintPopPayload } from './mintTypes.js';
 import { verifyVaidAuthenticity } from './verify.js';
 
@@ -454,6 +461,155 @@ export function checkScope(v: ScopeVector): void {
   }
 }
 
+/** A graded-verdict vector: predicate cases over two surfaces, no digest. */
+interface VerdictVector {
+  reasons: { standing: string[]; attenuation: string[] };
+  ed25519: { kernel_public_key_hex: string };
+  cases: {
+    name: string;
+    why: string;
+    surface: 'standing' | 'attenuation';
+    document_json?: string;
+    revocation?: string;
+    parent_scope?: string[];
+    child_scope?: string[];
+    expected_valid: boolean;
+    expected_reason: string;
+  }[];
+}
+
+/**
+ * Check the negative-path vector (`verdict_v1.json`).
+ *
+ * The other checkers here ask "does the installed mint produce the same bytes as
+ * everyone else". This one asks "does it REFUSE the same way, and say the same
+ * thing about why". The happy-path vectors cannot answer that: they only ever
+ * exercise documents that work.
+ *
+ * It asserts the REASON, not just the boolean. Three implementations that reject
+ * the same document for three different reasons agree on every boolean and
+ * disagree about what happened — and an `npm install` consumer whose build
+ * disagrees with the vector on a reason has a mint that will log, alert and retry
+ * differently from every other deployment.
+ *
+ * It also refuses to pass a vector that has lost its teeth: no positive control on
+ * either surface, a single refusal reason across every negative case, or a
+ * vocabulary that has drifted from {@link VaidVerdict} are all BLOCKERs. A green
+ * firewall over a vector that asserts nothing is the masked-green defect this
+ * package keeps finding.
+ */
+export function checkVerdict(v: VerdictVector): void {
+  if (!v.cases || v.cases.length === 0) {
+    throw new ConformanceError('verdict vector carries no cases');
+  }
+  const kernelPk = Uint8Array.from(
+    (v.ed25519.kernel_public_key_hex.match(/../g) ?? []).map((h) => parseInt(h, 16)),
+  );
+  const revocationStates: Record<string, RevocationStatus> = {
+    not_revoked: RevocationStatus.NotRevoked,
+    revoked: RevocationStatus.Revoked,
+    unavailable: RevocationStatus.Unavailable,
+  };
+
+  const positives: Record<string, number> = { standing: 0, attenuation: 0 };
+  const negatives: Record<string, number> = { standing: 0, attenuation: 0 };
+  const refusalReasons = new Set<string>();
+  const exercised = new Set<string>();
+
+  for (const c of v.cases) {
+    let reason: string;
+    let valid: boolean;
+    if (c.surface === 'standing') {
+      if (typeof c.document_json !== 'string') {
+        throw new ConformanceError(`standing case "${c.name}" has no document_json`);
+      }
+      const state = revocationStates[c.revocation ?? ''];
+      if (state === undefined) {
+        throw new ConformanceError(
+          `standing case "${c.name}" names unknown revocation state ${JSON.stringify(c.revocation)}`,
+        );
+      }
+      const verdict = verifyVaidStandingFromJson(kernelPk, c.document_json, state);
+      reason = verdict;
+      valid = isVerdictValid(verdict);
+    } else if (c.surface === 'attenuation') {
+      const ok = scopeAttenuatesWithin(c.parent_scope ?? [], c.child_scope ?? []);
+      reason = ok ? 'attenuated' : 'scope_escalation';
+      valid = ok;
+    } else {
+      throw new ConformanceError(
+        `verdict case "${c.name}" names unknown surface ${JSON.stringify(c.surface)}`,
+      );
+    }
+
+    if (reason !== c.expected_reason) {
+      throw new ConformanceError(
+        `verdict case "${c.name}": reason "${reason}" != frozen "${c.expected_reason}" — ` +
+          `${c.why}\n  A reason mismatch is a divergence even where the boolean agrees: ` +
+          'this build and the vector disagree about WHAT HAPPENED.',
+      );
+    }
+    if (valid !== c.expected_valid) {
+      throw new ConformanceError(
+        `verdict case "${c.name}": valid=${valid}, frozen ${c.expected_valid} — ${c.why}`,
+      );
+    }
+
+    if (c.expected_valid) positives[c.surface]! += 1;
+    else {
+      negatives[c.surface]! += 1;
+      refusalReasons.add(reason);
+    }
+    exercised.add(c.expected_reason);
+  }
+
+  // The vector must still have teeth. Each of these is a way it could be edited
+  // into something that passes for every implementation regardless of behaviour.
+  if (positives.standing === 0 || positives.attenuation === 0) {
+    throw new ConformanceError(
+      'the verdict vector has lost a positive control (standing and attenuation each ' +
+        'need one) — an implementation that refused every input would pass it',
+    );
+  }
+  if (negatives.standing === 0 || negatives.attenuation === 0) {
+    throw new ConformanceError(
+      'the verdict vector has lost a negative case on one of its surfaces — an ' +
+        'implementation that accepted every input would pass it',
+    );
+  }
+  if (refusalReasons.size < 2) {
+    throw new ConformanceError(
+      `every refusing case expects the same reason (${JSON.stringify([...refusalReasons])}) — ` +
+        'a boolean-only implementation would pass this vector, so the reason assertions ' +
+        'would be checking nothing',
+    );
+  }
+
+  // Vocabulary agreement, both directions: a reason the vector declares that this
+  // build cannot return means the vector was written against a different
+  // implementation; a verdict this build can return that the vector never names is
+  // a state shipping unchecked.
+  const declared = new Set(v.reasons.standing);
+  const implemented = new Set<string>(Object.values(VaidVerdict));
+  const onlyVector = [...declared].filter((r) => !implemented.has(r));
+  const onlyImpl = [...implemented].filter((r) => !declared.has(r));
+  if (onlyVector.length > 0 || onlyImpl.length > 0) {
+    throw new ConformanceError(
+      "the verdict vector's standing vocabulary and this build's VaidVerdict disagree\n" +
+        `  only in the vector:         ${JSON.stringify(onlyVector)}\n` +
+        `  only in the implementation: ${JSON.stringify(onlyImpl)}`,
+    );
+  }
+  const allDeclared = [...declared, ...v.reasons.attenuation];
+  const unexercised = allDeclared.filter((r) => !exercised.has(r));
+  if (unexercised.length > 0) {
+    throw new ConformanceError(
+      `reason(s) declared by the vector but exercised by no case: ${JSON.stringify(unexercised)} ` +
+        '— a state with no case behind it is a claim with no evidence',
+    );
+  }
+}
+
 /**
  * Every vector this firewall knows how to check, by filename.
  *
@@ -475,6 +631,7 @@ export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
   'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
   'scope_v1.json': (v: ScopeVector) => checkScope(v),
   'roundtrip_v1.json': (v: RoundtripVector) => checkRoundtrip(v),
+  'verdict_v1.json': (v: VerdictVector) => checkVerdict(v),
 } as Record<string, (v: never) => void>;
 
 /**

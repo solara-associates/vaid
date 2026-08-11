@@ -80,6 +80,153 @@ impl AgentClass {
     }
 }
 
+/// Render an instant into the E.6 profile: whole-second RFC 3339, UTC, literal
+/// `Z`. The one place a `DateTime` becomes a document timestamp.
+///
+/// Truncating rather than rejecting is safe in the only direction it moves: it
+/// can shorten a validity window by under a second, never extend one.
+pub(crate) fn format_e6(instant: DateTime<Utc>) -> String {
+    instant.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Parse an RFC 3339 timestamp **permissively**, or `None`.
+///
+/// Permissive on purpose, and it must stay total: this is what [`Vaid::is_expired`]
+/// uses, and conformance to the narrower E.6 profile is a separate question asked
+/// separately by [`Vaid::has_conforming_timestamps`]. That split is issue #10,
+/// already settled the same way in Python and TypeScript; this is Rust adopting
+/// it now that the field is a string rather than a pre-parsed instant.
+pub(crate) fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// Does `value` match the E.6 profile exactly — whole-second RFC 3339 in UTC with
+/// a literal `Z`?
+///
+/// Checked with explicit character tests rather than a regular expression, per
+/// E.6's own guidance: the three languages' regex dialects disagree, and this
+/// predicate must give the same answer in all of them.
+pub(crate) fn is_e6_timestamp(value: &str) -> bool {
+    let b = value.as_bytes();
+    b.len() == 20
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b[16] == b':'
+        && b[19] == b'Z'
+        && [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18]
+            .iter()
+            .all(|&i| b[i].is_ascii_digit())
+        && parse_rfc3339(value).is_some()
+}
+
+/// Deserialize a member as PRESENT, distinguishing it from an absent one.
+///
+/// `Option<Option<T>>` does not do this on its own: serde's `Option` deserializer
+/// answers `None` for a JSON `null`, so a present null and a missing member both
+/// arrive as the outer `None` and the distinction is gone before anything can use
+/// it. This is only called when the key is present — `#[serde(default)]` covers
+/// the absent case — so wrapping unconditionally in `Some` is exactly the
+/// presence bit that was being lost.
+///
+/// Found by the chain vector: without this, a root document's present
+/// `"parent_vaid": null` collapsed to absent, `skip_serializing_if` then dropped
+/// the member, and the frozen hop digest moved. The vector caught a bug in the
+/// fix for a bug the vectors could not previously see.
+fn deserialize_present<'de, D>(deserializer: D) -> Result<Option<Option<PresentedUuid>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<PresentedUuid>::deserialize(deserializer).map(Some)
+}
+
+/// A UUID-valued member, kept **exactly as it was presented** alongside its
+/// parsed value.
+///
+/// # Why this type exists (ADR-0006 Requirement 3, BACKLOG B7)
+///
+/// ADR-0006 requires that parsing a document and re-serializing it reproduce the
+/// presented object, "so that canonicalization is a function of the input alone".
+/// A bare `Uuid` field does not satisfy that. `uuid` accepts several spellings of
+/// the same value — uppercase, braced, `urn:uuid:`-prefixed, hyphenless — and
+/// **normalizes every one of them to lowercase-hyphenated on the way out**. A
+/// document presented in any of those forms was therefore canonicalized as a
+/// *different byte string* than the one the caller supplied, and the verifier
+/// returned a verdict about bytes nobody sent.
+///
+/// That is the same defect ADR-0006 was written for, one layer down: ADR-0006
+/// closed it for unrecognised *members* (the `unknown_fields` capture map) and
+/// left it open for recognised members whose *values* have more than one
+/// spelling. It was not theoretical — Rust reported `authentic = true` for
+/// documents whose `vaid_id` had been rewritten into an equivalent spelling
+/// **after signing**, while Python and TypeScript correctly refused them.
+///
+/// # Why parse eagerly here, but not for timestamps
+///
+/// A document whose `vaid_id` is not a UUID has no identity: it cannot be placed
+/// in a lineage, so there is nothing to have an opinion about, and refusing to
+/// parse it is the honest answer. A document whose `expires_at` is unreadable
+/// still has an identity — it is simply not one that can be shown to be
+/// unexpired, which is a *verdict* ([`Vaid::is_expired`] fails closed) rather
+/// than a parse failure. So UUIDs are validated at deserialization and timestamps
+/// are not, and that asymmetry is a decision rather than an accident.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresentedUuid {
+    /// The member exactly as presented. This is what is serialized, and therefore
+    /// what is canonicalized and signed over.
+    raw: String,
+    /// The parsed value. Validated at deserialization, so this cannot be absent.
+    uuid: Uuid,
+}
+
+impl PresentedUuid {
+    /// The UUID this member denotes.
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+    /// The member exactly as presented — the bytes a signature covers.
+    pub fn as_presented(&self) -> &str {
+        &self.raw
+    }
+    /// Is this member written in the canonical lowercase-hyphenated form?
+    ///
+    /// Presenting a non-canonical spelling is legal and verifies; a *producer*
+    /// should still emit the canonical one, and this is how that is asked.
+    pub fn is_canonical(&self) -> bool {
+        self.raw == self.uuid.to_string()
+    }
+}
+
+impl From<Uuid> for PresentedUuid {
+    /// Build from a value rather than from presented bytes — the mint's path.
+    /// Produces the canonical spelling by construction.
+    fn from(uuid: Uuid) -> Self {
+        Self {
+            raw: uuid.to_string(),
+            uuid,
+        }
+    }
+}
+
+impl Serialize for PresentedUuid {
+    /// Emits the presented form, never a re-rendering of the parsed value. This
+    /// one line is the whole of ADR-0006 Requirement 3 for this member.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> Deserialize<'de> for PresentedUuid {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        let uuid = Uuid::parse_str(&raw).map_err(serde::de::Error::custom)?;
+        Ok(Self { raw, uuid })
+    }
+}
+
 /// Verifiable Agent Identity Document (VAID) — immutable, signed at mint time.
 ///
 /// v2 fields: `parent_vaid` (delegation lineage), `scope_boundary` (data-domain
@@ -94,17 +241,39 @@ pub struct Vaid {
     /// parse.
     #[serde(default)]
     sig_version: u8,
-    vaid_id: VaidId,
-    agent_id: AgentId,
+    vaid_id: PresentedUuid,
+    agent_id: PresentedUuid,
     agent_class: AgentClass,
     version: String,
     tenant_id: TenantId,
-    issued_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
+    /// Kept as the presented string, not a parsed instant (ADR-0006 Req. 3).
+    /// `chrono` normalizes `+00:00` to `Z` and drops or adds sub-second digits on
+    /// re-serialization, so a parsed field canonicalized a different byte string
+    /// than the one presented — see [`PresentedUuid`] for the same defect on the
+    /// identity members. Unlike those, this is NOT validated at deserialization:
+    /// a document with an unreadable expiry still has an identity, and "cannot be
+    /// shown to be unexpired" is a verdict ([`Vaid::is_expired`], which fails
+    /// closed) rather than a parse failure.
+    issued_at: String,
+    expires_at: String,
     public_key_der: Vec<u8>,
     kernel_signature: Vec<u8>,
     /// VAID of the spawning agent. Root agents have no parent (`None`).
-    parent_vaid: Option<VaidId>,
+    ///
+    /// **Three states, not two** (ADR-0006 Req. 3). `Option<PresentedUuid>` cannot
+    /// tell an ABSENT member from a member present as JSON `null`, and serde
+    /// renders `None` as `null` on the way out — so a document with `parent_vaid`
+    /// *deleted* re-serialized with it restored, reproducing bytes the presenter
+    /// never sent and verifying against a signature that covered them. The outer
+    /// `Option` is presence; the inner is the value. E.7 requires a root document
+    /// to carry a PRESENT null, and `skip_serializing_if` keeps an absent member
+    /// absent rather than inventing one.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    parent_vaid: Option<Option<PresentedUuid>>,
     /// Data domains / resource namespaces this agent may operate within.
     scope_boundary: Vec<String>,
     /// Hash of the parent VAID chain — enables delegation-tree reconstruction.
@@ -160,19 +329,24 @@ impl Vaid {
         trust_domain: String,
         kernel_key_thumbprint: String,
     ) -> Self {
-        let vaid_id = VaidId::from_uuid(*agent_id.as_uuid());
+        let vaid_id = PresentedUuid::from(*agent_id.as_uuid());
         Self {
             sig_version: VAID_SIG_VERSION_V3,
             vaid_id,
-            agent_id,
+            agent_id: PresentedUuid::from(*agent_id.as_uuid()),
             agent_class,
             version,
             tenant_id,
-            issued_at,
-            expires_at,
+            // Rendered into the E.6 profile HERE, so a document built through this
+            // constructor cannot carry a non-conforming timestamp regardless of the
+            // precision the caller's clock happened to have (BACKLOG B8).
+            issued_at: format_e6(issued_at),
+            expires_at: format_e6(expires_at),
             public_key_der,
             kernel_signature,
-            parent_vaid,
+            // A minted document always carries the member — present-null for a root
+            // (E.7) — so `mint_v1.json` is byte-identical to before this change.
+            parent_vaid: Some(parent_vaid.map(|p| PresentedUuid::from(*p.as_uuid()))),
             scope_boundary,
             lineage_hash,
             capability_set,
@@ -193,10 +367,14 @@ impl Vaid {
         self.sig_version
     }
     pub fn vaid_id(&self) -> VaidId {
-        self.vaid_id
+        VaidId::from_uuid(self.vaid_id.uuid())
+    }
+    /// `vaid_id` exactly as presented, including a non-canonical spelling.
+    pub fn vaid_id_as_presented(&self) -> &str {
+        self.vaid_id.as_presented()
     }
     pub fn agent_id(&self) -> AgentId {
-        self.agent_id
+        AgentId::from_uuid(self.agent_id.uuid())
     }
     pub fn agent_class(&self) -> &AgentClass {
         &self.agent_class
@@ -207,11 +385,25 @@ impl Vaid {
     pub fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
     }
-    pub fn issued_at(&self) -> DateTime<Utc> {
-        self.issued_at
+    /// `issued_at`, parsed — `None` when the presented value is not a readable
+    /// RFC 3339 timestamp. **This return type changed**: it was
+    /// `DateTime<Utc>`, which was only total because the field used to be parsed
+    /// at deserialization, which is the behaviour ADR-0006 Req. 3 forbids.
+    pub fn issued_at(&self) -> Option<DateTime<Utc>> {
+        parse_rfc3339(&self.issued_at)
     }
-    pub fn expires_at(&self) -> DateTime<Utc> {
-        self.expires_at
+    /// `issued_at` exactly as presented — the bytes the signature covers.
+    pub fn issued_at_as_presented(&self) -> &str {
+        &self.issued_at
+    }
+    /// `expires_at`, parsed — `None` when the presented value is not a readable
+    /// RFC 3339 timestamp. See [`Vaid::is_expired`] for what `None` means.
+    pub fn expires_at(&self) -> Option<DateTime<Utc>> {
+        parse_rfc3339(&self.expires_at)
+    }
+    /// `expires_at` exactly as presented — the bytes the signature covers.
+    pub fn expires_at_as_presented(&self) -> &str {
+        &self.expires_at
     }
     pub fn public_key_der(&self) -> &[u8] {
         &self.public_key_der
@@ -221,6 +413,9 @@ impl Vaid {
     }
     pub fn parent_vaid(&self) -> Option<VaidId> {
         self.parent_vaid
+            .as_ref()
+            .and_then(|p| p.as_ref())
+            .map(|p| VaidId::from_uuid(p.uuid()))
     }
     pub fn scope_boundary(&self) -> &[String] {
         &self.scope_boundary
@@ -247,8 +442,19 @@ impl Vaid {
     }
 
     /// True once past `expires_at`.
+    ///
+    /// **Total, and fails closed.** An `expires_at` that cannot be parsed returns
+    /// `true` — a document whose expiry cannot be read is not a document that can
+    /// be shown to be unexpired. That path became reachable in Rust when this
+    /// field stopped being parsed at deserialization (ADR-0006 Req. 3), and it is
+    /// stated here rather than left to be discovered. Python and TypeScript have
+    /// always behaved this way; this is the third implementation arriving at the
+    /// rule the other two already had, not a new rule.
     pub fn is_expired(&self) -> bool {
-        Utc::now() > self.expires_at
+        match self.expires_at() {
+            Some(expires_at) => Utc::now() > expires_at,
+            None => true,
+        }
     }
 
     /// Do `issued_at` and `expires_at` match the E.6 profile exactly — whole-second
@@ -276,8 +482,7 @@ impl Vaid {
     /// shows up there as a signature failure. This is how that failure is
     /// *explained* rather than merely observed.
     pub fn has_conforming_timestamps(&self) -> bool {
-        use chrono::Timelike;
-        self.issued_at.nanosecond() == 0 && self.expires_at.nanosecond() == 0
+        is_e6_timestamp(&self.issued_at) && is_e6_timestamp(&self.expires_at)
     }
 
     /// Is `resource` within this VAID's scope boundary? An empty boundary means
@@ -425,6 +630,162 @@ pub fn canonical_vaid_signing_bytes(vaid: &Vaid) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(&canonical);
     hasher.finalize().to_vec()
+}
+
+/// Does `json` contain a repeated member name inside any single object, at any
+/// depth?
+///
+/// # Why this is checked explicitly rather than left to the parser (BACKLOG B7)
+///
+/// The three languages' JSON parsers disagree, and the disagreement is silent.
+/// `serde` rejects a repeated field on a typed struct; `json.loads` and
+/// `JSON.parse` both keep the **last** occurrence and discard the earlier ones
+/// without a word. So `{"sig_version": 3, "sig_version": 2}` was refused outright
+/// by Rust and read as `2` by the other two — one implementation declining to
+/// parse a document the others declared authentic.
+///
+/// Last-wins is the dangerous half. A signed document is a statement about a
+/// specific byte string; silently choosing one of two competing values for a
+/// member and verifying the result means the reader and the signer may disagree
+/// about what was signed, with nothing in the verdict to indicate it. That is a
+/// classic parser-differential, and the safe direction is the one that refuses.
+///
+/// So the rule is normative (`docs/spec/encoding.md` E.7a) and implemented the
+/// same way in all three: **a document containing a duplicate member name is not
+/// a document.** Rust's parser already refused the struct-field case; this
+/// extends the same answer to nested and unrecognised members, which `serde`
+/// would otherwise resolve by last-wins inside a `Value`.
+///
+/// Scans the raw text because that is the only place the evidence survives — by
+/// the time any of the three has a parsed object, the duplicate is gone.
+pub fn has_duplicate_member_names(json: &str) -> bool {
+    let b = json.as_bytes();
+    let mut i = 0usize;
+    // One set of seen names per open object; `None` marks an open array, which
+    // has no member names of its own but must still be tracked so that a string
+    // inside it is never mistaken for a key.
+    let mut stack: Vec<Option<std::collections::HashSet<String>>> = Vec::new();
+
+    while i < b.len() {
+        match b[i] {
+            b'{' => {
+                stack.push(Some(std::collections::HashSet::new()));
+                i += 1;
+            }
+            b'[' => {
+                stack.push(None);
+                i += 1;
+            }
+            b'}' | b']' => {
+                stack.pop();
+                i += 1;
+            }
+            b'"' => {
+                let (text, next) = match scan_json_string(b, i) {
+                    Some(pair) => pair,
+                    // Unterminated string: not our error to report. Whatever parses
+                    // this next will refuse it, and claiming "duplicate" here would
+                    // be the wrong reason.
+                    None => return false,
+                };
+                // A string is a KEY only if the next non-whitespace byte is ':'.
+                let mut j = next;
+                while j < b.len() && b[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < b.len() && b[j] == b':' {
+                    if let Some(Some(seen)) = stack.last_mut() {
+                        if !seen.insert(text) {
+                            return true;
+                        }
+                    }
+                }
+                i = next;
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// Read a JSON string starting at `start` (which must be the opening quote),
+/// returning its decoded-enough text and the index just past the closing quote.
+///
+/// "Decoded enough" means escapes are consumed so they cannot hide a quote, and
+/// `\\uXXXX` is left as written: two member names that differ only by escaping are
+/// the same name to a conforming parser, but treating them as different here can
+/// only ever MISS a duplicate, never invent one — and missing is the direction
+/// that leaves the existing parsers in charge rather than overruling them.
+fn scan_json_string(b: &[u8], start: usize) -> Option<(String, usize)> {
+    let mut out = String::new();
+    let mut i = start + 1;
+    while i < b.len() {
+        match b[i] {
+            b'"' => return Some((out, i + 1)),
+            b'\\' => {
+                if i + 1 >= b.len() {
+                    return None;
+                }
+                out.push('\\');
+                out.push(b[i + 1] as char);
+                i += 2;
+            }
+            c => {
+                out.push(c as char);
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod duplicate_member_tests {
+    use super::has_duplicate_member_names;
+
+    #[test]
+    fn finds_a_duplicate_at_the_top_level() {
+        assert!(has_duplicate_member_names(r#"{"a":1,"a":2}"#));
+    }
+
+    #[test]
+    fn finds_a_duplicate_nested_inside_an_extension() {
+        assert!(has_duplicate_member_names(r#"{"x":{"a":1,"a":2}}"#));
+    }
+
+    #[test]
+    fn the_same_name_at_different_depths_is_not_a_duplicate() {
+        // THE CONTROL for over-firing: a checker that flagged this would reject
+        // every real document, and would pass a naive positive test while doing so.
+        assert!(!has_duplicate_member_names(r#"{"a":1,"b":{"a":2}}"#));
+    }
+
+    #[test]
+    fn repeated_strings_in_an_array_are_values_not_keys() {
+        assert!(!has_duplicate_member_names(r#"{"s":["a","a"]}"#));
+        assert!(!has_duplicate_member_names(r#"{"s":[{"a":1},{"a":1}]}"#));
+    }
+
+    #[test]
+    fn a_value_that_looks_like_a_key_is_not_one() {
+        // The string `"a":1` appears twice as a VALUE. Only a scanner that checks
+        // for a following colon at the right nesting level gets this right.
+        assert!(!has_duplicate_member_names(
+            r#"{"p":"\"a\":1","q":"\"a\":1"}"#
+        ));
+    }
+
+    #[test]
+    fn an_escaped_quote_does_not_end_a_string() {
+        assert!(!has_duplicate_member_names(r#"{"a\"b":1,"c":2}"#));
+    }
+
+    #[test]
+    fn an_unterminated_string_is_not_reported_as_a_duplicate() {
+        // Malformed, but not OUR error to name — whatever parses it next refuses
+        // it, and "duplicate" would be the wrong reason.
+        assert!(!has_duplicate_member_names(r#"{"a":"unterminated"#));
+    }
 }
 
 #[cfg(test)]

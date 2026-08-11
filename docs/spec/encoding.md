@@ -47,6 +47,35 @@ Those consequences are computed, not asserted: E.13 lists the digest each wrong
 choice yields for the `mint_v1` input, against the correct
 `eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0`.
 
+## E.1a A verifier canonicalizes the member VALUES it was presented
+
+ADR-0006 requires a verifier to canonicalize the document it was presented rather
+than its own projection of it. That applies to member **values**, not only to the
+set of member names.
+
+A conforming verifier MUST NOT re-render a value into a preferred spelling before
+canonicalizing. Concretely, and normatively:
+
+- A **UUID-valued member** (`vaid_id`, `agent_id`, `parent_vaid`) MAY be presented
+  in any spelling a UUID parser accepts — lowercase or uppercase, hyphenated,
+  braced, `urn:uuid:`-prefixed, or hyphenless. Producers MUST emit the canonical
+  lowercase hyphenated form. Verifiers MUST canonicalize whatever was presented,
+  so rewriting `vaid_id` into an equivalent spelling **after** signing breaks the
+  signature rather than being silently repaired.
+- A **timestamp member** MAY be presented in any valid RFC 3339 form (see E.6) and
+  MUST be canonicalized as written.
+- An **absent** member and a member present as JSON `null` are **different
+  documents** (E.7). A verifier holding a two-state optional cannot tell them
+  apart and will render a missing member back as `null`; that reproduces bytes the
+  presenter never sent, and is non-conforming.
+
+The discipline is **parse permissively, verify strictly**. Accepting a
+non-canonical spelling is not the same as honouring it: the refusal lands on the
+signature, which is identical in every implementation, rather than on a
+separately-written grammar in each. A stricter parser per language produces the
+same rejection for a *different stated reason*, and implementations that refuse the
+same document for different reasons have not agreed about anything.
+
 ## E.2 The pipeline
 
 Every signature in VAID is produced by the same four steps, and no other:
@@ -154,14 +183,25 @@ This applies to `issued_at` and `expires_at` in the document, `timestamp` in
 `RequestAuthPayload`, `completedAt` in `CompletionRecord`, and `issuedAt` in
 `MintPopPayload`.
 
-This is a **profile narrower than RFC 3339**, and it is deliberate. It is the
-round-trip fixed point of the reference's date serialization: a verifier parses the
-timestamp into a datetime and **re-serializes it** when it recomputes the canonical
-bytes. A whole-second `…Z` string parses and re-serializes to itself, so the
-signer's bytes and the verifier's recomputation agree. Any other RFC 3339 form is
-re-serialized into this one, and the recomputed digest then differs from the signed
-one — the signature fails to verify for a reason that has nothing to do with the
-key.
+This is a **profile narrower than RFC 3339**, and it is deliberate. It exists so
+that independent producers converge on one spelling of an instant, which keeps a
+signer's bytes and a reader's expectations aligned and keeps timestamps comparable
+across implementations without normalization.
+
+**E.6 binds producers. It does not license a verifier to rewrite what it was
+handed.** A conforming verifier canonicalizes the timestamp exactly as presented
+(E.1a) — it does **not** parse and re-serialize into this profile. A document
+carrying `+00:00` or sub-second precision is non-conforming *as produced* and still
+**verifies**, because its signature covers the bytes it actually carries.
+
+An earlier revision of this section gave a different reason: that a verifier parses
+and re-serializes, so any other RFC 3339 form is rewritten into this one and the
+recomputed digest differs. That described one implementation's behaviour and was
+never true of the other two, which pass the string through verbatim — and the
+behaviour it described is the ADR-0006 Requirement 3 violation recorded as
+BACKLOG B7. Verifiers no longer re-render timestamps, so the requirement here is a
+**producer** obligation with `has_conforming_timestamps` as the way to ask whether
+it was met.
 
 Two forms are RFC 3339-valid and non-conforming here, and both are what a naive
 implementation reaches for first:
@@ -200,6 +240,27 @@ Empty *collections* are a different matter and are **not** null: an empty
 `scope_boundary` or `capability_set` is `[]`. Note that an empty `scope_boundary`
 carries meaning — it denotes an unrestricted scope (⊤), not an absent one — so the
 distinction between `[]` and `null` here is semantic as well as syntactic.
+
+## E.7a A duplicate member name is not a document
+
+A JSON object containing the same member name more than once, **at any depth**, is
+not a VAID document. A conforming implementation MUST refuse it outright rather
+than resolve the collision.
+
+This is stated because the parsers disagree by default and disagree *silently*:
+`serde` refuses a repeated field on a typed struct, while `json.loads` and
+`JSON.parse` both keep the **last** occurrence and discard the earlier ones without
+a word. The same bytes were therefore unparseable to one implementation and
+authentic to two.
+
+Last-wins is the dangerous half. A signature covers one specific byte string; if a
+reader may silently choose between two competing values for a member, the reader
+and the signer can disagree about what was signed with nothing in the verdict to
+indicate it. Refusing is the only resolution that cannot produce that
+disagreement, and it costs nothing — no conforming producer emits a duplicate.
+
+The check runs on the **raw text**, because every parser here resolves the
+collision before returning: once there is a parsed object, the evidence is gone.
 
 ## E.8 Numbers are numbers
 
