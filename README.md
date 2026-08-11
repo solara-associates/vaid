@@ -327,30 +327,33 @@ questioned. That is not hypothetical here — ADR-0005 and ADR-0006 above are bo
 cases where every implementation agreed and every implementation was wrong, caught
 by a vector rather than by review.
 
-## What is deliberately not here
+## Where the open scope stops
 
-Two things remain closed and commercial:
+Some things a production deployment needs are not in this repository. It is more
+useful to say exactly which than to gesture at a boundary:
 
-- The policy language for expressing what a VAID is permitted to do.
-- The hosted authority that runs a mint in production — KMS-backed kernel keys, an
-  audit-of-record, durable hash-chained revocation, and a policy/mesh/federation
-  control plane.
+- **A policy language** for expressing what a VAID is permitted to do. The standard
+  binds an action to an identity and decides scope containment; whether a given scope
+  *should* have been granted is a layer above it.
+- **Durable, restart-surviving infrastructure** — a hash-chained audit ledger,
+  durable revocation state, KMS-backed kernel keys.
 
-The reference mint proves the shape of delegation and attenuation; it is not that
-hosted authority. Two seams deserve a precise line rather than a blanket "not
-included", because the blanket version is falsifiable by reading this repo:
+The second is a statement about durability, not about capability, and the difference
+is worth stating precisely because the blanket version is falsifiable by reading this
+repo:
 
 - **Audit** — the *seam* is here and Apache-2.0: the `AuditSink` interface with
-  in-memory and no-op implementations in every language. What is closed is the
+  in-memory and no-op implementations in every language. What is absent is the
   **durable, hash-chained ledger**, not the ability to audit.
 - **Revocation** — likewise: the `RevocationCheck` seam ships here with a
   non-durable in-memory default, and VAID expiry is hard-enforced at verification.
-  A self-hoster can wire their own backend without patching the SDK. What is closed
+  A self-hoster can wire their own backend without patching the SDK. What is absent
   is **durable, restart-surviving** revocation.
 
-The hosted authority is a **name for the aggregate** of those durable pieces. It is
-described here as an offering, not as a component you will find implemented in some
-other directory.
+The reference mint proves the shape of delegation and attenuation. Running a mint in
+production means supplying those durable pieces yourself, and nothing in the standard
+requires you to obtain them from any particular source — a conforming deployment is
+one that reproduces the vectors, whoever built it.
 
 ## Contributing & community
 
