@@ -971,11 +971,25 @@ common case and still strictly more than the nothing that guards it now.
 
 ## B12 — the release workflow never installs workspace dependencies, so no npm workspace package can be released through it
 
-**Status:** open. **Blocking the npm half of the 0.7.0 release**, observed live.
+**Status:** **fixed** 2026-08-11. The install/build step now precedes packaging in
+`preflight`, and `verify-release-workflow.mjs` asserts that ordering in *every* job
+that packages. Control-tested against four failure shapes — install after packaging
+and no install at all, in each of the two jobs.
 **Observed:** 2026-08-11, run `31478285695` for tag `npm-vaid-mint-v0.7.0` — the
 first attempt to release an npm **workspace** package through this workflow.
-**Affects:** `.github/workflows/release.yml`, both the `preflight` and `publish`
-jobs, for every package under `typescript/`.
+**Affects:** `.github/workflows/release.yml`, the `preflight` job, for every package
+under `typescript/`.
+
+> **Correction.** This entry originally said the defect was in *both* the `preflight`
+> and `publish` jobs. It was in `preflight` only. `publish` has always run
+> `npm ci --prefix "$WS" && npm run build --prefix "$WS"` immediately before
+> `npm publish`, which is why the run failed at preflight rather than at publish —
+> and, being the safe order, it is also why nothing was published. The correction
+> matters because the original text would send the next reader to fix a job that is
+> already right, and because it was `preflight` alone that had two correct steps in
+> the wrong order. `publish` is nonetheless now covered by the check: it holds the
+> property by nobody having reordered it, which is exactly the state `preflight` was
+> in until a tag proved otherwise.
 
 ### What breaks
 
@@ -1020,24 +1034,27 @@ the first time. The historical failures ran the dry-run *inside* verify-artifact
 after publishing; this one runs it in preflight, before. A version number was not
 consumed and the same tag can be re-cut.
 
-### Fix shape
+### What was done
 
-Install and build the workspace before packaging, in **both** jobs, mirroring what
-CI already does:
+`preflight` already had the right step. It ran `npm ci`, `npm run build` and
+`npm test` for the workspace — *after* the dry-run. So the fix is a move, not an
+addition, and nothing new had to be written to make the packaging correct.
 
-```yaml
-- name: Install + build the TypeScript workspace
-  if: needs.resolve.outputs.eco == 'npm' && needs.resolve.outputs.ws != ''
-  run: npm ci --prefix "$WS" && npm run build --prefix "$WS"
-```
+A new step guarded on `ws != ''`, as first sketched here, would have been worse
+than the move: it drops the `else` branch, and with it the standalone path's
+`npm install --prefix "$DIR"` and `npm test`. That path is the one `vaid-skill`
+takes, so the sketch would have fixed the workspace case by silently unbuilding and
+untesting the only package the workflow had ever successfully released.
 
-Guarded on `ws` being non-empty so the non-workspace case (`skill/`) is unchanged.
+The durable half was built as described: `verify-release-workflow.mjs` now asserts
+that in **every** job which packages, `npm ci` precedes `npm publish` (dry-run or
+real). Ordering, not presence, is the property — a check for the two steps existing
+would have passed the broken file unchanged, since both existed.
 
-The durable half is a check that the release workflow packages every releasable
-npm package the way CI builds it — `verify-release-workflow.mjs` already asserts
-structural invariants about *which job* steps live in, and this is the same class
-of invariant about *what must precede* packaging. Without it the next package with
-a build step in its publish path fails the same way.
+Step *names* are excluded from that comparison. `- name: npm publish` sorts before
+the `npm ci` inside that same step's script, and a first draft of the check
+reported the correct `publish` job as broken because of it. What is being ordered
+is commands, not labels.
 
 ---
 

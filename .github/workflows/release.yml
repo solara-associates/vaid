@@ -281,6 +281,40 @@ jobs:
             console.log(`npm ${process.argv[1]} — at or above the 11.5.1 trusted-publishing floor`);
           ' "$V"
 
+      # MUST precede the dry-run. `npm publish` runs the package's own prepack
+      # lifecycle, which for every workspace member here is `npm run build && npm
+      # test` — i.e. `tsc`. Without an install first there are no node_modules, so
+      # tsc cannot resolve `vaid-pop` or `@types/node` and the dry-run dies with
+      # "Cannot find module 'vaid-pop'" and "Cannot find name 'Buffer'", which read
+      # as source defects in the package being released rather than as a missing
+      # install. That is what happened to npm-vaid-mint-v0.7.0.
+      #
+      # It had never fired before because the only package ever released through
+      # this workflow was vaid-skill, which is STANDALONE (`npm_workspace_root:
+      # null`) and takes the other branch — it installs its own dependencies from
+      # the registry as part of its own step. vaid-mint is the first workspace
+      # member to be released here, and workspace members are exactly the packages
+      # whose build needs a sibling that only an install can provide.
+      - name: npm install + build + test (before anything packs the package)
+        if: needs.resolve.outputs.eco == 'npm'
+        env:
+          WS: ${{ needs.resolve.outputs.ws }}
+          DIR: ${{ needs.resolve.outputs.dir }}
+        run: |
+          set -euo pipefail
+          # Workspace members build in dependency order through the workspace root.
+          # A standalone package (release-map.json `npm_workspace_root: null`)
+          # installs its own dependencies — for vaid-skill that means resolving the
+          # PUBLISHED SDKs from the registry, which is the property it exists to hold.
+          if [[ -n "$WS" ]]; then
+            npm ci --prefix "$WS"
+            npm run build --prefix "$WS"
+            npm test --prefix "$WS"
+          else
+            npm install --prefix "$DIR"
+            npm test --prefix "$DIR"
+          fi
+
       - name: npm publish --dry-run (packages exactly as the real publish will)
         if: needs.resolve.outputs.eco == 'npm'
         env:
@@ -309,25 +343,6 @@ jobs:
           python -m pip install "./${{ needs.resolve.outputs.dir }}[test]"
           python -m pytest "${{ needs.resolve.outputs.dir }}"
 
-      - name: npm build + test
-        if: needs.resolve.outputs.eco == 'npm'
-        env:
-          WS: ${{ needs.resolve.outputs.ws }}
-          DIR: ${{ needs.resolve.outputs.dir }}
-        run: |
-          set -euo pipefail
-          # Workspace members build in dependency order through the workspace root.
-          # A standalone package (release-map.json `npm_workspace_root: null`)
-          # installs its own dependencies — for vaid-skill that means resolving the
-          # PUBLISHED SDKs from the registry, which is the property it exists to hold.
-          if [[ -n "$WS" ]]; then
-            npm ci --prefix "$WS"
-            npm run build --prefix "$WS"
-            npm test --prefix "$WS"
-          else
-            npm install --prefix "$DIR"
-            npm test --prefix "$DIR"
-          fi
 
   # ── 3. publish ────────────────────────────────────────────────────────────
   # The only irreversible job. Gated on the `release` environment so a human

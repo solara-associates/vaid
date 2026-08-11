@@ -131,6 +131,51 @@ if (dryRunJobs.length !== 1 || dryRunJobs[0] !== 'preflight') {
   );
 }
 
+// 4b. The dry-run PACKS the package, which runs its prepack lifecycle (`npm run
+// build && npm test` for every workspace member here). If nothing has installed
+// node_modules by then, `tsc` cannot resolve a sibling workspace package or
+// @types/node, and the dry-run fails with "Cannot find module 'vaid-pop'" — a
+// message that reads as a defect in the package rather than as a missing install.
+//
+// npm-vaid-mint-v0.7.0 failed exactly this way, in `preflight`. It had never fired
+// before because vaid-skill, the only package previously released here, is
+// standalone and installs its own dependencies inside its own step; vaid-mint is
+// the first workspace member to go through, and workspace members are precisely
+// the ones whose build needs a sibling. Ordering, not presence, is the invariant —
+// both steps existed, in the wrong order.
+//
+// Checked in EVERY job that packages, not just the one that failed. `publish`
+// already installs before `npm publish` and always has, so it is currently
+// correct — but only by nobody having reordered it, which is exactly the state
+// `preflight` was in until a tag proved otherwise. An invariant that covers only
+// the job that has already broken cannot stop the same defect appearing in the
+// job that has not.
+for (const j of [...jobs.keys()]) {
+  // Step NAMES must not count. `- name: npm publish` sorts before the `npm ci`
+  // inside that same step's script, which reported the publish job as broken when
+  // it is correct. What is being ordered is commands, not labels — so compare only
+  // the lines that run something.
+  const b = (jobs.get(j) ?? []).filter((l) => !/^\s*-?\s*name:/.test(l)).join('\n');
+  // `npm publish --dry-run` contains `npm publish`, so match packaging generally.
+  const iPack = b.search(/npm publish/);
+  if (iPack < 0) continue;
+  const iInstall = b.search(/npm ci --prefix/);
+  const label = b.includes('npm publish --dry-run') ? 'npm publish --dry-run' : 'npm publish';
+  if (iInstall < 0) {
+    problems.push(
+      `job \`${j}\` runs \`${label}\` but never runs \`npm ci\` — packaging runs the package's ` +
+        'prepack build against node_modules that do not exist, so it fails on unresolvable sibling ' +
+        "packages and @types/node. A workspace member's build needs a built sibling, not just a linked one.",
+    );
+  } else if (iInstall > iPack) {
+    problems.push(
+      `job \`${j}\` installs the npm workspace AFTER \`${label}\`. Packaging runs the prepack build ` +
+        'first, so it fails on unresolvable sibling packages and @types/node. Both steps are present ' +
+        'and the order is the bug — move the install above it.',
+    );
+  }
+}
+
 // 5. Anything that publishes needs an npm that can do OIDC.
 for (const j of [...jobs.keys()]) {
   const b = body(j);
