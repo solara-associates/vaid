@@ -3,6 +3,63 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — the mint emitted timestamps that fail the spec's own E.6 profile (BACKLOG B8)
+
+**Rust only.** Python and TypeScript were already conforming and are unchanged.
+
+The issuer stored `Utc::now()` unmodified. `chrono` serializes a `DateTime<Utc>`
+with whatever precision it carries, so every document this crate minted went out
+with sub-second precision:
+
+```
+issued_at  = "2026-08-11T08:04:18.165623Z"
+```
+
+`docs/spec/encoding.md` E.6 requires **every timestamp inside signed bytes** to be
+whole-second RFC 3339 in UTC with a literal `Z`. That document is not, and
+`has_conforming_timestamps` returns false for it — the reference mint's own output
+failing the reference mint's own spec.
+
+**Why it hid.** Every test that touched a minted document minted it and then
+verified it, which is self-consistent by construction: the mint signs over the
+sub-second form and the verifier recomputes over the same form, so the signature
+matches. Cross-language checks agreed too, because Python and TypeScript
+canonicalize the presented string verbatim. Conformance to a *profile* is not a
+property any round-trip can reveal.
+
+**Why only Rust.** In Python the profile is written out at the point the timestamp
+becomes a string (`strftime("%Y-%m-%dT%H:%M:%SZ")`), and in TypeScript likewise
+(`utcWholeSecondRfc3339`). In Rust the field is rendered by a derived `Serialize`
+nobody reads, and nothing in the type system distinguishes a conforming instant
+from a non-conforming one — both are `DateTime<Utc>`. `vaid-client` shows the same
+contrast inside Rust: its request timestamp goes through
+`to_rfc3339_opts(SecondsFormat::Secs, true)` and has always been conforming,
+because there the rendering is explicit code.
+
+Clock reads that may reach a signed document now go through the named
+`issuer::whole_second_now()`, so a clock read that is *not* that one is visibly a
+clock read that is not that one. `attest_delegation` also truncates the caller's
+`expires_at`: the profile is a property of the signed bytes rather than of who
+chose the value, and truncation can only move an expiry earlier by under a second,
+which is the safe direction.
+
+### Added — `Vaid::has_conforming_timestamps`
+
+The Rust half of the issue-#10 split, which **this changelog announced under
+0.3.0 and which was never implemented here**. Python and TypeScript have carried
+it since; Rust had no way to ask whether a document met E.6, which is the direct
+reason the mint could emit non-conforming timestamps for as long as it did. See
+BACKLOG B11 for the general form of that defect.
+
+### Added — mint-side E.6 conformance gates
+
+`tests/mint_emits_conforming_timestamps.rs`, with equivalents in Python and
+TypeScript. Asserts the serialized string directly as well as the new predicate,
+so a new predicate is not being checked with a new predicate, and carries a
+negative control requiring the sub-second form to be rejected.
+
 ## [0.6.0]
 
 ### Fixed — a verifier canonicalizes the bytes it was PRESENTED (SECURITY / correctness)

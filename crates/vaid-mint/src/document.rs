@@ -251,6 +251,35 @@ impl Vaid {
         Utc::now() > self.expires_at
     }
 
+    /// Do `issued_at` and `expires_at` match the E.6 profile exactly — whole-second
+    /// RFC 3339 in UTC with a literal `Z`?
+    ///
+    /// The Rust half of the issue-#10 split, and **it was missing**. The Python and
+    /// TypeScript twins have carried `has_conforming_timestamps` since that issue
+    /// was settled, and this crate's own CHANGELOG announces it under a released
+    /// version — but the function was never written here. Nothing in Rust could ask
+    /// whether a document met the profile, which is the direct reason the mint was
+    /// able to emit non-conforming timestamps for as long as it did (BACKLOG B8):
+    /// the check that would have caught it had been promised and not built.
+    ///
+    /// Because this type holds `DateTime<Utc>` rather than the presented string,
+    /// the question reduces exactly to whether the instants carry sub-second
+    /// precision — a `DateTime<Utc>` with zero nanoseconds re-serializes to
+    /// `…:SSZ` and one with any does not. Offset and case cannot vary here; they
+    /// are properties of a *string*, and this type has already parsed one. The
+    /// Python and TypeScript versions test the string because that is what they
+    /// hold, and all three therefore answer the same question about the same
+    /// document by whatever route their representation allows.
+    ///
+    /// Not consulted by authenticity verification: E.6 exists so that a signer's
+    /// bytes and a verifier's recomputation agree, so a non-conforming timestamp
+    /// shows up there as a signature failure. This is how that failure is
+    /// *explained* rather than merely observed.
+    pub fn has_conforming_timestamps(&self) -> bool {
+        use chrono::Timelike;
+        self.issued_at.nanosecond() == 0 && self.expires_at.nanosecond() == 0
+    }
+
     /// Is `resource` within this VAID's scope boundary? An empty boundary means
     /// unrestricted (⊤). This is the SINGLE scope matcher — the mint-time
     /// attenuation check and any runtime scope check both call it, so they cannot
@@ -325,7 +354,9 @@ pub fn scope_contains(boundary: &[String], resource: &str) -> bool {
     if boundary.is_empty() {
         return true;
     }
-    boundary.iter().any(|scope| prefix_contains(scope, resource))
+    boundary
+        .iter()
+        .any(|scope| prefix_contains(scope, resource))
 }
 
 /// Does a single boundary entry `prefix` contain `resource`? The one-entry core
@@ -439,7 +470,10 @@ mod tests {
     #[test]
     fn a_sibling_sharing_a_textual_prefix_is_not_contained() {
         let v = doc(vec!["data.governance"], vec![]);
-        assert!(v.is_in_scope("data.governance"), "the entry contains itself");
+        assert!(
+            v.is_in_scope("data.governance"),
+            "the entry contains itself"
+        );
         assert!(v.is_in_scope("data.governance.reports"), "a real child");
         assert!(
             !v.is_in_scope("data.governance-secret"),

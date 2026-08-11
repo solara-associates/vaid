@@ -721,9 +721,13 @@ documents verify.
 
 ## B8 — the Rust mint emits timestamps that fail the repo's own E.6 profile
 
-**Status:** open. Independent of B7's outcome and worth fixing either way, but it
-**decides** B7: it is the reason the "reject non-canonical forms" option would
-invalidate the reference mint's own output.
+**Status:** **fixed** 2026-08-11, ahead of and independently of B7, on the
+reasoning that a reference mint emitting documents that fail the spec's own
+timestamp predicate is a defect regardless of which B7 option is taken. Shipped
+unreleased; needs a version bump to reach consumers.
+
+It also **decided** B7: it is the reason the "reject non-canonical forms" option
+would have invalidated the reference mint's own output.
 **Observed:** 2026-08-11, minting a root VAID through `MintService::mint_root`
 and inspecting the serialized document.
 **Affects:** `crates/vaid-mint` (the mint side, not the verifier).
@@ -768,10 +772,25 @@ first *and* no already-issued Rust-minted document needs to keep verifying.
 Under B7's **preserve** option nothing here changes, because preserve leaves
 permissive timestamp handling exactly as it is.
 
-### Fix shape
+### Fix, as landed
 
-Truncate at the issuer: `Utc::now().trunc_subsecs(0)` for `issued_at`, and the
-same for the derived `expires_at`. One line each, on the mint side only.
+Clock reads that may reach a signed document go through a named
+`issuer::whole_second_now()` rather than a bare `.trunc_subsecs(0)` at each call
+site — the omission being prevented is invisible, so the remedy is to make a
+clock read that is *not* that one visibly not that one. `attest_delegation` also
+truncates the caller's `expires_at`: the profile is a property of the signed
+bytes rather than of who chose the value, and truncation only ever moves an
+expiry earlier by under a second, which is the safe direction.
+
+`Vaid::has_conforming_timestamps` was implemented as part of this — see B11; it
+had been announced in the crate's changelog and never written, which is why Rust
+had no way to ask the question at all.
+
+Gates added in all three languages, asserting the serialized string directly as
+well as the predicate (so a new predicate is not checked with a new predicate)
+and carrying a negative control that requires the sub-second form to be rejected.
+Verified to fire: reverting the one-line change turns them red and leaves every
+other suite green.
 
 Nothing frozen moves. Every vector supplies fixed whole-second timestamps
 (verified: no vector in the tree carries a sub-second or offset timestamp), so no
@@ -889,3 +908,58 @@ becomes a change all three see at once.
 Failing that, the minimum is a check that the three member lists are the same
 set — which catches drift without catching type drift, and is strictly better
 than the nothing that guards it now.
+
+---
+
+## B11 — a changelog "Added" entry is not evidence the thing was added, and nothing checks
+
+**Status:** open. The instance found is fixed; the class is not.
+**Observed:** 2026-08-11, while fixing B8.
+**Affects:** every package in the repository.
+
+### What breaks
+
+`crates/vaid-mint/CHANGELOG.md` announces, under a released version:
+
+> ### Added — `has_conforming_timestamps`
+>
+> `is_expired` stays **total** and never panics. `has_conforming_timestamps` is
+> the new explicit `encoding.md` E.6 profile check…
+
+The function did not exist in the Rust crate. Python and TypeScript both
+implemented it; Rust's changelog described it as though Rust had. A consumer
+reading the crate's own release notes would have believed the API was there, and
+`cargo add vaid-mint` would have given them a crate without it.
+
+### Why it is worse than a documentation slip
+
+It is the direct reason B8 survived. `has_conforming_timestamps` is precisely the
+predicate that answers "does this document meet E.6", and B8 was the mint failing
+E.6. Rust could not ask the question, so nothing in Rust asked it — and the
+changelog said the question was answerable, which is the kind of statement that
+stops anyone checking.
+
+This is the same shape as the repository's other masked-green findings: a
+declaration and the thing declared are two different objects, and comparing
+declarations to each other proves nothing about either. `verify-internal-versions`
+already exists on exactly that reasoning, for version numbers. Nothing does it for
+API claims.
+
+### How it presents
+
+It does not. Nothing fails. The gap is an **absence** — a function nobody wrote —
+and absences are invisible to every check that walks what exists. The only reason
+this one surfaced is that someone went looking for the predicate in order to use
+it.
+
+### Fix shape
+
+A check that every `### Added — \`symbol\`` heading in a changelog names something
+the package actually exports, per language: Rust via the public API surface,
+Python via `__all__`, TypeScript via the package entry point. Heading text is
+already structured enough to parse, and the check fails closed on a heading it
+cannot resolve.
+
+Bounded honestly: it can only cover claims written in that form, so it catches the
+"Added — `symbol`" case and not prose claiming a behaviour. That is still the
+common case and still strictly more than the nothing that guards it now.
