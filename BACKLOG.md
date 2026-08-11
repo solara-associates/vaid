@@ -1060,11 +1060,17 @@ occurred; a wrong `--prefix` is a different check.
 
 ## B14 — the Rust and Python publish legs depend on secrets that do not exist, and had never been run
 
-**Status:** workflow **fixed** 2026-08-11 (both legs moved to trusted publishing);
-**awaiting the two registry-side publisher configurations**, which only a human
-with registry accounts can create. 0.7.0 is published on npm and not on crates.io
-or PyPI, so the release is PARTIAL and registry parity stays red on `main` until
-those are entered and the two tags re-cut.
+**Status:** **CLOSED** 2026-08-11. Trusted publishers configured on crates.io and
+PyPI; both tags re-cut at `95aebba` and both legs published green through OIDC with
+no stored secret anywhere. **0.7.0 is live on all three registries** and registry
+parity is green on `main`. The three legs are now all *proven*, not assumed — which
+is the condition B14 said had never held.
+
+Re-cut at `95aebba` rather than at `b8b29c8`, because Actions runs the workflow
+from the ref the tag points at: tagging the older commit would have run the old
+token-based workflow and failed identically. Package bytes are unchanged between
+the two commits (verified: `git diff` over `crates/ python/ typescript/ skill/` is
+empty), so the artifact is the same either way.
 
 **Each leg had a trap of its own, both shaped exactly like npm's version floor —
 a failure indistinguishable from the credential being wrong:**
@@ -1148,3 +1154,103 @@ validity. That would have caught this, and it is the honest bound.
 A release path is not "working" until every leg has run. Three ecosystems, one
 proven, and the two unproven ones failed on the first attempt — which is the
 expected rate for anything never exercised, not bad luck.
+
+---
+
+## B15 — the PyPI release carries no provenance attestation
+
+**Status:** open. Everything else about the Python leg is sound; this is the one
+claim it cannot currently support.
+**Observed:** 2026-08-11, immediately after `vaid-mint` 0.7.0 published to PyPI
+through trusted publishing.
+**Affects:** `.github/workflows/release.yml`, the Python publish step.
+
+### What breaks
+
+The package published, through OIDC, with no stored credential — and with **no PEP
+740 attestation**. Measured at source rather than inferred:
+
+```
+pypi.org/pypi/vaid-mint/0.7.0/json  →  provenance: None   (both sdist and wheel)
+pypi.org/integrity/.../provenance   →  HTTP 404
+```
+
+Trusted publishing and attestation are **two different things**, and having the
+first does not give you the second. `twine upload` does not generate attestations
+unless asked (`--attestations`); `pypa/gh-action-pypi-publish` generates them by
+default, which is why this is easy to assume.
+
+### Why it matters here more than for most projects
+
+The other two legs have provenance a third party can check:
+
+| registry | what a consumer can verify | |
+|---|---|---|
+| npm | full SLSA v1 attestation, signed, naming repo, workflow, ref and **source commit** | ✓ |
+| crates.io | `trustpub_data` recording provider, repository, `run_id` and `sha`; `published_by: null` | ✓ |
+| PyPI | nothing | ✗ |
+
+This repository's entire argument is that a claim should be settled by running
+something rather than by reading a page. "This artifact was built from this commit
+by this workflow" is exactly such a claim, and on PyPI it currently rests on
+trusting the release notes.
+
+### Fix shape
+
+Add `--attestations` to the `twine upload` invocation. It requires trusted
+publishing (satisfied) and twine >= 6.1.0 (already asserted for the OIDC floor, so
+no new version constraint). The alternative — switching to
+`pypa/gh-action-pypi-publish` — would get attestations by default but replaces a
+step whose behaviour is now understood with one whose is not, for no other gain.
+
+The durable half belongs in `verify-artifact`, which already proves the npm
+attestation from a clean consumer install (`npm audit signatures`). The Python
+equivalent is to assert the `provenance` field is non-null on the published files.
+Note the ordering constraint: that check can only run **after** publish, so it
+fails a release rather than preventing one — which is the right trade, because the
+alternative is not checking at all.
+
+---
+
+## B16 — enable "require trusted publishing for all new versions" on crates.io and PyPI
+
+**Status:** open, and **deliberately not done yet**. Recorded as a follow-up at the
+repository owner's instruction.
+**Raised:** 2026-08-11, once 0.7.0 had published successfully through trusted
+publishing on both registries.
+
+### What this is
+
+Both registries can be set to **refuse** any upload that does not come through a
+trusted publisher, which removes API tokens as a publishing route entirely. Right
+now the tokens are merely unused: the workflow references none, and
+`verify-release-workflow.mjs` invariant 7 stops it referencing one again. But a
+human with a token could still publish by hand, and so could anyone who obtained
+one.
+
+### Why it is not done in the same breath as the migration
+
+Because a fallback should not be removed in the moment you might need it. The
+trusted-publishing path had, at the time of writing, published exactly once per
+registry. One success is evidence that it works; it is not yet evidence that it
+keeps working across a toolchain bump, an action update, or a registry-side change
+to the OIDC contract. Turning off the alternative while the replacement has a
+sample size of one converts any future failure from "publish the other way and
+investigate" into "cannot publish at all".
+
+This is the same discipline the release workflow already applies to itself —
+`release-outcome.mjs` distinguishes *not established* from *failed* — applied to
+an operational decision rather than to a report.
+
+### When to do it
+
+After the next release publishes cleanly through trusted publishing on all three
+registries. That is the second data point, and it is also the point at which any
+per-release configuration drift would have shown itself.
+
+### What to enter
+
+Both settings live beside the publisher configuration that is already in place:
+crates.io under the crate's Trusted Publishing settings, PyPI under the project's
+Publishing settings. Neither needs a workflow change — the workflow already uses
+no token.
