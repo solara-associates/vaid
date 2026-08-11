@@ -372,6 +372,126 @@ def check_roundtrip(v: dict) -> None:
         )
 
 
+def check_verdict(v: dict) -> None:
+    """``verdict_v1.json`` — the negative path (graded verdicts).
+
+    The other checks in this file ask "does the installed mint produce the same
+    bytes as everyone else". This one asks "does it REFUSE the same way, and say
+    the same thing about why". The happy-path vectors cannot answer that: they only
+    ever exercise documents that work.
+
+    It asserts the REASON, not just the boolean. Three implementations that reject
+    the same document for three different reasons agree on every boolean and
+    disagree about what happened — and a ``pip install`` consumer whose build
+    disagrees with the vector on a reason has a mint that will log, alert and retry
+    differently from every other deployment.
+
+    It also refuses to pass a vector that has lost its teeth: no positive control
+    on either surface, a single refusal reason across every negative case, or a
+    vocabulary that has drifted from :class:`~vaid_mint.verify.VaidVerdict` are all
+    BLOCKERs. A green firewall over a vector that asserts nothing is the
+    masked-green defect this package keeps finding.
+    """
+    from vaid_mint.mint import scope_attenuates_within
+    from vaid_mint.revocation import RevocationStatus
+    from vaid_mint.verify import VaidVerdict, verify_vaid_standing_from_json
+
+    cases = v.get("cases") or []
+    if not cases:
+        raise ConformanceError("verdict vector carries no cases")
+    kernel_pk = bytes.fromhex(v["ed25519"]["kernel_public_key_hex"])
+    revocation_states = {
+        "not_revoked": RevocationStatus.NOT_REVOKED,
+        "revoked": RevocationStatus.REVOKED,
+        "unavailable": RevocationStatus.UNAVAILABLE,
+    }
+
+    positives = {"standing": 0, "attenuation": 0}
+    negatives = {"standing": 0, "attenuation": 0}
+    refusal_reasons: set[str] = set()
+    exercised: set[str] = set()
+
+    for c in cases:
+        name = c.get("name", "<unnamed>")
+        surface = c.get("surface")
+        if surface == "standing":
+            if "document_json" not in c:
+                raise ConformanceError(f"standing case {name!r} has no document_json")
+            state = c.get("revocation")
+            if state not in revocation_states:
+                raise ConformanceError(
+                    f"standing case {name!r} names unknown revocation state {state!r}"
+                )
+            verdict = verify_vaid_standing_from_json(
+                kernel_pk, c["document_json"], revocation_states[state]
+            )
+            reason, valid = verdict.code, verdict.is_valid()
+        elif surface == "attenuation":
+            ok = scope_attenuates_within(c.get("parent_scope", []), c.get("child_scope", []))
+            reason, valid = ("attenuated" if ok else "scope_escalation"), ok
+        else:
+            raise ConformanceError(f"verdict case {name!r} names unknown surface {surface!r}")
+
+        if reason != c.get("expected_reason"):
+            raise ConformanceError(
+                f"verdict case {name!r}: reason {reason!r} != frozen "
+                f"{c.get('expected_reason')!r} — {c.get('why', '')}\n  A reason mismatch "
+                "is a divergence even where the boolean agrees: this build and the "
+                "vector disagree about WHAT HAPPENED."
+            )
+        if valid != c.get("expected_valid"):
+            raise ConformanceError(
+                f"verdict case {name!r}: valid={valid}, frozen "
+                f"{c.get('expected_valid')} — {c.get('why', '')}"
+            )
+
+        if c["expected_valid"]:
+            positives[surface] += 1
+        else:
+            negatives[surface] += 1
+            refusal_reasons.add(reason)
+        exercised.add(c["expected_reason"])
+
+    # The vector must still have teeth. Each of these is a way it could be edited
+    # into something that passes for every implementation regardless of behaviour.
+    if not all(positives.values()):
+        raise ConformanceError(
+            "the verdict vector has lost a positive control (standing and attenuation "
+            "each need one) — an implementation that refused every input would pass it"
+        )
+    if not all(negatives.values()):
+        raise ConformanceError(
+            "the verdict vector has lost a negative case on one of its surfaces — an "
+            "implementation that accepted every input would pass it"
+        )
+    if len(refusal_reasons) < 2:
+        raise ConformanceError(
+            f"every refusing case expects the same reason ({sorted(refusal_reasons)}) — "
+            "a boolean-only implementation would pass this vector, so the reason "
+            "assertions would be checking nothing"
+        )
+
+    # Vocabulary agreement, both directions: a reason the vector declares that this
+    # build cannot return means the vector was written against a different
+    # implementation; a verdict this build can return that the vector never names is
+    # a state shipping unchecked.
+    declared = set(v.get("reasons", {}).get("standing", []))
+    implemented = {r.code for r in VaidVerdict}
+    if declared != implemented:
+        raise ConformanceError(
+            "the verdict vector's standing vocabulary and this build's VaidVerdict "
+            f"disagree\n  only in the vector:         {sorted(declared - implemented)}\n"
+            f"  only in the implementation: {sorted(implemented - declared)}"
+        )
+    all_declared = declared | set(v.get("reasons", {}).get("attenuation", []))
+    unexercised = sorted(all_declared - exercised)
+    if unexercised:
+        raise ConformanceError(
+            f"reason(s) declared by the vector but exercised by no case: {unexercised} — "
+            "a state with no case behind it is a claim with no evidence"
+        )
+
+
 #: Every vector this firewall knows how to check, by filename.
 #:
 #: The firewall ENUMERATES what actually ships and dispatches through this table
@@ -390,6 +510,7 @@ VECTOR_CHECKS = {
     "attestation_v1.json": [check_attestation],
     "scope_v1.json": [check_scope],
     "roundtrip_v1.json": [check_roundtrip],
+    "verdict_v1.json": [check_verdict],
 }
 
 

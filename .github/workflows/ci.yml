@@ -343,6 +343,20 @@ jobs:
           cmp \
             crates/vaid-mint/tests/vectors/scope_v1.json \
             typescript/vaid-mint/vectors/scope_v1.json
+      # The NEGATIVE path. Same cmp discipline, and the reason it matters here is
+      # sharper than for the vectors above: this one pins REASON CODES, and three
+      # copies of the case table are three chances for one language's expected
+      # reason to drift away from the other two. A drifted copy would leave every
+      # implementation passing its own vector while the three no longer agree —
+      # which is the exact failure this vector was added to make impossible.
+      - name: Cross-language verdict-vector byte-identity (cmp)
+        run: |
+          cmp \
+            crates/vaid-mint/tests/vectors/verdict_v1.json \
+            python/vaid-mint/vaid_mint/vectors/verdict_v1.json
+          cmp \
+            crates/vaid-mint/tests/vectors/verdict_v1.json \
+            typescript/vaid-mint/vectors/verdict_v1.json
       # (b) Re-run all three gates against their vendored copies ⇒ each language's
       # canonicalization and signature == vector, and (via cmp) the vectors are the
       # same bytes ⇒ all three agree.
@@ -356,6 +370,8 @@ jobs:
         run: cargo test -p vaid-mint --test scope_conformance --locked
       - name: Rust roundtrip conformance gate (ADR-0006)
         run: cargo test -p vaid-mint --test roundtrip_conformance --locked
+      - name: Rust verdict conformance gate (negative path, graded verdicts)
+        run: cargo test -p vaid-mint --test verdict_conformance --locked
       - name: Set up Python
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
@@ -371,6 +387,8 @@ jobs:
         run: python -m pytest python/vaid-mint/tests/test_scope_conformance.py
       - name: Python roundtrip conformance gate (ADR-0006)
         run: python -m pytest python/vaid-mint/tests/test_roundtrip_conformance.py
+      - name: Python verdict conformance gate (negative path, graded verdicts)
+        run: python -m pytest python/vaid-mint/tests/test_verdict_conformance.py
       - name: Set up Node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:

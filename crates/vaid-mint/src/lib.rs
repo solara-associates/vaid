@@ -118,10 +118,13 @@ pub use document::{
 };
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
-pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
+pub use mint::{scope_attenuates_within, MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{
     assemble_lineage, InMemoryRevocationList, LineageAssembly, LineageResolver, ParentResolution,
     RevocationCheck, RevocationStatus,
 };
-pub use verify::{verify_lineage_hash, verify_vaid_authenticity};
+pub use verify::{
+    verify_lineage_hash, verify_vaid_authenticity, verify_vaid_authenticity_graded,
+    verify_vaid_standing, verify_vaid_standing_from_json, VaidVerdict,
+};

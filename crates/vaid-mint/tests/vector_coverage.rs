@@ -29,6 +29,7 @@ const GATED_VECTORS: &[(&str, &str)] = &[
     ("attestation_v1.json", "tests/attestation_conformance.rs"),
     ("scope_v1.json", "tests/scope_conformance.rs"),
     ("roundtrip_v1.json", "tests/roundtrip_conformance.rs"),
+    ("verdict_v1.json", "tests/verdict_conformance.rs"),
 ];
 
 fn vectors_dir() -> PathBuf {
