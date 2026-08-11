@@ -1060,9 +1060,27 @@ occurred; a wrong `--prefix` is a different check.
 
 ## B14 — the Rust and Python publish legs depend on secrets that do not exist, and had never been run
 
-**Status:** open. **0.7.0 is published on npm and not on crates.io or PyPI**, so
-the release is PARTIAL and registry parity stays red on `main` until this is
-closed.
+**Status:** workflow **fixed** 2026-08-11 (both legs moved to trusted publishing);
+**awaiting the two registry-side publisher configurations**, which only a human
+with registry accounts can create. 0.7.0 is published on npm and not on crates.io
+or PyPI, so the release is PARTIAL and registry parity stays red on `main` until
+those are entered and the two tags re-cut.
+
+**Each leg had a trap of its own, both shaped exactly like npm's version floor —
+a failure indistinguishable from the credential being wrong:**
+
+- **crates.io.** `cargo publish` cannot do OIDC at all; it only ever reads
+  `CARGO_REGISTRY_TOKEN`. Configuring the publisher and expecting cargo to find it
+  fails with *"please provide a non-empty token"* — the same message an absent
+  secret produces, i.e. the same message this entry was opened for.
+  `rust-lang/crates-io-auth-action` mints the token and cargo consumes it.
+- **PyPI.** twine *does* exchange OIDC natively, but only when it finds **no**
+  credential. A set-but-empty `TWINE_PASSWORD` — which is what a missing secret
+  expands to — satisfies its credential lookup, so it never attempts the exchange
+  and PyPI answers 403: identical to a missing or mismatched publisher. Removing
+  those two env lines is what enables trusted publishing. twine >= 6.1.0 is
+  required (trusted publishing landed 2025-01-17) and the floor is now asserted,
+  mirroring npm's.
 **Observed:** 2026-08-11, runs `31480913884` (rust) and `31480913945` (python).
 **Affects:** `.github/workflows/release.yml`, the `publish` job.
 
