@@ -400,3 +400,97 @@ The mitigation is detection, and it is already in place. Two things must hold:
 
 Worth reporting upstream: the CLI could distinguish "digest mismatch" from "no index
 here" in its output at no cost to the security property. Not filed.
+
+---
+
+## B5 — the discovery format we publish has no specification, and an upstream change delists us the same silent way
+
+**Status:** open, unmitigated. B4's mitigation does **not** cover this; see
+"Why the B4 checks cannot see this" below.
+**Observed:** 2026-08-10, auditing distribution channels for the skill.
+**Affects:** distribution of `vaid-skill` through `npx skills add https://solara.associates`.
+Same channel as [B4](#b4), different cause: B4 is a value *we* get wrong, B5 is the
+format being redefined underneath a value that is correct.
+
+### What breaks
+
+`public/.well-known/agent-skills/index.json` declares:
+
+```json
+"$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+```
+
+That URL does not resolve. Not a 404 — the host does not answer at all
+(`curl` exits with no response; HTTP code `000`). There is no schema document at the
+other end of the identifier we publish.
+
+Nor is the format specified anywhere else. `agentskills.io/llms.txt` lists nine pages;
+none concerns discovery, distribution, hosting, or well-known URIs. The published
+specification covers `SKILL.md` frontmatter and directory layout only. agentskills.io
+is a **format spec, not a distribution channel**, and the discovery index is not part
+of what it specifies.
+
+The format is therefore defined in exactly one place: the TypeScript interfaces
+`WellKnownIndexV2` / `WellKnownSkillEntryV2` in `vercel-labs/skills`,
+`src/providers/wellknown.ts` — a Vercel implementation wearing an agentskills.io
+identifier that agentskills.io does not serve. The consequence is that **the format
+has no version we can track and no compatibility promise we can hold anyone to.**
+Whatever that file says on the day a user runs `npx skills add` is the format.
+
+### How it presents — identically to B4, and to never having published
+
+The CLI rejects an index whose `$schema` it does not recognise, and treats an absent
+`$schema` as legacy v0.1.0, which it then rejects for having no `files` array. Either
+path discards the whole index rather than the offending entry. So if upstream ships
+`discovery/0.3.0` and stops accepting `0.2.0`, our index — byte-correct, digest-valid,
+serving exactly what it always served — stops being read, and the installing user sees:
+
+```
+◇  No well-known skills found; trying direct download...
+```
+
+The same message as a wrong digest, and the same message as a domain that publishes
+nothing. Three distinct causes, one indistinguishable symptom, none of which reaches us.
+
+### Why the B4 checks cannot see this
+
+This is the part worth being precise about, because the checks look like they cover it
+and do not:
+
+| check | compares | would see a B5 break? |
+|---|---|---|
+| `check-agent-skills-index.mjs` (PR gate) | committed index ↔ committed artifact ↔ vaid repo at a resolved head SHA | **No** |
+| `check-agent-skills-index.mjs --live` (scheduled) | origin index ↔ origin artifact | **No** |
+
+Both validate us against the format **as transcribed on 2026-08-10**.
+`DISCOVERY_SCHEMA_V2` is a hard-coded constant in our script, and `fetch-source.mjs`
+pins the *vaid* repo — nothing in the estate fetches, pins, or diffs
+`vercel-labs/skills`. An upstream redefinition leaves both checks green: our index
+remains perfectly self-consistent, and self-consistency is the only thing they test.
+
+That transcription is still the right call — the CLI is the authority, because the CLI
+is what runs on the installing machine, and there is no spec to defer to instead. The
+gap is not that we read the wrong source. It is that we **copied** the source instead
+of **watching** it, and a copy cannot notice the original changing. Same shape as
+"drift checks prove match, not currency": both sides can agree and both be stale.
+
+### Fix shape
+
+Watch the upstream definition rather than only our own conformance to a copy of it.
+Cheapest sufficient version, additive to the existing scheduled job:
+
+1. Fetch `vercel-labs/skills` `src/providers/wellknown.ts` at a resolved head SHA
+   (same discipline as `fetch-source.mjs`: resolve, then pin, then print the SHA).
+2. Assert the recognised schema constant still contains `discovery/0.2.0`, and that
+   the well-known paths still include `/.well-known/agent-skills/index.json`.
+3. Fail loudly on any change. A red X here means "read the diff and decide", not
+   "something is broken" — the point is to be told, not to be correct.
+
+Deliberately *not* proposed: vendoring the upstream file, or parsing it structurally.
+Both re-create the copy problem one level up. A substring assertion over a pinned SHA
+is enough to convert a silent delisting into a scheduled failure, which is the whole
+requirement.
+
+Not done because it belongs in `synthera-site-redesign` (where the index and the
+existing checks live), not here, and because it wants an issue in that repo rather than
+a drive-by commit. Recorded here so the reasoning is not re-derived.
