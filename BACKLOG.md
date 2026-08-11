@@ -966,3 +966,127 @@ cannot resolve.
 Bounded honestly: it can only cover claims written in that form, so it catches the
 "Added — `symbol`" case and not prose claiming a behaviour. That is still the
 common case and still strictly more than the nothing that guards it now.
+
+---
+
+## B12 — the release workflow never installs workspace dependencies, so no npm workspace package can be released through it
+
+**Status:** open. **Blocking the npm half of the 0.7.0 release**, observed live.
+**Observed:** 2026-08-11, run `31478285695` for tag `npm-vaid-mint-v0.7.0` — the
+first attempt to release an npm **workspace** package through this workflow.
+**Affects:** `.github/workflows/release.yml`, both the `preflight` and `publish`
+jobs, for every package under `typescript/`.
+
+### What breaks
+
+Neither job runs `npm ci` before it packages. `preflight` installs a
+trusted-publishing-capable npm and goes straight to
+`npm publish --dry-run --workspace vaid-mint --prefix typescript`; `publish` does
+the same and goes straight to `npm publish`.
+
+`vaid-mint`'s `prepublishOnly` is `npm run build && npm test`, so packaging
+compiles the package. With no `node_modules` there is no `typescript`, no
+`@types/node`, and no linked `vaid-pop`:
+
+```
+src/attestation.ts(78,66): error TS2307: Cannot find module 'vaid-pop'
+src/bin/conformance.ts(5,1): error TS2591: Cannot find name 'process'
+```
+
+`vaid-pop` also needs to have been **built**, not merely linked: `vaid-mint`
+consumes its type declarations from `dist/`, which is why CI runs
+`npm ci --prefix typescript && npm run build --prefix typescript` before anything
+else. The release workflow does neither.
+
+### Why it took until now to surface
+
+`vaid-skill` is the only npm package this workflow has ever published, and it
+lives at `skill/` outside the workspace with no compile step in its publish path.
+Every packaging assumption that holds for it fails for a workspace package that
+builds. The workflow was proven on the easy case and generalised without being
+re-proven.
+
+### The good news, and it is not small
+
+It failed **closed**, at preflight, with `publish: skipped`. The reporting was
+exact:
+
+> NOT RELEASED — vaid-mint@0.7.0 never reached the registry. This is the SAFE
+> failure. The version is NOT burned. Fix the cause below, then re-tag the same
+> version.
+
+That is the structural fix from B2/B3 working as designed and being exercised for
+the first time. The historical failures ran the dry-run *inside* verify-artifact,
+after publishing; this one runs it in preflight, before. A version number was not
+consumed and the same tag can be re-cut.
+
+### Fix shape
+
+Install and build the workspace before packaging, in **both** jobs, mirroring what
+CI already does:
+
+```yaml
+- name: Install + build the TypeScript workspace
+  if: needs.resolve.outputs.eco == 'npm' && needs.resolve.outputs.ws != ''
+  run: npm ci --prefix "$WS" && npm run build --prefix "$WS"
+```
+
+Guarded on `ws` being non-empty so the non-workspace case (`skill/`) is unchanged.
+
+The durable half is a check that the release workflow packages every releasable
+npm package the way CI builds it — `verify-release-workflow.mjs` already asserts
+structural invariants about *which job* steps live in, and this is the same class
+of invariant about *what must precede* packaging. Without it the next package with
+a build step in its publish path fails the same way.
+
+---
+
+## B13 — the substrate carries the B7 defect in production
+
+**Status:** open, and **deliberately not fixed here**. This is SYNTHERA's code and
+another session's ground; this entry exists so it is not discovered a third time.
+**Observed:** recorded in ADR-0006's own Consequences (7 August 2026), confirmed
+still open when B7 was fixed in the reference on 2026-08-11.
+**Affects:** `synthera-types` — **not** this repository.
+
+### What breaks
+
+ADR-0006 says it plainly, under "Costs, accepted knowingly":
+
+> **The same defect exists in the substrate** (`synthera-types`
+> `canonical_vaid_signing_bytes` projects through its typed `Vaid`), and it is in
+> production. Confirmed by test: a valid 17-key document is re-projected to 16 and
+> rejected. That is a synthera fix, tracked separately, and this ADR is the
+> normative statement it will cite.
+
+That was the *unknown-member* half. B7 established that the same re-projection
+also applies one level down, to the **values** of members the type does name —
+UUID spellings, timestamp forms, and the difference between an absent member and a
+present null. A typed `Vaid` in any language normalizes those on re-serialization
+unless it is written not to.
+
+So the substrate plausibly carries **both** halves: the one ADR-0006 recorded, and
+the one B7 found. The reference implementation now holds neither.
+
+### Why this entry exists rather than a fix
+
+Three reasons, in order:
+
+1. It is not this repository's code. A cross-repo edit from here would be a change
+   nobody in that repo reviewed.
+2. It is in production, and the fix changes which documents verify — the same
+   property that made B7 a release-gated change here.
+3. **It has now been recorded twice and fixed zero times.** ADR-0006 noted it in
+   August and tracked it "separately"; B7 rediscovered the same class from first
+   principles four days later without anyone connecting the two. A defect that
+   gets re-found rather than fixed is a defect with no owner, and the next
+   rediscovery costs the same again.
+
+### What the substrate fix should cite
+
+`docs/spec/encoding.md` **E.1a** — values are canonicalized as presented; absent
+and present-null are different documents; parse permissively and verify strictly —
+together with ADR-0006 Requirement 3, which E.1a makes explicit at the value level.
+`verdict_v1.json` is the executable form: it pins all eight classes, so a substrate
+implementation can be held to the same contract by running it rather than by
+reading this.
