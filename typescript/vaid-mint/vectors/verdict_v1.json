@@ -1,0 +1,302 @@
+{
+  "_comment": "Negative-path conformance vector (v1). Nine happy-path vectors prove the three implementations MINT identically; none of them proves they FAIL identically. A verifier that accepts an expired VAID in one language and rejects it in another is a worse defect than a mint mismatch, and nothing in the suite would have caught it. ADR-0006 found exactly this class by accident — Python and Rust disagreed on a real production document because one preserved an unknown member and the other dropped it, and no vector covered the path. This one covers the path. SHAPE: a predicate vector, following roundtrip_v1.json and scope_v1.json — it pins A VERDICT OVER GIVEN BYTES rather than bytes over a given input, which is the only shape that catches cross-implementation disagreement. It carries no digest of its own: the assertion is the verdict. mint_v1, mint_pop_v1, chain_v1, attestation_v1, scope_v1 and roundtrip_v1 are untouched and NOT re-frozen. EACH CASE ASSERTS A REASON, NOT MERELY A BOOLEAN. Three implementations that reject the same document for three different reasons agree on every boolean and disagree about what happened; that disagreement is the defect this vector exists to make visible, and it is invisible to a vector that only pins true/false. DOCUMENTS ARE CARRIED AS TEXT, not as objects, because half the point is input that is not a document at all — truncated, empty, or not JSON. A case whose bytes cannot be expressed as a JSON object cannot be written any other way, and starting every case from text means the malformed cases travel the same code path as the well-formed ones instead of a special one written just for them.",
+  "rule": {
+    "statement": "A conforming implementation MUST, for each standing case, evaluate the case's document_json text together with the given revocation status and return both expected_valid and expected_reason. For each attenuation case it MUST evaluate scope containment of child_scope within parent_scope and return both. The reason is normative, not advisory.",
+    "order": "Standing is evaluated in exactly this order, and the FIRST fault found is the one reported: (1) parse; (2) sig_version; (3) trust_domain; (4) kernel_key_thumbprint correspondence; (5) lineage_hash; (6) kernel signature; (7) expiry; (8) revocation. Steps 2-6 are the pre-existing authenticity order, unchanged. Reordering any step changes which reason a document receives while leaving every boolean identical, which is precisely the divergence class this vector polices.",
+    "unavailable_is_not_a_negative": "A revocation status of 'unavailable' yields 'indeterminate' — its own state, never collapsed into 'revoked' and never into 'valid'. It fails CLOSED: expected_valid is false. This is the same rule already carried by the three-state RevocationCheck, the four-valued chain verdict, and the packaged firewall's refusal to report PASS over zero vectors.",
+    "authenticity_is_not_standing": "expected_valid is true only for a document that is authentic AND unexpired AND affirmatively not revoked. The pre-existing authenticity predicate answers a narrower question and is unchanged by this vector.",
+    "expiry_is_pinned_by_distance_not_by_a_clock": "Expiring cases use a timestamp two decades past and unexpired cases one nine centuries hence, so no verdict here depends on when the suite runs. This is deliberate: the Rust and Python expiry predicates read the wall clock and accept no 'now' argument, so a vector pinned against a near boundary would be a vector with an expiry date of its own.",
+    "controls_are_load_bearing": "This file contains positive controls on BOTH surfaces. An implementation that refuses every input satisfies every negative case here; only a case that must succeed catches it. A checker that drops the controls has disarmed the vector without changing a single negative."
+  },
+  "reasons": {
+    "standing": [
+      "valid",
+      "unparseable",
+      "unsupported_sig_version",
+      "malformed_trust_domain",
+      "issuer_mismatch",
+      "lineage_inconsistent",
+      "inauthentic",
+      "expired",
+      "revoked",
+      "indeterminate"
+    ],
+    "attenuation": [
+      "attenuated",
+      "scope_escalation"
+    ]
+  },
+  "revocation_states": [
+    "not_revoked",
+    "revoked",
+    "unavailable"
+  ],
+  "ed25519": {
+    "kernel_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
+    "_foreign_comment": "A second, unrelated key standing in for 'somebody else's signer'. Without it, 'signed by a non-kernel key' cannot be expressed, and the two ways that forgery presents — a broken signature versus a stranger's perfectly valid one — cannot be told apart.",
+    "foreign_private_key_seed_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "foreign_public_key_hex": "2543b92ff1095511476adc8369db6ddc933665a11978dda1404ee1066ca9559d",
+    "foreign_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:WeVHjIQTOLKu-P74oC-WL-MNn_sLM5CvrzuMjDFC3-s"
+  },
+  "cases": [
+    {
+      "name": "control: authentic, unexpired, revocation clean",
+      "why": "THE CONTROL. Without at least one case that must return valid, an implementation that rejects everything passes this entire vector. Every negative below is only meaningful because this one is here.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    26,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": true,
+      "expected_reason": "valid"
+    },
+    {
+      "name": "expired: past its TTL",
+      "why": "authentic and correctly signed, and past expires_at. The signature is real, so an implementation reporting inauthentic here is confusing 'no longer usable' with 'never genuine' — different accusations about different parties.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2020-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    161,\n    150,\n    194,\n    100,\n    46,\n    119,\n    128,\n    130,\n    208,\n    197,\n    125,\n    26,\n    176,\n    71,\n    117,\n    118,\n    21,\n    120,\n    23,\n    38,\n    232,\n    13,\n    253,\n    37,\n    32,\n    137,\n    129,\n    55,\n    202,\n    45,\n    33,\n    117,\n    152,\n    184,\n    52,\n    102,\n    57,\n    240,\n    55,\n    203,\n    6,\n    39,\n    218,\n    2,\n    216,\n    213,\n    219,\n    16,\n    100,\n    143,\n    57,\n    47,\n    66,\n    92,\n    115,\n    135,\n    20,\n    251,\n    117,\n    37,\n    171,\n    16,\n    185,\n    2\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "expired"
+    },
+    {
+      "name": "revoked: the store reported a revoked lineage",
+      "why": "authentic and unexpired; the caller's RevocationCheck said Revoked (R.4.4).",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    26,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "revoked",
+      "expected_valid": false,
+      "expected_reason": "revoked"
+    },
+    {
+      "name": "indeterminate: the revocation store could not be consulted",
+      "why": "THE FAIL-CLOSED CASE. An absent InMemoryRevocationList reports Unavailable, which is neither 'clean' nor 'revoked'. It MUST NOT read as valid, and it MUST NOT be collapsed into revoked: accusing a holder of revocation because a store was unreachable is a false accusation, and reporting clean is a fail-open. It is its own state.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    26,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "unavailable",
+      "expected_valid": false,
+      "expected_reason": "indeterminate"
+    },
+    {
+      "name": "signature valid, payload tampered",
+      "why": "the signature is a genuine kernel signature — over DIFFERENT bytes. A scope entry was added after signing. An implementation that reported valid here would be honouring an escalation the kernel never authorised.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    26,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\",\n    \"data.everything\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "inauthentic"
+    },
+    {
+      "name": "payload valid, signature tampered",
+      "why": "the other direction: untouched document, one flipped signature byte.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    229,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "inauthentic"
+    },
+    {
+      "name": "signed by a non-kernel key, thumbprint left as the kernel's",
+      "why": "a forger who signs with their own key but does not touch the commitment. The thumbprint still corresponds to the key we hold, so the key-commitment check passes and the SIGNATURE is what refuses. Reason: inauthentic.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    46,\n    92,\n    45,\n    55,\n    241,\n    157,\n    237,\n    88,\n    69,\n    26,\n    172,\n    133,\n    118,\n    165,\n    40,\n    100,\n    55,\n    50,\n    171,\n    144,\n    28,\n    198,\n    184,\n    169,\n    244,\n    246,\n    139,\n    252,\n    236,\n    108,\n    212,\n    64,\n    96,\n    40,\n    50,\n    111,\n    249,\n    154,\n    89,\n    45,\n    152,\n    224,\n    27,\n    147,\n    187,\n    118,\n    188,\n    213,\n    153,\n    153,\n    238,\n    195,\n    109,\n    159,\n    131,\n    13,\n    198,\n    54,\n    37,\n    209,\n    214,\n    20,\n    111,\n    12\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "inauthentic"
+    },
+    {
+      "name": "signed by a non-kernel key, thumbprint rewritten to match it",
+      "why": "THE SHARP CASE, and the reason a graded verdict earns its keep. This document is internally consistent: signed by the foreign key, and committing to the foreign key. Nothing about it is self-contradictory. It is simply not OUR issuer, and the key-commitment check is what says so — BEFORE the signature check, which would have passed against the foreign key had anyone asked it. Both this and the case above are refusals; a boolean cannot tell you that one is a broken signature and the other is a stranger's valid one.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    175,\n    123,\n    110,\n    89,\n    173,\n    18,\n    155,\n    23,\n    204,\n    104,\n    254,\n    111,\n    172,\n    181,\n    161,\n    101,\n    203,\n    232,\n    113,\n    164,\n    133,\n    27,\n    102,\n    115,\n    96,\n    149,\n    41,\n    193,\n    255,\n    115,\n    182,\n    154,\n    145,\n    5,\n    96,\n    228,\n    65,\n    235,\n    208,\n    105,\n    205,\n    232,\n    250,\n    95,\n    161,\n    22,\n    164,\n    5,\n    60,\n    54,\n    153,\n    51,\n    254,\n    61,\n    33,\n    128,\n    11,\n    102,\n    142,\n    144,\n    181,\n    252,\n    180,\n    10\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:WeVHjIQTOLKu-P74oC-WL-MNn_sLM5CvrzuMjDFC3-s\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "issuer_mismatch"
+    },
+    {
+      "name": "lineage_hash does not recompute",
+      "why": "signed over the bad lineage_hash, so the kernel signature is VALID and only the explicit lineage check refuses. This is why lineage is checked in its own right rather than left to the signature: a mint that signs a malformed lineage produces a document the signature happily vouches for.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    105,\n    209,\n    101,\n    18,\n    13,\n    90,\n    218,\n    135,\n    86,\n    236,\n    51,\n    25,\n    96,\n    14,\n    127,\n    63,\n    166,\n    1,\n    237,\n    73,\n    249,\n    135,\n    212,\n    128,\n    180,\n    106,\n    177,\n    28,\n    95,\n    57,\n    205,\n    129,\n    106,\n    8,\n    15,\n    14,\n    37,\n    1,\n    247,\n    203,\n    64,\n    114,\n    193,\n    105,\n    49,\n    94,\n    170,\n    214,\n    196,\n    241,\n    149,\n    119,\n    74,\n    75,\n    43,\n    7,\n    72,\n    207,\n    100,\n    251,\n    22,\n    60,\n    197,\n    11\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"0000000000000000000000000000000000000000000000000000000000000000\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "lineage_inconsistent"
+    },
+    {
+      "name": "sig_version 2 — a downgrade",
+      "why": "correctly signed as a v2 document. There is no dual-version acceptance (ADR-0004); accepting both would recreate the downgrade surface that signing sig_version exists to close.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 2,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    11,\n    58,\n    112,\n    50,\n    154,\n    38,\n    116,\n    235,\n    167,\n    124,\n    82,\n    32,\n    168,\n    172,\n    179,\n    84,\n    70,\n    44,\n    247,\n    17,\n    187,\n    45,\n    236,\n    69,\n    212,\n    87,\n    15,\n    69,\n    98,\n    108,\n    141,\n    85,\n    143,\n    239,\n    235,\n    137,\n    57,\n    175,\n    169,\n    211,\n    111,\n    233,\n    106,\n    235,\n    48,\n    193,\n    63,\n    118,\n    242,\n    53,\n    205,\n    169,\n    148,\n    40,\n    81,\n    29,\n    88,\n    152,\n    39,\n    190,\n    145,\n    62,\n    234,\n    14\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unsupported_sig_version"
+    },
+    {
+      "name": "sig_version absent entirely",
+      "why": "must PARSE and then be refused at verify, not be reported unparseable: the Rust field carries #[serde(default)] precisely so this document deserializes to 0 and gets a verdict about its version rather than about its syntax.",
+      "surface": "standing",
+      "document_json": "{\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    40,\n    183,\n    22,\n    163,\n    60,\n    207,\n    172,\n    239,\n    55,\n    20,\n    48,\n    209,\n    26,\n    168,\n    226,\n    233,\n    128,\n    239,\n    106,\n    161,\n    187,\n    157,\n    151,\n    6,\n    250,\n    195,\n    157,\n    183,\n    137,\n    201,\n    197,\n    179,\n    54,\n    119,\n    218,\n    57,\n    185,\n    111,\n    47,\n    135,\n    156,\n    73,\n    148,\n    141,\n    159,\n    210,\n    5,\n    29,\n    215,\n    200,\n    195,\n    129,\n    226,\n    151,\n    37,\n    77,\n    153,\n    216,\n    44,\n    217,\n    108,\n    206,\n    189,\n    10\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unsupported_sig_version"
+    },
+    {
+      "name": "trust_domain is not well-formed",
+      "why": "correctly signed, and names an issuer nobody can look up (ADR-0004). A thumbprint is a commitment, not a key; without a well-formed domain to look it up under there is nothing to select within.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    64,\n    127,\n    207,\n    1,\n    243,\n    7,\n    79,\n    177,\n    86,\n    14,\n    252,\n    66,\n    15,\n    98,\n    8,\n    104,\n    245,\n    98,\n    108,\n    28,\n    179,\n    173,\n    74,\n    8,\n    171,\n    77,\n    31,\n    210,\n    134,\n    198,\n    19,\n    16,\n    234,\n    252,\n    253,\n    193,\n    48,\n    163,\n    91,\n    195,\n    48,\n    209,\n    192,\n    105,\n    197,\n    54,\n    226,\n    134,\n    132,\n    60,\n    134,\n    249,\n    29,\n    165,\n    72,\n    151,\n    25,\n    117,\n    232,\n    53,\n    205,\n    163,\n    8,\n    8\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"not a domain\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "malformed_trust_domain"
+    },
+    {
+      "name": "truncated: cut mid-document",
+      "why": "the first 200 bytes of a genuine document. Rust cannot construct a Vaid from this at all; Python and TypeScript would happily hand a partial map to a verifier if nothing gated it. All three must say the same thing: there is no document here to have an opinion about.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\"",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unparseable"
+    },
+    {
+      "name": "malformed: not JSON at all",
+      "why": "arbitrary bytes. A refusal, never a raised exception or a panic.",
+      "surface": "standing",
+      "document_json": "this is not a VAID",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unparseable"
+    },
+    {
+      "name": "malformed: empty input",
+      "why": "zero bytes. The degenerate case, which is exactly the one a hand-rolled parser forgets.",
+      "surface": "standing",
+      "document_json": "",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unparseable"
+    },
+    {
+      "name": "malformed: valid JSON, but an array",
+      "why": "well-formed JSON that is not a document. Parseable as JSON is not the same question as parseable as a VAID.",
+      "surface": "standing",
+      "document_json": "[]",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unparseable"
+    },
+    {
+      "name": "malformed: a required member is absent",
+      "why": "every member of the Rust struct except sig_version and parent_vaid is required. A map missing one is not a VAID, and the untyped implementations must refuse it for the same reason the typed one does rather than proceeding with a hole in the document.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    26,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unparseable"
+    },
+    {
+      "name": "malformed: a member of the wrong type",
+      "why": "scope_boundary as a bare string rather than a list. In Python and JavaScript a string is iterable, so an ungated implementation would silently treat this as a boundary of ten single-character entries.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    26,\n    148,\n    104,\n    49,\n    172,\n    135,\n    233,\n    237,\n    93,\n    130,\n    0,\n    250,\n    158,\n    68,\n    201,\n    40,\n    18,\n    41,\n    238,\n    242,\n    164,\n    63,\n    179,\n    92,\n    24,\n    142,\n    34,\n    208,\n    44,\n    189,\n    33,\n    231,\n    149,\n    227,\n    150,\n    192,\n    207,\n    104,\n    57,\n    162,\n    212,\n    126,\n    239,\n    197,\n    142,\n    197,\n    125,\n    10,\n    223,\n    13,\n    9,\n    66,\n    8,\n    95,\n    45,\n    152,\n    28,\n    98,\n    176,\n    169,\n    121,\n    92,\n    30,\n    6\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": \"data.acme\",\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unparseable"
+    },
+    {
+      "name": "order: expired AND revoked",
+      "why": "both are true. Expiry is reported, because it is determinable from the document itself while revocation is an answer from elsewhere.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2020-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    161,\n    150,\n    194,\n    100,\n    46,\n    119,\n    128,\n    130,\n    208,\n    197,\n    125,\n    26,\n    176,\n    71,\n    117,\n    118,\n    21,\n    120,\n    23,\n    38,\n    232,\n    13,\n    253,\n    37,\n    32,\n    137,\n    129,\n    55,\n    202,\n    45,\n    33,\n    117,\n    152,\n    184,\n    52,\n    102,\n    57,\n    240,\n    55,\n    203,\n    6,\n    39,\n    218,\n    2,\n    216,\n    213,\n    219,\n    16,\n    100,\n    143,\n    57,\n    47,\n    66,\n    92,\n    115,\n    135,\n    20,\n    251,\n    117,\n    37,\n    171,\n    16,\n    185,\n    2\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "revoked",
+      "expected_valid": false,
+      "expected_reason": "expired"
+    },
+    {
+      "name": "order: expired AND revocation unavailable",
+      "why": "a definite answer must not be displaced by 'I could not tell'. Reporting indeterminate about a document we can positively see has expired discards information we already hold.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2020-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    161,\n    150,\n    194,\n    100,\n    46,\n    119,\n    128,\n    130,\n    208,\n    197,\n    125,\n    26,\n    176,\n    71,\n    117,\n    118,\n    21,\n    120,\n    23,\n    38,\n    232,\n    13,\n    253,\n    37,\n    32,\n    137,\n    129,\n    55,\n    202,\n    45,\n    33,\n    117,\n    152,\n    184,\n    52,\n    102,\n    57,\n    240,\n    55,\n    203,\n    6,\n    39,\n    218,\n    2,\n    216,\n    213,\n    219,\n    16,\n    100,\n    143,\n    57,\n    47,\n    66,\n    92,\n    115,\n    135,\n    20,\n    251,\n    117,\n    37,\n    171,\n    16,\n    185,\n    2\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "unavailable",
+      "expected_valid": false,
+      "expected_reason": "expired"
+    },
+    {
+      "name": "order: forged AND expired",
+      "why": "authenticity wins. Reporting 'expired' about a forgery invites a renewal, and renewing a forged document hands the forger a fresh valid one.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 3,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2020-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    161,\n    150,\n    194,\n    100,\n    46,\n    119,\n    128,\n    130,\n    208,\n    197,\n    125,\n    26,\n    176,\n    71,\n    117,\n    118,\n    21,\n    120,\n    23,\n    38,\n    232,\n    13,\n    253,\n    37,\n    32,\n    137,\n    129,\n    55,\n    202,\n    45,\n    33,\n    117,\n    152,\n    184,\n    52,\n    102,\n    57,\n    240,\n    55,\n    203,\n    6,\n    39,\n    218,\n    2,\n    216,\n    213,\n    219,\n    16,\n    100,\n    143,\n    57,\n    47,\n    66,\n    92,\n    115,\n    135,\n    20,\n    251,\n    117,\n    37,\n    171,\n    16,\n    185,\n    2\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\",\n    \"write\"\n  ],\n  \"trust_domain\": \"vaid.example\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "inauthentic"
+    },
+    {
+      "name": "order: unsupported sig_version AND malformed trust_domain",
+      "why": "two structural faults; sig_version is reported because it is checked first. Pinning this is what stops an implementation from reordering the cheap checks and changing every reason code while every boolean stays identical.",
+      "surface": "standing",
+      "document_json": "{\n  \"sig_version\": 2,\n  \"vaid_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_id\": \"c0000000-0000-4000-8000-000000000001\",\n  \"agent_class\": \"verdict\",\n  \"version\": \"1.0.0\",\n  \"tenant_id\": \"acme\",\n  \"issued_at\": \"2020-01-01T00:00:00Z\",\n  \"expires_at\": \"2999-01-01T00:00:00Z\",\n  \"public_key_der\": [\n    3,\n    161,\n    7,\n    191,\n    243,\n    206,\n    16,\n    190,\n    29,\n    112,\n    221,\n    24,\n    231,\n    75,\n    192,\n    153,\n    103,\n    228,\n    214,\n    48,\n    155,\n    165,\n    13,\n    95,\n    29,\n    220,\n    134,\n    100,\n    18,\n    85,\n    49,\n    184\n  ],\n  \"kernel_signature\": [\n    48,\n    226,\n    175,\n    203,\n    108,\n    15,\n    1,\n    33,\n    119,\n    1,\n    113,\n    49,\n    188,\n    168,\n    62,\n    199,\n    239,\n    43,\n    201,\n    161,\n    156,\n    59,\n    16,\n    102,\n    133,\n    243,\n    245,\n    44,\n    136,\n    213,\n    94,\n    30,\n    60,\n    100,\n    163,\n    223,\n    68,\n    0,\n    9,\n    110,\n    246,\n    173,\n    225,\n    188,\n    247,\n    49,\n    124,\n    121,\n    225,\n    203,\n    208,\n    199,\n    90,\n    188,\n    12,\n    200,\n    216,\n    33,\n    171,\n    118,\n    174,\n    166,\n    224,\n    4\n  ],\n  \"parent_vaid\": null,\n  \"scope_boundary\": [\n    \"data.acme\"\n  ],\n  \"lineage_hash\": \"8f89c127be8d6e98aa288873e5b6413b9b84e6b92b1a8b99a4627f91390f16af\",\n  \"capability_set\": [\n    \"read\"\n  ],\n  \"trust_domain\": \"not a domain\",\n  \"kernel_key_thumbprint\": \"urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y\"\n}",
+      "revocation": "not_revoked",
+      "expected_valid": false,
+      "expected_reason": "unsupported_sig_version"
+    },
+    {
+      "name": "control: child within parent",
+      "why": "THE CONTROL for this surface. Without it, an implementation that refuses every delegation passes every escalation case below.",
+      "surface": "attenuation",
+      "parent_scope": [
+        "data.acme"
+      ],
+      "child_scope": [
+        "data.acme.reports"
+      ],
+      "expected_valid": true,
+      "expected_reason": "attenuated"
+    },
+    {
+      "name": "escalation: child names a resource outside the parent",
+      "why": "the plain case: a parent restricted to data.acme cannot delegate data.other.",
+      "surface": "attenuation",
+      "parent_scope": [
+        "data.acme"
+      ],
+      "child_scope": [
+        "data.other"
+      ],
+      "expected_valid": false,
+      "expected_reason": "scope_escalation"
+    },
+    {
+      "name": "escalation: empty child scope under a restricted parent",
+      "why": "THE SUBTLE ONE. An empty scope means UNRESTRICTED, so a naive all() over zero entries is vacuously true and mints an unrestricted child under a restricted parent — strictly broader than its parent, by way of an empty list. The empty-child guard is the only thing standing between this vector and a privilege escalation that reads like a no-op.",
+      "surface": "attenuation",
+      "parent_scope": [
+        "data.acme"
+      ],
+      "child_scope": [],
+      "expected_valid": false,
+      "expected_reason": "scope_escalation"
+    },
+    {
+      "name": "control: empty child under an unrestricted parent",
+      "why": "the guard must not overfire: a parent that is itself unrestricted may delegate unrestricted. Without this case the guard could be 'reject every empty child' and still pass.",
+      "surface": "attenuation",
+      "parent_scope": [],
+      "child_scope": [],
+      "expected_valid": true,
+      "expected_reason": "attenuated"
+    },
+    {
+      "name": "escalation: sibling capture by bare prefix",
+      "why": "data.acme-secret is not under data.acme. Bare prefix matching accepts it; segment-bounded containment (ADR-0005) does not. Carried here as well as in scope_v1.json because a regression in the matcher must fail the ATTENUATION surface too — the two vectors reach the rule by different call paths.",
+      "surface": "attenuation",
+      "parent_scope": [
+        "data.acme"
+      ],
+      "child_scope": [
+        "data.acme-secret"
+      ],
+      "expected_valid": false,
+      "expected_reason": "scope_escalation"
+    }
+  ]
+}

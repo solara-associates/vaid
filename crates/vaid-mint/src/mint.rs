@@ -52,7 +52,14 @@ pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
 /// and the child's authority must be contained by it under EXACTLY this rule —
 /// including the empty-child guard, which is the subtle half. Reimplementing the
 /// rule for the detached case is how the guard would be lost in one of them.
-pub(crate) fn scope_attenuates_within(parent_scope: &[String], child_scope: &[String]) -> bool {
+///
+/// Public because the attenuation half of `verdict_v1.json` is a predicate over
+/// two bare boundaries and nothing else. The packaged firewall is a separate crate
+/// from the library, so a `pub(crate)` predicate is one a `cargo install` consumer
+/// cannot have checked — and the Python and TypeScript twins have both exported
+/// their equivalent all along, so this also removes an asymmetry rather than
+/// creating one.
+pub fn scope_attenuates_within(parent_scope: &[String], child_scope: &[String]) -> bool {
     if child_scope.is_empty() {
         // Child wants ⊤; allowed only if the parent is also ⊤.
         parent_scope.is_empty()
