@@ -84,6 +84,13 @@ export {
   MintService,
   mintPopTimestamp,
   scopeAttenuates,
+  // The detached predicate — containment of one bare boundary within another,
+  // with no document involved. Exported because the attenuation half of
+  // `verdict_v1.json` is a predicate over two boundaries and nothing else, and
+  // because the three implementations differed on whether it was reachable at
+  // all: Python exported it, Rust kept it crate-private, and this package
+  // defined it as `export` in the module but never re-exported it here.
+  scopeAttenuatesWithin,
   tenantAttenuates,
 } from './mint.js';
 
@@ -109,7 +116,18 @@ export {
   type RevocationCheck,
 } from './revocation.js';
 
-export { verifyLineageHash, verifyVaidAuthenticity } from './verify.js';
+export {
+  VaidVerdict,
+  isVerdictValid,
+  hasDuplicateMemberNames,
+  parseVaidDocument,
+  verdictFromCode,
+  verifyLineageHash,
+  verifyVaidAuthenticity,
+  verifyVaidAuthenticityGraded,
+  verifyVaidStanding,
+  verifyVaidStandingFromJson,
+} from './verify.js';
 
 export {
   ChainVerification,

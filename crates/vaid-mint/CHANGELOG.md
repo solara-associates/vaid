@@ -5,6 +5,51 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Fixed — a verifier canonicalizes the member VALUES it was presented (BACKLOG B7)
+
+ADR-0006 closed re-projection for unrecognised *members*. It stayed open for
+recognised members whose **values** have more than one spelling, and the three
+implementations disagreed on eight classes of document as a result. All eight now
+return the same verdict and the same reason; the differential probe that found
+them reports zero divergences across thirty-four inputs, and each class is pinned
+by a case in `verdict_v1.json`.
+
+Normative, in `docs/spec/encoding.md`: **E.1a** (values are canonicalized as
+presented; absent and present-null are different documents; parse permissively and
+verify strictly) and **E.7a** (a duplicate member name at any depth is not a
+document). E.6's stated rationale was corrected — it claimed verifiers re-serialize
+timestamps into the profile, which described one implementation and was never true
+of the other two. E.6 binds **producers**; a non-conforming timestamp still
+verifies, because the signature covers the bytes actually carried.
+
+### Fixed — duplicate member names are refused (spec E.7a)
+
+`serde` refused a repeated struct field while `json.loads` and `JSON.parse` kept
+the last occurrence silently, so the same bytes were unparseable to one
+implementation and authentic to two. All three now refuse, at any depth, scanning
+the raw text — the only place the evidence survives, since every parser resolves
+the collision before returning.
+
+### Changed — BREAKING: `Vaid::issued_at()` / `expires_at()` return `Option<DateTime<Utc>>`
+
+The fields hold the presented string and are parsed on demand. The previous
+`DateTime<Utc>` return was total only because the field was parsed at
+deserialization, which is the behaviour ADR-0006 Requirement 3 forbids.
+`issued_at_as_presented()` / `expires_at_as_presented()` expose the bytes the
+signature covers.
+
+**`Vaid::is_expired()` now fails closed**: an `expires_at` that cannot be parsed
+returns `true`. A document whose expiry cannot be read is not one that can be shown
+to be unexpired. That path became reachable in Rust for the first time with this
+change, and it is stated rather than left to be discovered — Python and TypeScript
+have always behaved this way, so this is the third implementation arriving at a
+rule the other two already had.
+
+`vaid_id`, `agent_id` and `parent_vaid` are `PresentedUuid`, which serializes the
+spelling it was given. `parent_vaid` is three-state (absent / present-null /
+present-value), because a two-state optional renders a missing member back as
+`null` and reproduces bytes the presenter never sent.
+
 ### Fixed — the mint emitted timestamps that fail the spec's own E.6 profile (BACKLOG B8)
 
 **Rust only.** Python and TypeScript were already conforming and are unchanged.

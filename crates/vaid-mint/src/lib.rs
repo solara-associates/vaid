@@ -113,15 +113,19 @@ pub use chain::{
     KernelKeyResolver, PresentedBundle, SingleKernelKey,
 };
 pub use document::{
-    canonical_vaid_signing_bytes, caps_contain, compute_lineage_hash, scope_contains, AgentClass,
-    AgentId, TenantId, Vaid, VaidId, SCOPE_SEPARATORS, VAID_SIG_VERSION_V3,
+    canonical_vaid_signing_bytes, caps_contain, compute_lineage_hash, has_duplicate_member_names,
+    scope_contains, AgentClass, AgentId, PresentedUuid, TenantId, Vaid, VaidId, SCOPE_SEPARATORS,
+    VAID_SIG_VERSION_V3,
 };
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
-pub use mint::{MintService, MINT_POP_FRESHNESS_SECS};
+pub use mint::{scope_attenuates_within, MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{
     assemble_lineage, InMemoryRevocationList, LineageAssembly, LineageResolver, ParentResolution,
     RevocationCheck, RevocationStatus,
 };
-pub use verify::{verify_lineage_hash, verify_vaid_authenticity};
+pub use verify::{
+    verify_lineage_hash, verify_vaid_authenticity, verify_vaid_authenticity_graded,
+    verify_vaid_standing, verify_vaid_standing_from_json, VaidVerdict,
+};

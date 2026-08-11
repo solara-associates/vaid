@@ -68,10 +68,19 @@ from vaid_mint.mint import (
     MintService,
     caps_attenuate,
     scope_attenuates,
+    scope_attenuates_within,
     tenant_attenuates,
 )
 from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
-from vaid_mint.verify import verify_lineage_hash, verify_vaid_authenticity
+from vaid_mint.verify import (
+    parse_vaid_document,
+    verify_lineage_hash,
+    verify_vaid_authenticity,
+    verify_vaid_authenticity_graded,
+    verify_vaid_standing,
+    verify_vaid_standing_from_json,
+    VaidVerdict,
+)
 from vaid_mint.revocation import (
     InMemoryRevocationList,
     LineageResolver,
@@ -95,6 +104,7 @@ __all__ = [
     "has_conforming_timestamps",
     "has_capability",
     "scope_attenuates",
+    "scope_attenuates_within",
     "caps_attenuate",
     "tenant_attenuates",
     "VAID_SIG_VERSION_V3",
@@ -108,6 +118,11 @@ __all__ = [
     "assemble_lineage",
     "verify_vaid_authenticity",
     "verify_lineage_hash",
+    "VaidVerdict",
+    "verify_vaid_authenticity_graded",
+    "verify_vaid_standing",
+    "verify_vaid_standing_from_json",
+    "parse_vaid_document",
     "verify_chain",
     "ChainVerification",
     "PresentedBundle",
