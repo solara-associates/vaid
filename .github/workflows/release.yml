@@ -432,7 +432,7 @@ jobs:
         if: needs.resolve.outputs.eco == 'python'
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip build "twine>=6.1.0"
+          python -m pip install --upgrade pip build "twine>=6.1.0" pypi-attestations
           python - <<'PY'
           import sys
           from importlib.metadata import version
@@ -445,7 +445,19 @@ jobs:
           rm -rf "${{ needs.resolve.outputs.dir }}/dist"
           python -m build --outdir "${{ needs.resolve.outputs.dir }}/dist" "${{ needs.resolve.outputs.dir }}"
           twine check "${{ needs.resolve.outputs.dir }}"/dist/*
-          twine upload "${{ needs.resolve.outputs.dir }}"/dist/*
+          # PEP 740 attestations (BACKLOG B15). `--attestations` on its own is a
+          # NO-OP: twine only DISCOVERS adjacent `{dist}.*.attestation` files, it
+          # does not create them. Generation is a separate tool, which is exactly
+          # why 0.7.0 shipped to PyPI with `provenance: null` while npm and
+          # crates.io both carried provenance.
+          #
+          # `pypi_attestations sign` uses the workflow's AMBIENT OIDC identity —
+          # the same `id-token: write` trusted publishing already needs — so this
+          # adds no credential and no new trust relationship. PyPI rejects an
+          # attestation whose identity is not a configured Trusted Publisher, so
+          # this cannot succeed unless the publisher is the one we configured.
+          python -m pypi_attestations sign "${{ needs.resolve.outputs.dir }}"/dist/*
+          twine upload --attestations "${{ needs.resolve.outputs.dir }}"/dist/*
 
       - name: Set up Node
         if: needs.resolve.outputs.eco == 'npm'
@@ -597,6 +609,65 @@ jobs:
             echo "::error::$PKG $V installed but shipped no $PKG-conformance entry point — the packaged firewall is the published-first evaluation path."
             exit 1
           fi
+
+      # The Python counterpart of `npm audit signatures` below: proof from the
+      # REGISTRY that the attestation landed, rather than trust that a flag did
+      # something. B15 existed because nothing asked — 0.7.0 published, reported
+      # success, and carried no attestation at all.
+      #
+      # QUERIED VIA THE INTEGRITY ENDPOINT, NOT THE JSON API. `/pypi/{p}/{v}/json`
+      # carries a `provenance` key that reads like the answer and is null for every
+      # package on PyPI, including ones that demonstrably do attest — checked
+      # against cryptography, which returns a full bundle from the integrity
+      # endpoint and `null` from the JSON API. A check built on that field would
+      # pass nothing and prove nothing.
+      #
+      # This necessarily runs AFTER publish, so it fails a release rather than
+      # preventing one. That is the right trade: the alternative is not checking,
+      # which is what B15 was. `release-outcome.mjs` already distinguishes a
+      # published-but-unverified release from an unpublished one.
+      - name: Assert the published files carry a provenance attestation (PEP 740)
+        if: needs.resolve.outputs.eco == 'python'
+        env:
+          PKG: ${{ needs.resolve.outputs.pkg }}
+          V: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, sys, urllib.error, urllib.request
+          pkg, version = os.environ["PKG"], os.environ["V"]
+          files = [
+              u["filename"]
+              for u in json.load(
+                  urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/{version}/json")
+              )["urls"]
+          ]
+          if not files:
+              sys.exit(f"::error::PyPI lists no files for {pkg} {version}")
+          missing = []
+          for name in files:
+              url = f"https://pypi.org/integrity/{pkg}/{version}/{name}/provenance"
+              try:
+                  bundles = json.load(urllib.request.urlopen(url)).get(
+                      "attestation_bundles", []
+                  )
+                  n = sum(len(b.get("attestations", [])) for b in bundles)
+                  pubs = {b.get("publisher", {}).get("repository") for b in bundles}
+                  print(f"  {name}: {n} attestation(s) from {pubs or '{}'}")
+                  if n == 0:
+                      missing.append(name)
+              except urllib.error.HTTPError as e:
+                  print(f"  {name}: HTTP {e.code} — no provenance")
+                  missing.append(name)
+          if missing:
+              sys.exit(
+                  "::error::published without a provenance attestation: "
+                  + ", ".join(missing)
+                  + " — `pypi_attestations sign` did not run, or twine uploaded "
+                    "without --attestations. See BACKLOG B15."
+              )
+          print(f"provenance present on all {len(files)} published file(s)")
+          PY
 
       - name: Set up Node
         if: needs.resolve.outputs.eco == 'npm'
