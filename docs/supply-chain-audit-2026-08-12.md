@@ -472,3 +472,74 @@ A sample size of one is enough to justify protecting the path that worked. It is
 3. **BACKLOG B2 and B3 already recorded this correctly**, including the reproducible-digest argument. I had read B15–B17 and generalised from an incomplete read of the file.
 
 The underlying concern that prompted the promotion — that a widely-installed artifact might not be reconcilable to source — was worth raising, and is now closed with a positive result rather than an assumption.
+
+---
+
+# 8. Session close — pattern, permanent surface, and next-release expectation
+
+## 8.1 PATTERN: a completed step under a failed summary
+
+Recorded as a named failure mode, not an apology, because the estate already has a register of its mirror image.
+
+**The general form.** A workflow run reports **one** conclusion for **many** jobs. When an early job succeeds and a later one fails, the run's conclusion is `failure` — and that word describes the run, not the work. Reading the conclusion in place of the job asserts that nothing happened, when something irreversible did.
+
+**What it produced here.** `gh run list` showed three `npm-vaid-skill-v0.1.3` runs, all `failure`. npm served 0.1.3. The only reading that reconciles those two facts *without opening a run* is that someone published by hand — so that is what I recorded, and it stood as a finding until the tarball was reconciled to source. The truth was that run `31380539098`'s `Publish to npm` job **succeeded**, and `verify-artifact` failed after it.
+
+**Why the existing guard does not catch it.** This estate's recurring defect, documented across several BACKLOG entries and prior sessions, runs in the opposite direction: *success reported over a step that never happened* — a green summary above a skipped or fail-open check. The discipline that grew from it is "do not trust the green." That rule is **directional**, and this case is its mirror: a **completed step under a failed summary**. A skeptic of green reads a red run and stops, satisfied, having concluded the safe thing — which here was the false thing.
+
+**The rule that covers both directions:**
+
+> **Read the step, not the summary.** A run-level conclusion is an aggregate. It is evidence about the aggregate and about nothing else — in either direction.
+
+Operationally, for this repo: `gh run view <id> --json jobs` before drawing any inference from a run's conclusion, and treat `publish` as its own fact independent of the run that contains it. `release-outcome.mjs` already exists to say exactly this — it names RELEASED / UNVERIFIED / NOT-RELEASED precisely because "partial is not an instruction" — and I did not consult it.
+
+**The aggravating detail, recorded deliberately.** The contradicting evidence was **already in hand when the inference was made**. The npm metadata dump that produced the finding also contained, in the same output, `_npmUser.trustedPublisher: {id: "github"}`, `_npmVersion: 11.7.0`, and `gitHead: 5f717a14` — the head SHA of one of the runs I had just called failed. Three independent contradictions, read past. The defect was not missing data; it was a conclusion formed before the data on screen was read. BACKLOG **B2** and **B3** also already stated the correct version, in a file I had opened but read only in part.
+
+## 8.2 The permanent unattested surface
+
+**Unfixable, not outstanding.** This is not a backlog item; there is no action that resolves it.
+
+| version | publisher | attestations | can support a provenance check |
+|---|---|---|---|
+| 0.1.0 | `solara-eng` (user token) | none | ❌ **never** |
+| 0.1.1 | `solara-eng` (user token) | none | ❌ **never** |
+| 0.1.2 | `solara-eng` (user token) | none | ❌ **never** |
+| 0.1.3 | GitHub Actions (trusted publisher) | 2 | ✅ |
+
+**Three of the four published `vaid-skill` versions cannot support a provenance check.** (The brief said three of five; the registry lists **four** versions — 0.1.0, 0.1.1, 0.1.2, 0.1.3 — so the ratio is three of four. The substance is unchanged.)
+
+Published artifacts are **immutable**. Attestation cannot be retrofitted to a build that had no run, and no 0.1.4, 0.2.0 or any later release changes what 0.1.0–0.1.2 are. There is no remediation path, only a description of the exposure:
+
+- **A default install is clean.** `latest` resolves to **0.1.3**, which is attested, reproducible from `5f717a14`, and verifies under `npm audit signatures`. Anyone running `npm install vaid-skill` today receives an artifact with a complete chain.
+- **A pinned install may not be.** Anyone pinned to `0.1.0`, `0.1.1` or `0.1.2` — in a lockfile, a Dockerfile, a vendored manifest — holds an artifact with **no chain at all**. Not a broken chain: no attestation exists to check. `npm audit signatures` reports a registry signature but no attestation for those versions.
+
+The exposure shrinks only as consumers move forward on their own; it cannot be pushed.
+
+## 8.3 Next-release expectation — the checks are likelier to fail than the publish
+
+Recorded so that a red release is not misread as a publish defect.
+
+The next `vaid-skill` release exercises **two verification paths that have never run to completion**, at the same time:
+
+1. **`verify-artifact` has never completed against a real `vaid-skill` publish.** On 0.1.3 it died on its first step — the stray `npm publish --dry-run` — so the consumer install, the declared verify command (`verify_bin`/`verify_cmd` from `release-map.json`) and `npm audit signatures` have **never executed** for this package against a live artifact. The fix landed afterwards and has only ever been exercised by `vaid-mint`, which is a different package with a different verify command and a different install shape (`vaid-skill` is standalone and resolves the *published* SDKs from the registry; `vaid-mint` is a workspace member).
+2. **Invariant 8 has never run at release.** It is a static check and passes in CI, but the PyPI steps it guards — `pypi_attestations sign`, `twine upload --attestations`, the integrity-endpoint assertion — have **never executed in a release**. On the Python leg, the next release is their first run.
+
+**Therefore: on the next release, the most likely first failure is in the checks, not in the publish.** The publish paths have each succeeded at least once; the verification paths have not. A failure in `verify-artifact` or the integrity assertion means *the release published and the check is new*, which is the state `release-outcome.mjs` names **UNVERIFIED** — materially different from NOT-RELEASED, and it must not be read as a broken publish.
+
+This is the correct order of risk, not a defect. Verification that has never run is the residue of fixing verification that ran wrongly. But it should be **expected**, so that the first red release is diagnosed as a check to debug rather than a registry to roll back — and so nobody reaches for a token to "publish the other way", which is the reflex B14 was written about and the one thing that would undo the property this whole branch defends.
+
+## 8.4 Confirmations at close
+
+Each verified live at close of session, not asserted from intent:
+
+| claim | verification | result |
+|---|---|---|
+| No fix applied to the npm workflow | all three causes already on `main` — `13a5879` (`--prefix` ENOENT), the `npm@11.7.0` pin (ENEEDAUTH), `90d2e3e` (stray dry-run) | ✅ confirmed ancestors of `origin/main`; no workflow logic touched this session |
+| Nothing published | `vaid-skill` versions `0.1.0, 0.1.1, 0.1.2, 0.1.3`, latest `0.1.3`; `vaid-mint` latest `0.7.0` | ✅ unchanged |
+| No version cut | no tag created, no release run triggered | ✅ |
+| No published claim edited | `skill/`, `README.md`, `CLAIMS.md`, `docs/RELEASE-NOTES.md`, `capabilities.json`, `claims-register.json` all untouched | ✅ diff is `docs/supply-chain-audit-2026-08-12.md` only |
+| `trustpub_only` unset on all three crates | `GET /api/v1/crates/{vaid-mint,vaid-pop,vaid-client}` | ✅ `false`, `false`, `false` |
+| No PR opened | `gh pr list --head supplychain/attestations` | ✅ `[]` |
+| `main` untouched | `origin/main` == `cc379ac` throughout | ✅ |
+
+**Session B closes here.** Branch `supplychain/attestations` is pushed and unmerged. Open items, none blocking: enable `trustpub_only` on `vaid-mint` only (needs a `trustpub`-scoped credential or the web UI); decide on PyPI account token deletion (manual, unverifiable); and the PyPI attestation fix stays **unproven until a release carries it**.
