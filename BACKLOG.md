@@ -1361,3 +1361,113 @@ anything about this repository, and if so the finding belongs upstream rather th
 here. Until then the API route is the release procedure, and it should be written
 into `CONTRIBUTING.md` beside the tag instructions rather than living only in a
 backlog entry, because the person who needs it is mid-release when they need it.
+
+---
+
+## B18 — claims-register freshness is a timer, not a verification, so `main` reddens on a schedule
+
+**Status:** open, and **not yet due** — which is the reason to decide it now rather
+than under the deadline. Scoped 2026-08-12 at the repository owner's request; no
+implementation.
+**Observed:** `docs/claims-register.json` holds one claim,
+`framework-governance-demonstrated`, `date_last_verified: 2026-07-28`. At the time
+of writing that is 15 days old, against a 60-day WARN and a 90-day FAIL budget:
+**45 days to amber, 75 to red**, then again every 90 days after each date bump,
+indefinitely.
+**Affects:** `scripts/verify-claims.mjs`, `docs/claims-register.json`, and the
+`capabilities` CI job that runs them.
+
+### What breaks
+
+Nothing yet, and that is the point. `verify-claims.mjs` fails a claim whose
+`date_last_verified` is missing, or older than its budget. The date is **hand-set**.
+So the check measures *how long ago someone typed a date*, not whether the claim is
+still true. It goes red on a timer whether or not anything changed, and it goes
+green the moment the date is edited whether or not anything was re-run.
+
+That gives the pressure an obvious release valve: when it reddens and blocks
+unrelated work, the cheap move is to bump the date. The check then **certifies
+staleness while reporting freshness** — the same masked-green shape as B11 (a
+changelog claiming an API nobody wrote) and B14 ("the release workflow works",
+established for one ecosystem and assumed for three). A check whose easiest
+repair is a lie is a check that will eventually be repaired that way.
+
+### A second gap, underneath
+
+`verify-claims.mjs` requires `verified_artifact` to be a **non-empty string**. It
+never resolves it. The one claim's artifact and evidence are:
+
+```
+forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md
+forge-agents/harness/phase1e_adk_conformance.py
+```
+
+Both are **absent from this repository and always will be** — they live in
+`forge-agents`. The register points across a repo boundary and nothing checks the
+pointers land. That is the load-bearing-file-with-no-home pattern one level up:
+the reference is committed here, the referent is somewhere this repo cannot see,
+and no check can tell the difference between a valid path and a typo.
+
+### The split that decides whether this is automatable
+
+Claims fall into three kinds, and the register currently applies one 90-day rule
+to all of them.
+
+**A — verifiable from public artifacts, no credentials.** Registry parity,
+packaged firewalls run from clean installs, conformance vectors, provenance at
+source (`npm audit signatures`, the PyPI integrity endpoint, crates.io
+`trustpub_data`). This repository already does every one of these in CI. A
+scheduled workflow can re-run them and **derive** the date from the run, so it can
+never be stale-but-green. Fully automatable, no secrets, no human.
+
+**B — needs operator credentials against private infrastructure.** The current
+claim: its verifier is a Cloud Run job execution in `synthera-substrate-prod` /
+`europe-west1`, at a `forge-agents` SHA, writing an artifact in that repository.
+Re-running it requires GCP credentials into a private project and a harness this
+repository does not contain.
+
+Automatable in principle by federating this repo's CI into that project — but that
+grants this repository the ability to execute jobs in the substrate, which is a
+trust decision and SYNTHERA's to make, not this repo's. **The cheaper shape is to
+invert it:** let the job run on a schedule *where the credentials already are*, and
+publish a dated artifact that this repository **fetches and verifies**. Producing
+becomes someone else's problem; consuming is category A.
+
+**C — irreducibly human.** Claims about meaning rather than mechanism. The current
+claim contains one: *"one governance layer, not one per framework."* Running the
+harness is mechanical; whether its output demonstrates that sentence is judgement.
+No schedule closes that, and pretending otherwise is how a green check comes to
+stand for an assertion nobody re-read.
+
+### What would have to change
+
+**Store a verification, not a date.** Each claim carries the command that
+establishes it plus what makes its result still valid. Then:
+
+- **A** derives its date from a run; a hand-edited date becomes impossible rather
+  than merely discouraged.
+- **B** consumes a dated artifact from the environment that owns the credentials,
+  and the check verifies the fetched artifact — which is A again.
+- **C** is *marked as human*: a named person, its own budget, and arguably outside
+  the blocking gate entirely, because a timer on a judgement call blocks work
+  without improving the judgement.
+
+Resolving `verified_artifact` is a separate, smaller fix and worth doing either
+way: in-repo paths must exist; cross-repo references need a form the checker can
+follow (a URL it can fetch, or a digest it can compare) rather than a string it
+merely confirms is non-empty.
+
+### Why decide it now
+
+There is exactly **one** claim, so the register is as cheap to restructure as it
+will ever be, and 45 days before anything goes amber. The awkwardness is that the
+single claim is category **B** — the hardest kind — so the first instance
+demonstrates none of the easy path, and building only for it would produce
+machinery shaped entirely around the exception.
+
+The decision this entry exists to force: **whether the register is a gate or a
+record.** As a gate it must be derivable, which means category C claims do not
+belong in it. As a record it can hold all three kinds, and the CI job checks only
+the derivable ones. Both are defensible; the current design is the third option —
+gate everything, derive nothing — and that is the one that reddens on a timer and
+teaches people to edit the date.
