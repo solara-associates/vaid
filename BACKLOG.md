@@ -1247,6 +1247,40 @@ is the right trade: the alternative is not checking, which is what this entry wa
 `release-outcome.mjs` already separates a published-but-unverified release from an
 unpublished one, so the report stays accurate.
 
+### 2026-08-12 — the fix is now guarded, and still unproven
+
+Re-audited. The workflow steps above are on `main` and correct; nothing about the
+status changed. **PyPI has still never published an attestation for this project** —
+`pypi.org/integrity/vaid-mint/0.7.0/<file>/provenance` returns 404 for both files
+today, because 0.7.0 published at 11:11 and the fix landed at 15:57. It stays
+unproven until a release carries it, and no release was cut to demonstrate it.
+
+What was added is the missing durable half. The generation step had **no check over
+it**: `verify-release-workflow.mjs` asserted `npm audit signatures` for npm and
+nothing at all for PyPI, so `pypi_attestations sign` could be deleted, or reordered
+after the upload, or `--attestations` dropped, and every check would stay green
+until the next release silently republished the original defect. Invariant 8 now
+asserts all three plus the integrity-endpoint check in `verify-artifact`, and each
+was **mutation-tested** — the four corresponding edits were applied to `release.yml`
+one at a time and each produced a distinct failure.
+
+That check needed correcting once before it was right, in this file's recurring
+way: the first draft matched `/twine upload/` anywhere, which also matches the words
+"or twine uploaded without --attestations" inside `verify-artifact`'s **own B15
+error message**. It reported that the verify job publishes to PyPI, on a workflow
+that is correct. Third instance of mistaking a command's NAME for the command — see
+the comment-stripping note and invariant 6's `- name:` note. The matchers are now
+anchored to the start of a line.
+
+The stale claim in `release.yml`'s header was also removed. It read "NOT ENABLED:
+Rust and Python have no equivalent here … PyPI attestations need Trusted Publishing
+(OIDC) instead of the API token this workflow uses" — untrue in both halves since
+2026-08-11, sitting above a file that does exactly what it says is not done. That
+is the failure this entry and B16 both circle: **a comment cannot hold a property.**
+It is replaced by a per-registry statement of what each one actually proves,
+including that crates.io's `trustpub_data` is registry-attested build metadata
+rather than a signed statement a consumer can check without trusting the registry.
+
 ---
 
 ## B16 — enable "require trusted publishing for all new versions" on crates.io and PyPI
@@ -1285,12 +1319,59 @@ After the next release publishes cleanly through trusted publishing on all three
 registries. That is the second data point, and it is also the point at which any
 per-release configuration drift would have shown itself.
 
-### What to enter
+### What to enter — corrected 2026-08-12, and the two registries are NOT symmetric
 
-Both settings live beside the publisher configuration that is already in place:
-crates.io under the crate's Trusted Publishing settings, PyPI under the project's
-Publishing settings. Neither needs a workflow change — the workflow already uses
-no token.
+The paragraph this replaces said "Both settings live beside the publisher
+configuration that is already in place: crates.io under the crate's Trusted
+Publishing settings, PyPI under the project's Publishing settings." **The PyPI half
+of that sentence describes a setting that does not exist.** It was written from the
+reasonable assumption that a registry offering trusted publishing also offers a way
+to require it. Only one of the two does.
+
+**crates.io — the setting exists.** A per-crate `trustpub_only` boolean, shipped
+via rust-lang/crates.io#12361. It is a checkbox on the crate settings page and also
+`PATCH /api/v1/crates/{name}` with body `{"crate":{"trustpub_only":true}}`. It
+defaults to false and is **publicly readable**, unauthenticated, so live state can
+be confirmed rather than assumed:
+
+```
+curl -sS https://crates.io/api/v1/crates/vaid-mint | jq .crate.trustpub_only
+```
+
+Measured 2026-08-12 — `vaid-mint`, `vaid-pop` and `vaid-client` are all **false**.
+
+**PyPI — no such setting exists.** There is no per-project switch to reject
+token-authenticated uploads once a trusted publisher is configured; the docs treat
+tokens and trusted publishers as coexisting, and the request for it
+(pypi/warehouse#17260, which proposes auto-revoking *unused* tokens rather than
+refusing them) is still open. The nearest available action is therefore different
+in kind: **delete the project-scoped API tokens** from the PyPI account, which
+removes the route instead of refusing it. That cannot be verified from the registry
+side the way crates.io can — absence of a token is not a public fact — so the check
+is a human reading the account's token list.
+
+### What blocks the crates.io half
+
+Not a decision — a credential. The stored `~/.cargo/credentials.toml` token is
+scoped `publish-update` and returns **403 `this token does not have the required
+permissions`** on the PATCH. `trustpub_only` needs either cookie auth (the web UI)
+or a non-legacy token carrying the `trustpub` scope plus a matching crate scope.
+
+### Do not enable this on `vaid-pop` or `vaid-client` yet
+
+B16's own reasoning, applied per crate rather than per registry. The
+trusted-publishing evidence is **`vaid-mint` only** — it is the one crate 0.7.0
+published, and crates.io records `trustpub_data` for it naming run `31485249456`.
+`vaid-pop` (0.2.1) and `vaid-client` (0.1.0) both predate the migration and have
+**never published through this workflow at all**. Whether either has a trusted
+publisher configured is not readable with the credential on hand.
+
+Enabling `trustpub_only` on a crate whose publisher config has never been exercised
+does not remove a fallback — it removes the *only* path, and the failure would
+appear at the next release as the same "cannot publish" that B14 spent a day
+diagnosing. Enable `vaid-mint` first; enable the other two only after each has
+published once through the workflow, or after its config has been read back from
+the crates.io UI.
 
 ---
 
