@@ -6,7 +6,15 @@
 
 **No release was cut. No registry setting was changed.**
 
-> **Second pass (same day) — see the [Appendix](#appendix--second-pass-2026-08-12).** It leads with the question that gated the push: **where invariant 8 executes.** Short answer — its integrity-endpoint clause is a *static text assertion* over `release.yml`, not a query; the actual integrity query runs **only in the release job**, against the version just published. CI never contacts a registry. **This diff cannot turn main red over 0.7.0, and no code change was needed.** The appendix also narrows the CI-token claim (A2), records that **7 of 10** package/registry pairs have never published through this workflow (A3), and restates item 4 by evidence (A4).
+> ## Read [§7](#7-vaid-skill-013--reconciled-to-source-supersedes-a3) first
+>
+> **The published `vaid-skill` 0.1.3 tarball reconciles to source bit-for-bit.** Rebuilding it from commit `5f717a14` with `npm pack` produces shasum `21f6c7ce…` — byte-identical to what npm serves. All 14 files match the tree exactly. Its SHA-512 is the subject digest of a SLSA provenance attestation naming this repository, `release.yml`, tag `npm-vaid-skill-v0.1.3` and that same commit, so the whole chain closes from the registry alone.
+>
+> **This retracts a claim in A3 of this document.** 0.1.3 was **not** published by hand — it was published by run `31380539098` through trusted publishing. I inferred "by hand" from that run's `conclusion: failure` without opening it; the **publish job succeeded and a later job failed**. The corrected count is **6 of 10** pairs unproven, not 7, and BACKLOG **B2/B3** already recorded the right version.
+>
+> **Third pass also covers:** why all three `vaid-skill` runs failed and why none of those causes is still present (§7.2), a precise provenance comparison against the `vaid-mint` 0.7.0 legs — **no difference in kind** (§7.3), a survey finding **no published claim** that 0.1.3 fails to satisfy (§7.4), why a 0.1.4 is **not** the right remedy (§7.5), and the restated `trustpub_only` scope (§7.6).
+
+> **Second pass (same day) — see the [Appendix](#appendix--second-pass-2026-08-12).** It leads with the question that gated the push: **where invariant 8 executes.** Short answer — its integrity-endpoint clause is a *static text assertion* over `release.yml`, not a query; the actual integrity query runs **only in the release job**, against the version just published. CI never contacts a registry. **This diff cannot turn main red over 0.7.0, and no code change was needed.** The appendix also narrows the CI-token claim (A2), records the unproven publish paths (A3 — **corrected by §7**), and restates item 4 by evidence (A4).
 
 ---
 
@@ -260,26 +268,32 @@ An empty `gh secret list` says nothing about **account-scoped registry tokens** 
 
 ## A3. Recorded, not fixed — the unproven publish paths are wider than two crates
 
+> ### ⚠️ RETRACTED IN PART — see [§7](#7-vaid-skill-013--reconciled-to-source-supersedes-a3)
+>
+> **The claim that `vaid-skill` 0.1.3 "was published by hand" is false.** It was published by run `31380539098`, through trusted publishing, with a full SLSA provenance attestation. I inferred "by hand" from the run's *conclusion* (`failure`) without opening the run: the **publish job succeeded and a later job failed**, which is the partial-release shape this workflow exists to surface. The count below is **6 of 10 unproven, not 7**, and the repository already recorded the correct version in BACKLOG **B2 and B3** — which I had not read.
+>
+> The rest of this section stands. §7 has the evidence and the corrected table.
+
 Stated for the record; **no rehearsal was attempted.**
 
-Auditing every `release.yml` run ever executed (4 distinct tags, 14 runs) against what is live on each registry gives this:
+Auditing every `release.yml` run ever executed (4 distinct tags, 14 runs) against what is live on each registry gives this — **corrected**:
 
 | pair | live version | ever published via workflow |
 |---|---|---|
 | `rust/vaid-mint` | 0.7.0 | ✅ run `31485249456` |
 | `python/vaid-mint` | 0.7.0 | ✅ run `31485249478` |
 | `npm/vaid-mint` | 0.7.0 | ✅ run `31480914087` |
+| `npm/vaid-skill` | 0.1.3 | ✅ run `31380539098` — **corrected**, see §7 |
 | `rust/vaid-pop` | 0.2.1 | ❌ never |
 | `rust/vaid-client` | 0.1.0 | ❌ never |
 | `python/vaid-pop` | 0.2.0 | ❌ never |
 | `python/vaid-langchain` | 0.1.0 | ❌ never |
 | `npm/vaid-pop` | 0.3.0 | ❌ never |
 | `npm/vaid-client` | 0.3.0 | ❌ never |
-| `npm/vaid-skill` | 0.1.3 | ❌ never — **see below** |
 
-**It is seven pairs, not two.** The brief named `vaid-pop` 0.2.1 and `vaid-client` 0.1.0; the true figure is **7 of the 10 declared pairs**.
+**It is six pairs, not two — and not seven.** The brief named `vaid-pop` 0.2.1 and `vaid-client` 0.1.0; the true figure is **6 of the 10 declared pairs**.
 
-**`vaid-skill` is the one that changes the shape of this.** All three `npm-vaid-skill-v0.1.3` runs **failed**, yet npm serves 0.1.3 — it was published **by hand**. So the workflow's only successful publishes in its entire history are the three `vaid-mint` legs of 0.7.0, all on the same day. The next release of any other package is a **first run of an unproven path with no CI token fallback**, and the failure would present as B14 did: a message indistinguishable from a misconfigured trusted publisher.
+The workflow's successful publishes are the three `vaid-mint` legs of 0.7.0 (2026-08-11) and `vaid-skill` 0.1.3 (2026-08-10) — **four**, across two days. The next release of any *other* package is still a **first run of an unproven path with no CI token fallback**, and the failure would present as B14 did: a message indistinguishable from a misconfigured trusted publisher.
 
 Compounding it: crates.io trusted publishers are configured **per crate**, npm **per package**. `vaid-mint`'s working configuration confers nothing on `vaid-pop` or `vaid-client`. Whether they have one at all is not readable with the credential on hand (403).
 
@@ -303,3 +317,158 @@ Moved into §3 as the section's opening frame. In full:
 - **PyPI — no registry-side control available.** No per-project switch to reject token-authenticated uploads exists; pypi/warehouse#17260 is open and proposes only auto-revoking *unused* tokens. Nearest action is **account token deletion**, which removes the route instead of refusing it — manual, and **unverifiable**, since absence of a token is not a public fact.
 
 Neither is a release blocker. Both can wait until after the next release, which is also when item 3 gets its first real proof.
+
+---
+
+# 7. `vaid-skill` 0.1.3 — reconciled to source (supersedes A3)
+
+Promoted from a table row at the reviewer's instruction, on the expectation that it documented an unreconcilable hand-published artifact. **It documents the opposite.** Every question below resolved in the artifact's favour, and the finding that prompted the investigation was my error.
+
+## 7.1 Can the published tarball be reconciled to a commit? — **Yes. Bit for bit.**
+
+Not "matches in content" — the published tarball is **byte-identical to one rebuilt from source**, which is the strongest of the three answers that were on offer.
+
+```
+$ curl -sSL -o published.tgz https://registry.npmjs.org/vaid-skill/-/vaid-skill-0.1.3.tgz
+$ shasum published.tgz
+21f6c7cef1606d94580fcb249c3509dd081ff743      # == npm dist.shasum
+
+$ git archive 5f717a14 skill | tar x -C /tmp/repro && cd /tmp/repro/skill && npm pack
+$ shasum vaid-skill-0.1.3.tgz
+21f6c7cef1606d94580fcb249c3509dd081ff743      # identical
+```
+
+SHA-512 agrees too: `rFkFSF6HSl11OMBKM+luQf2jj7pgO4sCF3MBeTvjY4jy/5rkzTh0kAt7onMKfFAp/UJsj9lPeh6HSDYUQi/c5A==` equals npm's recorded `dist.integrity`.
+
+Independently of the archive hash, all **14 files compared byte-for-byte** against `5f717a14:skill/*`: `identical=14 differ=0 absent-from-tree=0`, and the file lists match exactly in both directions — nothing added, nothing omitted relative to `package.json`'s `files` array.
+
+**Why reconciliation was even possible here**, when it usually is not: `vaid-skill` is a standalone package with **no build step** (`scripts` at that commit are `test`, `check:anchor`, `test:documented` — no `prepack`, no `prepublishOnly`, no compile). `npm pack` is a straight file copy with normalised mtimes, so the tarball is a deterministic function of the tree. The same exercise on `vaid-mint` would *not* reproduce this cleanly — it compiles TypeScript through `prepublishOnly`.
+
+**The commit was not guessed.** npm records `gitHead: 5f717a14cf9a26e04b4f53bb169478c17ef68013` in the version metadata, and the provenance attestation independently names the same commit (§7.3).
+
+## 7.2 Why the three runs failed — and the cause is already fixed
+
+**The premise that 0.1.3 was hand-published is false, and the run timeline disproves it on its own:**
+
+| run | SHA | window | conclusion | publish job |
+|---|---|---|---|---|
+| `31376944072` | `20b2ed74` | 09:56:53 → 10:08:09 | failure | **failed** — `npm publish` |
+| `31378059338` | `2f92ec16` | 10:11:40 → 10:13:18 | failure | **failed** — `npm publish` |
+| `31380539098` | `5f717a14` | 10:45:46 → **10:47:28** | failure | ✅ **succeeded** |
+
+npm records the publish at **10:47:12.889Z** — inside the third run's window — and `gitHead` `5f717a14` is exactly that run's head SHA. The publish happened *in* the run.
+
+Per-job outcomes for `31380539098`:
+
+```
+Resolve tag -> package                       => success
+Preflight                                    => success
+Publish to npm                               => success      <-- 0.1.3 published HERE
+Verify published artifact from a clean install => failure
+    ✗ npm publish --dry-run (packages exactly as the real publish will)
+Release complete (fails on any partial)      => failure
+    ✗ Assert every stage succeeded
+```
+
+and the publish job's own log:
+
+```
+10:47:10 npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
+10:47:11 npm notice publish Signed provenance statement with source and build information from GitHub Actions
+10:47:11 npm notice publish Provenance statement published to transparency log:
+         https://search.sigstore.dev/?logIndex=2406670539
+10:47:13 + vaid-skill@0.1.3
+```
+
+**Root causes, all three:**
+
+1. **`31376944072` — `ENOENT`.** `npm publish --prefix skill` from the repo root. `npm publish` ignores `--prefix` when locating the package; it reads `package.json` from the CWD and died on `open '/home/runner/work/vaid/vaid/package.json'`. **Fixed** by `13a5879` (`cd` instead of `--prefix`).
+2. **`31378059338` — `ENEEDAUTH`.** `need auth This command requires you to be logged in`. The runner's default npm 10.9.8 has no OIDC support at all, so it looked for a token and found none. **Fixed** by pinning npm 11.7.0 with an asserted 11.5.1 floor.
+3. **`31380539098` — the run that published.** An unbounded edit had inserted `npm publish --dry-run` into `verify-artifact`, which deliberately has no checkout, so the job died on its first step and *every real verification in it was skipped* — the consumer install, the declared verify command, `npm audit signatures`. **Fixed** by `90d2e3e`, and now guarded by `verify-release-workflow.mjs` invariants 1–4, which exist precisely for this defect.
+
+**All three causes are fixed on `main`.** A 0.1.4 through the workflow is **not blocked**. This directly contradicts the brief's hypothesis that "if the cause is still present, the next attempt fails the same way" — no fix is outstanding, and per the stop conditions none was applied.
+
+The one thing that *is* worth noting: 0.1.3 published without its verification ever running. `release-outcome.mjs` was added afterwards to name that state UNVERIFIED rather than leaving it ambiguous.
+
+## 7.3 What provenance npm holds for 0.1.3 vs the `vaid-mint` 0.7.0 legs
+
+**No difference in kind. Both carry full, verifiable provenance.** The concern that published material asserts provenance "true of one and not the other" does not arise on npm.
+
+| | `vaid-skill@0.1.3` | `vaid-mint@0.7.0` |
+|---|---|---|
+| `_npmUser` | `GitHub Actions` / `npm-oidc-no-reply@github.com` | same |
+| `trustedPublisher` | `github`, `oidc:15006352-…` | `github`, `oidc:2da6b3c8-…` |
+| npm / node | 11.7.0 / 22.23.1 | 11.7.0 / 22.23.1 |
+| attestations | **2** — npm-publish v0.1 + **SLSA provenance v1** | **2** — identical pair |
+| sourceUri | `github.com/solara-associates/vaid` | same |
+| ref | `refs/tags/npm-vaid-skill-v0.1.3` | `refs/tags/npm-vaid-mint-v0.7.0` |
+| workflow | `.github/workflows/release.yml` | same |
+| source commit | `5f717a14cf9a26e04b4f53bb169478c17ef68013` | `b8b29c83afba792c2986698e9b0553276c0c4835` |
+| invocationId | `…/actions/runs/31380539098/attempts/1` | `…/actions/runs/31480914087/attempts/1` |
+| sigstore tlog | `2406670539` | `2419979064` |
+| `npm audit signatures` | ✅ verified, clean consumer install | ✅ verified |
+
+The differing `oidcConfigId` is expected and correct — npm trusted publishers are configured **per package**, so each has its own.
+
+**The chain closes completely for 0.1.3**, which is a stronger result than the attestation alone:
+
+```
+commit 5f717a14
+  → npm pack reproduces the tarball bit-for-bit
+    → its SHA-512 is ac5905485e874a5d7538c04a…
+      → which is exactly the SLSA attestation's subject digest
+        → in an attestation naming run 31380539098 and tag npm-vaid-skill-v0.1.3
+```
+
+Anyone can walk that chain from the registry with no access to this repository's secrets, and no need to trust npm's word for it.
+
+**Where provenance genuinely is absent — 0.1.0, 0.1.1, 0.1.2:**
+
+| version | publisher | attestations |
+|---|---|---|
+| 0.1.0 | `solara-eng` (user token) | **none** |
+| 0.1.1 | `solara-eng` (user token) | **none** |
+| 0.1.2 | `solara-eng` (user token) | **none** |
+| **0.1.3** | **GitHub Actions (trusted publisher)** | **2** |
+
+Those three *were* hand-published, and BACKLOG **B2** already says so. 0.1.3 is the version that fixed it — the exact opposite of what A3 claimed. Since 0.1.3 is `latest`, a consumer installing today gets the attested artifact.
+
+## 7.4 Published claims that 0.1.3 does not satisfy — **none found**
+
+Surveyed read-only, nothing edited: `skill/README.md`, `skill/CHANGELOG.md`, `skill/GEMINI.md`, `skill/skills/vaid/SKILL.md`, `skill/.claude-plugin/plugin.json`, root `README.md`, `CLAIMS.md`, `docs/RELEASE-NOTES.md`, `docs/capabilities.json`, `docs/claims-register.json`.
+
+Grepping for `provenance | trusted publish | npm audit signatures | built and signed | slsa | sigstore | supply.chain` returns **no supply-chain provenance assertion in any consumer-facing file**. The three `README.md` hits are VAID's own domain vocabulary — "a self-reported provenance record" describing `vaid-pop` completion records — not a claim about npm packaging. `CLAIMS.md` cites a paper on "authentication and provenance for autonomous agents".
+
+So there is nothing to correct: **no published claim overstates 0.1.3's provenance, and 0.1.3 would satisfy such a claim if one were made.** The only inaccurate statement found anywhere was in my own A3, in this document, now retracted above.
+
+## 7.5 Is a 0.1.4 through the workflow the correct remedy? — **No**
+
+Attestation cannot be retrofitted to a build that had no run; that premise is right. But it does not apply, because **0.1.3 had a run and carries an attestation.**
+
+- There is **no provenance gap to close.** A 0.1.4 would produce a second attested artifact identical in kind to the one already published.
+- The unattested versions — 0.1.0 through 0.1.2 — **cannot be remedied by any future release.** They are immutable. The remedy already in place is that `latest` points at an attested 0.1.3; the residual exposure is a consumer pinning an old version, which no new publish changes.
+- A release should be cut when there is **something to ship**. Cutting 0.1.4 to demonstrate a property 0.1.3 already demonstrates is the version-burning this repository has repeatedly declined (see B15's status note).
+
+**What *is* worth doing on the next `vaid-skill` release, whenever it happens for its own reasons:** it will be the first `vaid-skill` publish to run `verify-artifact` to completion, since 0.1.3's died on the stray dry-run step. That is a genuine gap — not in the artifact, but in the verification of it.
+
+## 7.6 Revised `trustpub_only` recommendation
+
+Unchanged in substance; restated in the terms the evidence supports. Note `vaid-skill` is npm-only and does not bear on crates.io.
+
+**Enable `trustpub_only` on `vaid-mint` only.** Not as an endorsement of the mechanism generally, but because:
+
+- `vaid-mint` is the **only crate of the three** with any successful workflow history at all;
+- that history is **one crate deep and, at time of writing, one day old** — a single publish on 2026-08-11;
+- `vaid-pop` (0.2.1) and `vaid-client` (0.1.0) have **never published through this workflow**, and crates.io trusted publishers are per-crate, so `vaid-mint`'s working configuration confers nothing on them. Enabling the flag there removes the only path rather than a fallback.
+
+A sample size of one is enough to justify protecting the path that worked. It is not enough to justify closing the alternative on paths that have never run.
+
+---
+
+## Corrections issued in this pass
+
+1. **A3's "published by hand" — retracted.** `vaid-skill` 0.1.3 was published by run `31380539098` through trusted publishing, with full SLSA provenance. I read a run's `conclusion: failure` as "the publish failed" without opening the run; the publish job succeeded and a *later* job failed. The registry metadata (`_npmUser.trustedPublisher`, `gitHead`, npm 11.7.0) contradicted the inference and was already in hand when I made it.
+2. **The count is 6 of 10 unproven, not 7.**
+3. **BACKLOG B2 and B3 already recorded this correctly**, including the reproducible-digest argument. I had read B15–B17 and generalised from an incomplete read of the file.
+
+The underlying concern that prompted the promotion — that a widely-installed artifact might not be reconcilable to source — was worth raising, and is now closed with a positive result rather than an assumption.
