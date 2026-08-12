@@ -240,6 +240,87 @@ for (const j of [...jobs.keys()]) {
   }
 }
 
+// 8. The PyPI attestation must be GENERATED, UPLOADED and PROVEN.
+//
+// THE DEFECT THIS EXISTS TO CATCH (BACKLOG B15)
+//
+// `twine upload --attestations` is a NO-OP on its own. twine only DISCOVERS
+// adjacent `{dist}.*.attestation` files; it never creates them. Generation is a
+// separate tool (`pypi_attestations sign`). So the flag alone looks like the fix,
+// changes nothing, and reports success — which is precisely how 0.7.0 published to
+// PyPI carrying no attestation while npm and crates.io both carried provenance.
+//
+// The inverse fails silently too: signing without `--attestations` produces the
+// files and leaves them on the runner.
+//
+// This is the PyPI counterpart of invariant 1's `npm audit signatures` clause, and
+// it exists because the header comment in release.yml claimed for a full day that
+// PyPI attestations were "NOT ENABLED" after they had been. A comment cannot hold a
+// property; a check can.
+//
+// WHAT IS ASSERTED, in the order the three can each break:
+//   a. any job uploading to PyPI generates the attestations FIRST — order matters
+//      for the same reason it does in invariant 6;
+//   b. that upload passes `--attestations`, or the generated files are never sent;
+//   c. `verify-artifact` asks the REGISTRY whether they landed, via the INTEGRITY
+//      endpoint. Not `/pypi/{p}/{v}/json` — its `provenance` key reads like the
+//      answer and is null for every package on PyPI, including ones that
+//      demonstrably do attest, so a check built on it would prove nothing.
+//
+// BOUNDED HONESTLY: this asserts the steps are present and ordered. Whether the
+// signature verifies is not knowable before a publish — the identity is minted from
+// the workflow's ambient OIDC at run time. That bound is why B15 stays open until a
+// release carries it.
+//
+// ANCHORED TO COMMAND POSITION, and the first draft of this check was not. It used
+// `/twine upload/`, which also matches the words "or twine uploaded without
+// --attestations" inside verify-artifact's own B15 error MESSAGE — so the check
+// reported that the verify job uploads to PyPI, on a workflow that is correct. That
+// is the third time in this file that something MENTIONING a command was mistaken
+// for the command (see the comment-stripping note above and invariant 6's `- name:`
+// note), which is why these now match only at the start of a line.
+{
+  // `^\s*` — a real command begins its line. A command named inside a quoted
+  // message, a `- name:` label or a comment never does.
+  const uploads = (l) => /^\s*twine upload\b/.test(l);
+  const signs = (l) => /^\s*python -m pypi_attestations sign\b/.test(l);
+  for (const [job, jobLines] of jobs) {
+    const uploadIdx = jobLines.findIndex(uploads);
+    if (uploadIdx === -1) continue;
+
+    const signIdx = jobLines.findIndex(signs);
+    if (signIdx === -1) {
+      problems.push(
+        `job \`${job}\` runs \`twine upload\` without \`pypi_attestations sign\`. twine only DISCOVERS ` +
+          'adjacent .attestation files, it never creates them — so the upload would succeed and publish ' +
+          'nothing to verify. See BACKLOG B15.',
+      );
+    } else if (signIdx > uploadIdx) {
+      problems.push(
+        `job \`${job}\` signs AFTER it uploads. twine collects the attestation files at upload time; ` +
+          'signing afterwards leaves them on the runner and publishes an unattested artifact.',
+      );
+    }
+
+    if (!/twine upload[^\n]*--attestations/.test(jobLines[uploadIdx])) {
+      problems.push(
+        `job \`${job}\` runs \`twine upload\` without \`--attestations\`. The generated files are then ` +
+          'never sent, and the publish reports success — the B15 failure mode exactly.',
+      );
+    }
+  }
+
+  const v = body('verify-artifact');
+  const publishesToPyPI = [...jobs.values()].some((jl) => jl.some(uploads));
+  if (publishesToPyPI && !/pypi\.org\/integrity\//.test(v)) {
+    problems.push(
+      'verify-artifact does not query the PyPI integrity endpoint — the attestation would be assumed ' +
+        'rather than proven. `/pypi/{pkg}/{version}/json` is NOT a substitute: its `provenance` key is ' +
+        'null for every package on PyPI, including ones that demonstrably do attest.',
+    );
+  }
+}
+
 if (problems.length > 0) {
   console.error(`\n✗ RELEASE WORKFLOW STRUCTURE CHECK FAILED\n`);
   for (const p of problems) console.error(`  · ${p}\n`);
@@ -248,4 +329,6 @@ if (problems.length > 0) {
 
 console.log(`✓ ${FILE} — verify-artifact is checkout-free and proves the attestation;`);
 console.log(`  the publish dry-run gate is in preflight only; every publishing job upgrades npm`);
-console.log(`  and installs before it packages; no publish path depends on a stored secret.`);
+console.log(`  and installs before it packages; no publish path depends on a stored secret;`);
+console.log(`  PyPI attestations are generated before upload, sent with --attestations, and`);
+console.log(`  proven from the integrity endpoint.`);
