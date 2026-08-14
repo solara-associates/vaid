@@ -1471,3 +1471,102 @@ belong in it. As a record it can hold all three kinds, and the CI job checks onl
 the derivable ones. Both are defensible; the current design is the third option —
 gate everything, derive nothing — and that is the one that reddens on a timer and
 teaches people to edit the date.
+
+---
+
+## B19 — a document that fails to verify cannot say why, and three assembly rules are easy to get wrong
+
+**Status:** open. No code is wrong; the API is correct and complete. This is about what
+a caller learns when they get it wrong, which today is nothing.
+**Observed:** 2026-08-14, writing a reference gateway that verifies a Solara agent
+(`forge-agents`, `examples/customer-gateway/`). Execution-verified against the published
+`vaid-mint` **0.7.0** wheel from PyPI, not read from source.
+**Affects:** `vaid-mint` in all three ports — `verify_vaid_authenticity` returns `bool` in
+Python, Rust (`verify.rs:78`) and TypeScript (`verify.ts:77`), and the graded variant
+exists alongside it in each.
+
+### What breaks
+
+Assembling a VAID document from the published primitives has three derivations that a
+competent caller gets wrong on the first attempt. Each produces a document that **parses
+cleanly and then fails verification**, and the failure is a bare `false`:
+
+| # | The rule | The wrong-but-plausible thing | What you get |
+|---|---|---|---|
+| 1 | `kernel_key_thumbprint` is an RFC 9278 thumbprint URI over an RFC 7638 JWK thumbprint (`urn:ietf:params:oauth:jwk-thumbprint:...`) | `sha256(public_key).hexdigest()` | `false` / `ISSUER_MISMATCH` |
+| 2 | `compute_lineage_hash(parent_vaid, agent_id)` takes the **agent** id | passing the `vaid_id` — the adjacent field, same shape, same function call | `false` / `LINEAGE_INCONSISTENT` |
+| 3 | `vaid_id` and `agent_id` are type-checked as **UUIDs** by `parse_vaid_document` | a readable identifier like `vaid_example_1` | `None` — *unparseable*, before any signature is considered |
+
+Measured, on 0.7.0:
+
+```
+correct                plain=True  graded=VALID
+sha256 thumbprint      plain=False graded=ISSUER_MISMATCH
+lineage from vaid_id   plain=False graded=LINEAGE_INCONSISTENT
+non-uuid ids           parse_vaid_document -> None
+```
+
+I hit all three, in that order, over about forty minutes.
+
+### How it presents — as a signature problem, which none of them are
+
+A caller holding `false` has no way to distinguish "your key is wrong", "your document is
+internally inconsistent", "this was signed by somebody else" and "your signature is
+genuinely bad". Every guide, every instinct and every log line points at the signature,
+because that is the only thing the function name mentions. Two of the three causes above
+are not signature problems at all; the third is not even a verification failure, it is a
+parse that returned `None` several steps earlier.
+
+`VaidVerdict` already names all of them — `UNPARSEABLE`, `UNSUPPORTED_SIG_VERSION`,
+`MALFORMED_TRUST_DOMAIN`, `ISSUER_MISMATCH`, `LINEAGE_INCONSISTENT`, `INAUTHENTIC`,
+`EXPIRED`, `REVOKED`, `INDETERMINATE`. **The diagnosis exists and is discarded at the
+boundary.** `verify_vaid_authenticity` computes the verdict and throws it away:
+
+```python
+return verify_vaid_authenticity_graded(kernel_public_key, vaid) is VaidVerdict.VALID
+```
+
+### Why this is not "read the docs"
+
+The docstrings are good — `kernel_key_thumbprint` explains its RFC lineage carefully and
+is pinned against RFC 8037 Appendix A.3. The problem is the order things are read in.
+Nobody reads the thumbprint docstring *before* writing the call; they read it *after*
+`false`, if they work out that the thumbprint is where to look. The failure gives no
+reason to look there.
+
+### Who actually meets this, and who does not
+
+**A verifying customer never meets any of it.** They receive documents; they do not build
+them. Their path is `parse_vaid_document` → `verify_vaid_authenticity` → `is_expired`, and
+it works first time. That is worth stating plainly because it bounds the severity: this is
+not a barrier to adopting VAID as a relying party.
+
+**Anyone building a test fixture, a conformance harness, a mock issuer or a second
+implementation meets all three immediately** — which is precisely the population that
+matters most right now: two live prospects are evaluating VAID, and the first thing a
+serious evaluator does is construct a document to see what the verifier rejects.
+
+The reference gateway sidesteps it by using `ReferenceIssuer` rather than hand-assembling,
+and the test that proves it says so. That is the right advice and it is nowhere in the
+docs.
+
+### Shape of the fix
+
+Cheapest first; the first alone would have saved the forty minutes.
+
+1. **Make the graded verdict reachable from the failure.** Not by changing
+   `verify_vaid_authenticity`'s signature — the `bool` is the right default and callers
+   depend on it — but by naming `verify_vaid_authenticity_graded` in the plain function's
+   docstring, in the README verification example, and in the error path of every example.
+   One sentence: *"if this returns `false`, call the graded variant to find out why."*
+2. **Say `ReferenceIssuer` is the supported way to build a document.** The three rules are
+   only reachable by hand-assembly, and hand-assembly is not the intended path.
+3. **Consider a `build_signed_vaid_document` helper** that takes a kernel key and derives
+   the thumbprint and lineage hash itself. It would make rules 1 and 2 unreachable rather
+   than documented. Not obviously worth it while `ReferenceIssuer` exists.
+
+### Why it has not been done here
+
+The release freeze. This touches published API surface documentation in three ports, and
+the freeze exists precisely to stop that being done piecemeal. Fix (1) is doc-only and
+could go in a doc release; (3) is a new export and cannot.
