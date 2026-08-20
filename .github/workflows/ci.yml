@@ -7,7 +7,19 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # NO `branches:` FILTER. It is a target-branch filter, and this repository has
+    # exactly one long-lived branch, so the only pull requests it could ever exclude
+    # are ones STACKED on a feature branch — which is precisely the set that most
+    # needs checking. On 2026-08-20 six such pull requests across four repositories
+    # sat MERGEABLE and CLEAN with ZERO check runs, visually indistinguishable in the
+    # pull-request list from six that had passed. Two of them existed to fix a CVE
+    # floor and had never been run at all.
+    #
+    # Measured before removing it: of 419 pull requests opened across the estate in
+    # the preceding 90 days, exactly 6 targeted a base other than `main`. The filter
+    # therefore saved nothing on normal traffic; its entire measured effect was the
+    # false green. Do not reintroduce it to save minutes — use `paths-ignore`, which
+    # filters on what changed rather than on where it is going.
 
 permissions:
   contents: read
