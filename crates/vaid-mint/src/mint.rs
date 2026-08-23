@@ -885,7 +885,15 @@ mod tests {
     #[tokio::test]
     async fn minted_child_verifies_and_is_contained_by_parent() {
         let audit = Arc::new(InMemoryAudit::new());
-        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        // `assuming_nothing_revoked()` because this test is about attenuation and
+        // scope containment. Since 0.8.0 a bare issuer's revocation store is absent,
+        // so `verify_vaid` would fail closed on `Unavailable` regardless of what the
+        // child's scope says — a rejection for the wrong reason.
+        let issuer = Arc::new(
+            ReferenceIssuer::ephemeral(1, "vaid.example")
+                .unwrap()
+                .assuming_nothing_revoked(),
+        );
         let svc = MintService::new(issuer.clone(), audit);
         // Mint a REAL parent root through the issuer, so its lineage is recorded and
         // the child's ancestry is resolvable at verification (R.4.2). A synthetic

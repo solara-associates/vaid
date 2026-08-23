@@ -173,6 +173,44 @@ section.
 The reference implementation currently ships non-durable in-memory stores for both
 revocation and lineage. See R.6.
 
+**Durability is two stores, and half of it is an outage rather than a hole.** The
+requirement above binds the revocation store *and* the lineage resolver, and the
+two fail in opposite directions:
+
+| Persisted | Child VAID | Root VAID |
+|---|---|---|
+| both | verifies | revocation in force |
+| lineage only | verifies | **verifies — the revocation is gone** |
+| revocation only | **`Unavailable`** | revocation in force |
+
+Persisting the revoked set alone leaves every VAID carrying a `parent_vaid`
+unresolvable after restart, which is `Incomplete` under R.4.2, which is
+`Unavailable` under R.4.3, which fails closed under R.4.5. Every rootless VAID is
+unaffected, because it is trivially complete and never consults the resolver. The
+result is a failure that is total for delegated credentials, invisible for root
+ones, arrives at restart rather than at deploy, and — since nothing was revoked —
+is first diagnosed as a signing or clock problem. This is the specification working
+as intended: an outage is the correct choice over a child that masquerades as
+rootless and discards its ancestors' revocations. It is stated here because the
+symptom is not derivable from the requirement, and the diagnosis is not derivable
+from the symptom.
+
+An implementation offering an injection point for one store and not the other
+therefore offers its users only the configuration that produces this outage.
+Implementations SHOULD make the two durable stores replaceable together, so that
+the half-configuration cannot be reached by omitting an argument. It remains a
+legitimate deployment choice for a single process that mints and verifies and is
+never restarted, and where offered it SHOULD require that choice to be named
+rather than defaulted into.
+
+Sequencing, for a deployment migrating to durable stores: make the **resolver**
+durable first, or both in the same change. The revoked set first is the ordering
+that produces the outage. An intermediate posture this section already blesses —
+holding the revocation store in *absent* state, so it reports `Unavailable` and
+verification fails closed, until state has been loaded — is the safe way to deploy
+either half: a deliberate, brief, visible outage rather than a silent window of
+unrevoked credentials.
+
 ### R.4.7 Invocation
 
 Consulted during verification.
@@ -200,7 +238,7 @@ waiting.
 Stated plainly because it is the current state and an evaluator will determine it from
 the source within minutes.
 
-| | 0.1.2 (superseded) | 0.2 onward (current: 0.7.0) |
+| | 0.1.2 (superseded) | 0.2 onward (current: 0.8.0) |
 |---|---|---|
 | Seam present | Yes, Rust and Python | Yes, Rust, Python and TypeScript |
 | Return type | Boolean | Three-state per R.4.3 |
@@ -209,6 +247,8 @@ the source within minutes.
 | Behaviour on store failure | Not representable | Fail closed per R.4.5 |
 | Revocation store durability | In-memory only | In-memory only — unchanged, see note |
 | Lineage store durability | In-memory only, issuer-local | In-memory only, issuer-local — unchanged, see note |
+| Both stores replaceable together | No | Yes, since 0.8.0 (`RevocationBackend`) |
+| Reference default posture | Vouching | Vouching until 0.7.0; **absent, fails closed**, since 0.8.0 |
 
 **The shipped seam satisfies R.4.** The three-state, lineage-aware seam landed in
 `vaid-mint` 0.2.0 on 2026-07-27 as a deliberate breaking change with no compatibility
@@ -224,11 +264,23 @@ implying a single flip:
 - **Seam present in all three languages** completed at 0.3.0 on npm (2026-07-30), when
   TypeScript became the third reference implementation. Before that date the
   right-hand column was accurate for Rust and Python only.
+- **Both stores replaceable together, and the default posture** changed at 0.8.0
+  (2026-08-23), in one release and in all three languages at once. Two breaking
+  changes: the single-half injection point (`with_revocation_check`) was removed in
+  favour of `RevocationBackend`, which has no single-half constructor; and the
+  reference default flipped from vouching to absent. See ADR-0007.
 
 **The two durability rows did not change, and are not scheduled to.** Both stores are
 still in-memory in every published version. This is the one place where the earlier
 edition of this table was right and remains right, and it is called out because the
 rest of the row set moving could otherwise be read as durability having moved with it.
+
+What changed at 0.8.0 is **not** durability but *replaceability* and *posture*: the
+reference stores are as non-durable as they ever were, and the two new rows record
+that a host can now replace both together, and that the non-durable revocation store
+no longer vouches. Read the durability rows and the posture row as separate claims;
+conflating them is how "the default fails closed" becomes the false belief that the
+reference now persists anything.
 
 **0.1.2 is retained above as history, not as deployment advice.** That seam accepted a
 single identifier and returned a boolean, so revocation of a parent did not affect an
@@ -237,26 +289,43 @@ been the current release since 2026-07-27 and no supported deployment runs it; t
 left-hand column exists so that a reader holding an older copy of this document can
 see what changed and when.
 
-Durable backing stores are a host-application responsibility in all versions. The
+Durable backing stores are a host-application responsibility in all versions —
+**both of them**: durable revocation *and* durable lineage resolution. The
 reference implementation ships in-memory stores for development. R.4.6 governs how
 those stores must behave when their state is absent, not whether the reference
 implementation must become durable.
 
-**Note on the reference default (0.2 onward).** The reference issuer defaults its
-revocation store to a *vouching* posture (the constructor is named
-`assume_nothing_revoked`, not for its empty state but for what it does): it answers
-`NotRevoked` over an empty set so a fresh issuer verifies out of the box. Being
-non-durable, it cannot detect its own restart — after a restart it is reconstructed
-empty and again vouches `NotRevoked`, so a VAID revoked before the restart verifies
-clean. This is a deliberate trade of restart-detection for out-of-the-box usability
-in development, and it is legitimate under R.4.6 (which requires only that an
-*absent* store report `Unavailable`, and that absent be distinguishable from
-vouching — both of which hold), **not** under R.4.5 as a configuration: it is not a
-fail-open verifier setting, it is the reference's development default, and it is
-named to be unmisreadable. Two alternatives make a deployment restart-safe: (1)
-inject a durable `RevocationCheck`; or (2) start the store in absent state until
-revocation state has been loaded into it — an absent store reports `Unavailable`,
-so verification fails closed until the load completes.
+**Note on the reference default (0.8 onward).** The reference issuer's revocation
+store starts **absent**: it has not been populated, cannot vouch for anything, and
+reports `Unavailable`, so verification fails closed (R.4.5) until revocation state is
+loaded into it. This is the posture R.4.6 already blessed as the safe way to run a
+non-durable store, now taken as the default rather than offered as an alternative.
+
+A caller who wants a fresh issuer to verify immediately asks for that **by name** —
+`assuming_nothing_revoked()` in Rust and Python, `assumingNothingRevoked()` in
+TypeScript — which installs the vouching store described below. That is fail-open,
+and R.4.5 permits it precisely in this form: as an explicit configuration, named to
+state what it does, never as a default.
+
+**Note on the reference default, 0.2 through 0.7 (historical).** Until 0.8.0 the
+reference issuer defaulted its revocation store to a *vouching* posture (the
+constructor is named `assume_nothing_revoked`, not for its empty state but for what
+it does): it answered `NotRevoked` over an empty set so a fresh issuer verified out
+of the box. Being non-durable, it could not detect its own restart — after a restart
+it was reconstructed empty and again vouched `NotRevoked`, so a VAID revoked before
+the restart verified clean. It was a deliberate trade of restart-detection for
+out-of-the-box usability in development, disclosed here from the start, and it was
+argued legitimate under R.4.6 (which requires only that an *absent* store report
+`Unavailable`, and that absent be distinguishable from vouching — both of which
+held) and explicitly **not** under R.4.5 as a configuration: it was not a fail-open
+verifier setting, it was the reference's development default, and it was named to be
+unmisreadable.
+
+That argument was sound, and it was a **carve-out** — one that existed only because
+the posture was a default. Removing the default removes the need for it, which is
+the reason the flip is an improvement to this specification's position rather than
+merely to the package's. R.4.5 now applies to the reference implementation on its own
+terms: the fail-open posture exists, it is not the default, and it is named.
 
 ## R.7 Authenticity is separate from policy
 

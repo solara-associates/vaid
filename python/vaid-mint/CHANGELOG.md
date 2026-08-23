@@ -9,6 +9,127 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.8.0]
+
+### BREAKING — the reference issuer now fails closed out of the box
+
+`ReferenceIssuer`'s default revocation store was `assume_nothing_revoked()`: it
+vouched ``NOT_REVOKED`` over an empty set, so a fresh issuer verified immediately.
+Because the store is non-durable it could not detect its own restart, so a VAID
+revoked before a restart verified clean afterwards. That is a **fail-open posture**,
+and it was the **default**.
+
+It is now **absent**: `revocation_status` reports ``UNAVAILABLE`` and `verify_vaid`
+returns ``False`` until revocation state is loaded. Verification fails closed (R.4.5).
+
+R.4.5 requires that fail-open *"MUST NOT be the default"* and *"MUST be named to
+state what it does rather than obscure it."* R.6 argued the old default sat outside
+that requirement, being a development default rather than a verifier setting. The
+argument was sound and it was a **carve-out** — one that existed only because the
+posture was a default. It is no longer one.
+
+**Blast radius, measured rather than estimated** — the flip was applied, all three
+suites run, and the tree restored:
+
+- **16 test failures across three languages, all one class**: *a bare issuer no
+  longer verifies what it just minted*. There is no second failure mode.
+- **Minting, attenuation and scope containment are unaffected.** `MintService` never
+  calls `verify_vaid`.
+- **Authenticity is unaffected.** `verify_vaid_authenticity` never consults
+  revocation (R.7), so third-party, offline and cross-organisation verification —
+  the portable property that is the point of a VAID — does not change.
+- **No conformance vector is affected.** Revocation is outside the conformance
+  surface (R.1) and `verdict_v1.json` takes revocation status as an *input* rather
+  than deriving it. The vector freeze reports 32 vectors unchanged.
+
+You are affected only if you call `ReferenceIssuer.verify_vaid` or
+`revocation_status` on an issuer you have not given a revocation backend.
+
+### BREAKING — `with_revocation_check` is removed
+
+It replaced one of the two durable stores R.4.6 requires and left the other in
+memory. That configuration is not a degraded mode, it is an outage: after a restart
+every **child** credential fails closed while every **root** keeps verifying (see
+below). It was deprecated in the same breath as `RevocationBackend` landed and is
+removed here rather than kept through a deprecation window, because a window is a
+period during which the reachable failure stays reachable.
+
+Replace with `with_revocation_backend(RevocationBackend(check=..., lineage=...))`. To
+keep an in-memory resolver deliberately, pass `InMemoryLineageStore` as the second
+half — the same behaviour, named at the call site.
+
+### Added — `assuming_nothing_revoked()`
+
+The pre-0.8.0 posture, asked for by name:
+
+```python
+issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
+```
+
+Identical behaviour to the old default — a vouching in-memory revoked set, with the
+lineage store untouched and still in-memory. It is a fail-open posture and this
+spelling says so where it is chosen. Fine for local development, quickstarts and
+tests; not for anything that must survive a restart. This is what R.4.5 permits:
+fail-open as an explicit configuration.
+
+### Added — durable revocation is TWO stores, and the seam now says so (spec R.4.6)
+
+`RevocationBackend`, `LineageStore` and `InMemoryLineageStore`, plus
+`ReferenceIssuer.with_revocation_backend`. `with_revocation_check` is removed (above).
+
+R.4.6 has always required **two** durable stores — the revoked set and the lineage
+resolver — and until now the crate offered an injection point for exactly one of
+them. `with_revocation_check` replaced the revoked set; the resolver was a private
+`dict` on `ReferenceIssuer` with no way to substitute it and, more decisively, no
+write half at all. A self-hoster following the documented path could only build
+the half-configuration, and the half-configuration is an outage:
+
+| Persisted | Child credential | Revoked root |
+|---|---|---|
+| both | verifies | refused |
+| lineage only | verifies | **verifies — the revocation is gone** |
+| revoked set only | **`Unavailable` — outage** | refused |
+
+Persist the revoked set alone and every **child** VAID fails closed after a
+restart (its `parent_vaid` no longer resolves, so assembly is incomplete → R.4.2
+`Unavailable` → R.4.5 fails closed) while every **root** VAID keeps verifying,
+because a root is trivially complete and never consults the resolver. Total for
+delegated credentials, invisible for root ones, arriving at restart rather than at
+deploy, and — since nothing was revoked — first diagnosed as a signing or clock
+problem. The behaviour is correct; reaching it by omitting an argument is not.
+
+`RevocationBackend` takes both halves and there is no single-half
+constructor, so that state is no longer reachable **by omission**. It stays
+reachable by explicitly naming `InMemoryLineageStore` as the second half, which is
+a legitimate single-process choice and is visible at the call site. The two halves
+remain separate objects rather than one protocol with both methods: R.4.1 requires
+that the check "does not perform lookups and is not given the means to", and a
+combined protocol hands one object both jobs.
+
+`LineageStore.record` is the write half the resolver never had. Without it an
+injected durable resolver would be permanently empty — the same outage with extra
+steps — because the issuer wrote every mint into its own dict.
+
+**Proven by a restart, not by a round trip.** `tests/test_durable_restart.py` (and its
+Rust and TypeScript mirrors) spawns real child interpreters: one mints and revokes
+into file-backed stores and exits, a second rebuilds the issuer from the persisted
+seed and the persisted files. Both mutations — lineage dropped, revoked set
+vouching-when-absent — are asserted positively, so the suite measures the outage
+and the security hole rather than merely asserting the happy path. The file-backed
+stores are **test doubles**; durable hash-chained revocation remains deliberately
+outside the open package.
+
+**No conformance impact.** Revocation is outside the conformance surface (R.1),
+`verdict_v1.json` takes revocation status as an *input* rather than deriving it,
+and no vector changed. The same seam lands in all three implementations
+simultaneously — Rust `RevocationBackend`/`LineageStore`, Python
+`RevocationBackend`/`LineageStore`, TypeScript `RevocationBackend`/`LineageStore`.
+
+**The reference default changed in the same release** — see the first BREAKING
+entry above. The seam and the default were decided separately and shipped together:
+the seam makes durable revocation implementable, and the flip stops the
+non-durable one from vouching.
+
 ## [0.7.0]
 
 ### Fixed — a verifier canonicalizes the member VALUES it was presented (BACKLOG B7)

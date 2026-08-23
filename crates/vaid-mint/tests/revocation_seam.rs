@@ -13,7 +13,20 @@ use std::sync::Arc;
 
 use vaid_mint::document::{AgentClass, TenantId};
 use vaid_mint::issuer::{ReferenceIssuer, VaidIssuer};
-use vaid_mint::revocation::{InMemoryRevocationList, RevocationStatus};
+use vaid_mint::revocation::{
+    InMemoryLineageStore, InMemoryRevocationList, RevocationBackend, RevocationStatus,
+};
+
+/// An issuer whose revocation store **vouches** over an empty set — the pre-0.8.0
+/// default, now asked for by name (R.4.5: fail-open may be configured, never
+/// defaulted). Used by every scenario whose subject is something OTHER than the
+/// default posture; a bare issuer is absent and would answer `Unavailable` before
+/// the property under test could be reached.
+fn vouching_issuer() -> ReferenceIssuer {
+    ReferenceIssuer::ephemeral(1, "vaid.example")
+        .unwrap()
+        .assuming_nothing_revoked()
+}
 
 /// Issue a root (no parent) straight from the issuer. Enough to exercise the seam
 /// without the full mint_child PoP dance, which is orthogonal to revocation.
@@ -54,7 +67,7 @@ fn issue_child(
 /// lineage checking exists.
 #[test]
 fn test1_bypass_revoking_parent_rejects_child() {
-    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+    let issuer = vouching_issuer();
     let root = issue_root(&issuer, "root");
     let child = issue_child(&issuer, &root, "child");
 
@@ -113,7 +126,10 @@ fn test2_restart_truncation_is_unavailable_not_notrevoked() {
 fn test3_store_failure_is_unavailable_and_rejects() {
     let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
         .unwrap()
-        .with_revocation_check(Arc::new(InMemoryRevocationList::unavailable()));
+        .with_revocation_backend(RevocationBackend::new(
+            Arc::new(InMemoryRevocationList::unavailable()),
+            Arc::new(InMemoryLineageStore::new()),
+        ));
     let vaid = issue_root(&issuer, "root");
 
     assert_eq!(
@@ -132,7 +148,7 @@ fn test3_store_failure_is_unavailable_and_rejects() {
 /// assembly (test 2) and a genuine root (here) must land on different states.
 #[test]
 fn test4_rootless_clean_is_notrevoked_and_verifies() {
-    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+    let issuer = vouching_issuer();
     let vaid = issue_root(&issuer, "root");
 
     assert_eq!(
@@ -151,7 +167,7 @@ fn test4_rootless_clean_is_notrevoked_and_verifies() {
 fn cross_language_scenarios() {
     // clean_root: rootless, nothing revoked        -> NotRevoked
     {
-        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let issuer = vouching_issuer();
         let root = issue_root(&issuer, "root");
         assert_eq!(
             issuer.revocation_status(&root),
@@ -160,14 +176,14 @@ fn cross_language_scenarios() {
     }
     // revoked_root: rootless, itself revoked        -> Revoked
     {
-        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let issuer = vouching_issuer();
         let root = issue_root(&issuer, "root");
         issuer.revoke(root.vaid_id());
         assert_eq!(issuer.revocation_status(&root), RevocationStatus::Revoked);
     }
     // child_parent_revoked: child of a revoked root -> Revoked (R.4.4)
     {
-        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let issuer = vouching_issuer();
         let root = issue_root(&issuer, "root");
         let child = issue_child(&issuer, &root, "child");
         issuer.revoke(root.vaid_id());
@@ -175,7 +191,7 @@ fn cross_language_scenarios() {
     }
     // child_clean: child of a clean root            -> NotRevoked
     {
-        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let issuer = vouching_issuer();
         let root = issue_root(&issuer, "root");
         let child = issue_child(&issuer, &root, "child");
         assert_eq!(
@@ -185,7 +201,7 @@ fn cross_language_scenarios() {
     }
     // child_parent_unresolvable: restart truncation -> Unavailable (R.4.2)
     {
-        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let issuer = vouching_issuer();
         let root = issue_root(&issuer, "root");
         let child = issue_child(&issuer, &root, "child");
         issuer.clear_lineage();
@@ -194,11 +210,30 @@ fn cross_language_scenarios() {
             RevocationStatus::Unavailable
         );
     }
+    // default_bare_issuer: NOTHING configured       -> Unavailable (R.4.5)
+    //
+    // The 0.8.0 flip, pinned as a cross-language agreement rather than left to each
+    // implementation's constructor. A bare issuer's revocation store is ABSENT: it
+    // has not been populated, cannot vouch, and says so. Verification fails closed.
+    // Before 0.8.0 this row read NotRevoked, because the default vouched over an
+    // empty set and could not detect its own restart.
+    {
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let root = issue_root(&issuer, "root");
+        assert_eq!(
+            issuer.revocation_status(&root),
+            RevocationStatus::Unavailable
+        );
+        assert!(!issuer.verify_vaid(&root), "fails closed out of the box");
+    }
     // store_unavailable: store unreachable          -> Unavailable (R.4.3)
     {
         let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
             .unwrap()
-            .with_revocation_check(Arc::new(InMemoryRevocationList::unavailable()));
+            .with_revocation_backend(RevocationBackend::new(
+            Arc::new(InMemoryRevocationList::unavailable()),
+            Arc::new(InMemoryLineageStore::new()),
+        ));
         let root = issue_root(&issuer, "root");
         assert_eq!(
             issuer.revocation_status(&root),

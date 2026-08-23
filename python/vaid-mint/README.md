@@ -31,15 +31,46 @@ of `NOT_REVOKED`, `REVOKED`, or `UNAVAILABLE`. A VAID is revoked if **any** ance
 is (revoking a parent revokes its children), and verification **fails closed** on
 `UNAVAILABLE` — an incomplete lineage (e.g. an empty resolver after restart) or an
 unreachable store rejects rather than silently passing. Inject your own durable,
-restart-surviving backend via `ReferenceIssuer.with_revocation_check`; what ships
+restart-surviving backend via `ReferenceIssuer.with_revocation_backend`; what ships
 *by default* is a non-durable in-memory store, so if the process restarts and you
 have not wired a durable backend, previously revoked VAIDs may become revocable
 again. The seam closes the "no extension point" gap; it does **not** by itself make
 revocation durable. That is your responsibility to wire, or the hosted authority's
 to provide.
 
+**Durable revocation is two stores, not one.** Durable revocation *and* durable
+lineage resolution are both host-application responsibilities. `RevocationCheck`
+answers about an already-assembled lineage; `LineageStore` records every mint and
+resolves ancestry, and a VAID's full ancestry is not recoverable from the document
+itself. Persist only the revoked set and, after a restart, every **child** VAID
+fails closed — its ancestry cannot be assembled, which is `UNAVAILABLE`, which
+fails closed (R.4.2 / R.4.5) — while every **root** VAID keeps verifying, because
+a root is trivially complete and never consults the resolver. The outage is total
+for delegated credentials and invisible for root ones, appears at restart rather
+than at deploy, and is first mistaken for a signing or clock problem.
+`RevocationBackend` takes both halves and has no single-half constructor, so that
+state cannot be reached by omitting an argument; pass `InMemoryLineageStore` as the
+second half to say "in-memory lineage, deliberately". Make the resolver durable
+first, or both in the same change — the revoked set first is the ordering that
+produces the outage. `ReferenceIssuer.with_revocation_check` replaced only one half
+and was **removed in 0.8.0** for this reason.
+
+**Since 0.8.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
+is *absent* — never populated, so it reports `UNAVAILABLE` and `verify_vaid` returns
+`False` until state is loaded. Until 0.8.0 the default vouched `NOT_REVOKED` over an
+empty set, which is a fail-open posture and, being non-durable, could not detect its
+own restart. R.4.5 requires that fail-open never be the default and always be named;
+`ReferenceIssuer.assuming_nothing_revoked()` is that name. Minting, attenuation and
+`verify_vaid_authenticity` are unchanged.
+
 ```python
-from vaid_mint import InMemoryRevocationList, ReferenceIssuer, RevocationStatus
+from vaid_mint import (
+    InMemoryLineageStore,
+    InMemoryRevocationList,
+    ReferenceIssuer,
+    RevocationBackend,
+    RevocationStatus,
+)
 
 class MyDurableRevocations:
     """Your own restart-surviving store (or a refreshed snapshot of one). It is
@@ -55,12 +86,25 @@ class MyDurableRevocations:
             return RevocationStatus.REVOKED
         return RevocationStatus.NOT_REVOKED
 
-# The injected check REPLACES the default store consulted at verification.
-issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(MyDurableRevocations())
+# The injected backend REPLACES BOTH default stores consulted at verification. Both
+# halves are required: MyDurableLineage records every mint and resolves ancestry
+# across a restart (see `LineageStore`), and without it every CHILD VAID would fail
+# closed after a restart while every root kept verifying.
+issuer = ReferenceIssuer.ephemeral(1).with_revocation_backend(
+    RevocationBackend(check=MyDurableRevocations(), lineage=MyDurableLineage())
+)
 
-# Or wire the seam with the shipped in-memory list before a durable backend exists:
+# Or wire the seam with the shipped in-memory stores before a durable backend
+# exists. Naming InMemoryLineageStore is how you say "in-memory lineage,
+# deliberately" — this issuer does not survive a restart, and nothing pretends it does.
 revocations = InMemoryRevocationList.assume_nothing_revoked()
-issuer = ReferenceIssuer.ephemeral(1).with_revocation_check(revocations)
+issuer = ReferenceIssuer.ephemeral(1).with_revocation_backend(
+    RevocationBackend(check=revocations, lineage=InMemoryLineageStore())
+)
+
+# Shorthand for exactly the pre-0.8.0 posture — a vouching in-memory revoked set and
+# an in-memory lineage store. Same fail-open behaviour; the difference is the name.
+dev = ReferenceIssuer.ephemeral(1).assuming_nothing_revoked()
 revocations.revoke(vaid["vaid_id"])
 assert not issuer.verify_vaid(vaid)
 ```
@@ -116,7 +160,12 @@ where each is enforced in code.
 ```python
 from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
 
-issuer = ReferenceIssuer.ephemeral(24)
+# `assuming_nothing_revoked()` is the pre-0.8.0 default, asked for BY NAME. Since
+# 0.8.0 a bare issuer's revocation store is ABSENT: it reports UNAVAILABLE and
+# `verify_vaid` fails closed until revocation state is loaded (R.4.5). This is a
+# fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
+# survive a restart. For anything that must, use `with_revocation_backend`.
+issuer = ReferenceIssuer.ephemeral(24).assuming_nothing_revoked()
 mint = MintService(issuer, InMemoryAudit())
 root = mint.mint_root(VaidSeed(
     agent_class="orchestrator", version="1.0.0", tenant_id="acme",

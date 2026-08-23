@@ -364,6 +364,25 @@ repo:
   A self-hoster can wire their own backend without patching the SDK. What is absent
   is **durable, restart-surviving** revocation.
 
+  Durable revocation is **two** stores, not one: the revoked set *and* the lineage
+  resolver, and durable **lineage resolution** is as much a host-application
+  responsibility as the revoked set. Persist only the revoked set and every
+  *delegated* credential fails closed after a restart — its ancestry can no longer
+  be assembled, which is `Unavailable`, which fails closed (R.4.2/R.4.5) — while
+  every *root* credential keeps verifying, because a root needs no resolution. The
+  behaviour is correct and the outage is total for delegation and invisible for
+  roots. `RevocationBackend` takes both halves and has no single-half constructor,
+  so this cannot be reached by omitting an argument.
+
+  The reference default **fails closed**: a bare issuer's revocation store is
+  *absent*, reports `Unavailable`, and verification is refused until state is loaded
+  (R.4.5). An earlier default vouched "nothing is revoked" over an empty set — a
+  fail-open posture that, being non-durable, could not detect its own restart. That
+  posture is still available, by name, as `assuming_nothing_revoked()`, because
+  R.4.5 permits fail-open as a configuration and forbids it as a default.
+  Authenticity verification is unaffected: it never consults revocation (R.7). See
+  each package's CHANGELOG for which release this changed in.
+
 The reference mint proves the shape of delegation and attenuation. Running a mint in
 production means supplying those durable pieces yourself, and nothing in the standard
 requires you to obtain them from any particular source — a conforming deployment is
