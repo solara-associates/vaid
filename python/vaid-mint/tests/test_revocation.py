@@ -12,12 +12,24 @@ from __future__ import annotations
 
 from vaid_mint import (
     DEFAULT_VAID_TTL_HOURS,
+    InMemoryLineageStore,
     InMemoryRevocationList,
     ReferenceIssuer,
+    RevocationBackend,
     RevocationCheck,
     RevocationStatus,
     is_expired,
+    verify_vaid_authenticity,
 )
+
+
+def vouching_issuer() -> ReferenceIssuer:
+    """An issuer whose revocation store **vouches** over an empty set — the pre-0.8.0
+    default, now asked for by name (R.4.5: fail-open may be configured, never
+    defaulted). Used by every scenario whose subject is something OTHER than the
+    default posture; a bare issuer is absent and would answer UNAVAILABLE before the
+    property under test could be reached. Mirrors the Rust ``vouching_issuer``."""
+    return ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
 
 
 def issue_root(issuer: ReferenceIssuer, agent_class: str = "root") -> dict:
@@ -77,7 +89,7 @@ def test_in_memory_list_satisfies_the_protocol():
 
 def test1_bypass_revoking_parent_rejects_child():
     """Revoking a parent must revoke a child attenuated from it (R.4.4)."""
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     root = issue_root(issuer)
     child = issue_child(issuer, root)
 
@@ -105,8 +117,10 @@ def test2_restart_truncation_is_unavailable_not_notrevoked():
 
 def test3_store_failure_is_unavailable_and_rejects():
     """An unreachable revocation store yields Unavailable and fails closed."""
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_check(
-        InMemoryRevocationList.unavailable()
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_backend(
+        RevocationBackend(
+            check=InMemoryRevocationList.unavailable(), lineage=InMemoryLineageStore()
+        )
     )
     vaid = issue_root(issuer)
 
@@ -117,7 +131,7 @@ def test3_store_failure_is_unavailable_and_rejects():
 def test4_rootless_clean_is_notrevoked_and_verifies():
     """A rootless VAID with nothing revoked is NotRevoked and verifies — the case
     tests 1 and 2 must not have broken."""
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     vaid = issue_root(issuer)
 
     assert issuer.revocation_status(vaid) is RevocationStatus.NOT_REVOKED
@@ -128,39 +142,53 @@ def test_cross_language_scenarios():
     """The (scenario -> status) table both languages agree on. Identical to the
     Rust ``cross_language_scenarios`` test."""
     # clean_root: rootless, nothing revoked        -> NOT_REVOKED
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     root = issue_root(issuer)
     assert issuer.revocation_status(root) is RevocationStatus.NOT_REVOKED
 
     # revoked_root: rootless, itself revoked        -> REVOKED
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     root = issue_root(issuer)
     issuer.revoke(root["vaid_id"])
     assert issuer.revocation_status(root) is RevocationStatus.REVOKED
 
     # child_parent_revoked: child of a revoked root -> REVOKED (R.4.4)
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     issuer.revoke(root["vaid_id"])
     assert issuer.revocation_status(child) is RevocationStatus.REVOKED
 
     # child_clean: child of a clean root            -> NOT_REVOKED
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     assert issuer.revocation_status(child) is RevocationStatus.NOT_REVOKED
 
     # child_parent_unresolvable: restart truncation -> UNAVAILABLE (R.4.2)
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    issuer = vouching_issuer()
     root = issue_root(issuer)
     child = issue_child(issuer, root)
     issuer.clear_lineage()
     assert issuer.revocation_status(child) is RevocationStatus.UNAVAILABLE
 
+    # default_bare_issuer: NOTHING configured       -> UNAVAILABLE (R.4.5)
+    #
+    # The 0.8.0 flip, pinned as a cross-language agreement rather than left to each
+    # implementation's constructor. A bare issuer's revocation store is ABSENT: it
+    # has not been populated, cannot vouch, and says so. Verification fails closed.
+    # Before 0.8.0 this row read NOT_REVOKED, because the default vouched over an
+    # empty set and could not detect its own restart.
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    root = issue_root(issuer)
+    assert issuer.revocation_status(root) is RevocationStatus.UNAVAILABLE
+    assert not issuer.verify_vaid(root), "fails closed out of the box"
+
     # store_unavailable: store unreachable          -> UNAVAILABLE (R.4.3)
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_check(
-        InMemoryRevocationList.unavailable()
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_backend(
+        RevocationBackend(
+            check=InMemoryRevocationList.unavailable(), lineage=InMemoryLineageStore()
+        )
     )
     root = issue_root(issuer)
     assert issuer.revocation_status(root) is RevocationStatus.UNAVAILABLE
@@ -170,7 +198,8 @@ def test_cross_language_scenarios():
 
 
 def test_revocation_fails_verification():
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    # Vouching, so the first assertion is about revocation rather than an absent store.
+    issuer = vouching_issuer()
     vaid = issue_root(issuer)
     assert issuer.verify_vaid(vaid)
     issuer.revoke(vaid["vaid_id"])
@@ -187,3 +216,42 @@ def test_expired_vaid_fails_verification():
 
 def test_default_vaid_ttl_hours_matches_the_rust_constant():
     assert DEFAULT_VAID_TTL_HOURS == 1
+
+
+# ── the 0.8.0 default and its named opt-in ──
+
+
+def test_default_revocation_store_is_absent_and_fails_closed():
+    """THE 0.8.0 DEFAULT. A bare issuer's revocation store is **absent**, not
+    vouching: it reports UNAVAILABLE and verification fails closed (R.4.5). Until
+    0.8.0 this returned NOT_REVOKED and True.
+
+    The paired assertion matters as much as the first: the VAID is still
+    **authentic**. What changed is standing, not the document — an evaluator who sees
+    ``verify_vaid`` return False must be able to tell that apart from a signing
+    failure."""
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    vaid = issue_root(issuer)
+
+    assert issuer.revocation_status(vaid) is RevocationStatus.UNAVAILABLE, (
+        "a bare issuer has not been told anything about revocation and must not "
+        "pretend otherwise"
+    )
+    assert not issuer.verify_vaid(vaid), "fails closed (R.4.5)"
+    assert verify_vaid_authenticity(issuer.kernel_public_key(), vaid), (
+        "still authentic — only STANDING failed"
+    )
+
+
+def test_assuming_nothing_revoked_restores_the_pre_0_8_posture():
+    """The named opt-in restores the pre-0.8.0 posture exactly, and says so at the
+    call site. R.4.5 permits fail-open as a configuration and forbids it as a
+    default; this is the configuration."""
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
+    vaid = issue_root(issuer)
+
+    assert issuer.revocation_status(vaid) is RevocationStatus.NOT_REVOKED
+    assert issuer.verify_vaid(vaid)
+    # And `revoke` still reaches the store the opt-in installed.
+    issuer.revoke(vaid["vaid_id"])
+    assert issuer.revocation_status(vaid) is RevocationStatus.REVOKED

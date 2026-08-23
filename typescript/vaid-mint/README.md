@@ -25,7 +25,12 @@ ESM only, and typed. Node ≥ 20.19; CommonJS consumers on that version can
 ```ts
 import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
 
-const issuer = ReferenceIssuer.ephemeral(24);
+// `assumingNothingRevoked()` is the pre-0.8.0 default, asked for BY NAME. Since
+// 0.8.0 a bare issuer's revocation store is ABSENT: it reports Unavailable and
+// `verifyVaid` fails closed until revocation state is loaded (R.4.5). This is a
+// fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
+// survive a restart. For anything that must, use `withRevocationBackend`.
+const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();
 const mint = new MintService(issuer, new InMemoryAudit());
 
 const { vaid } = await mint.mintRoot({
@@ -61,13 +66,44 @@ incomplete lineage (e.g. an empty resolver after restart) or an unreachable stor
 rejects rather than silently passing. There is no fail-open option here.
 
 Inject your own durable, restart-surviving backend via
-`ReferenceIssuer.withRevocationCheck`. What ships *by default* is a non-durable
+`ReferenceIssuer.withRevocationBackend`. What ships *by default* is a non-durable
 in-memory store, so if the process restarts and you have not wired a durable
 backend, previously revoked VAIDs become verifiable again. The seam closes the
 "no extension point" gap; it does **not** by itself make revocation durable.
 
+**Durable revocation is two stores, not one.** Durable revocation *and* durable
+lineage resolution are both host-application responsibilities. `RevocationCheck`
+answers about an already-assembled lineage; `LineageStore` records every mint and
+resolves ancestry, and a VAID's full ancestry is not recoverable from the document
+itself. Persist only the revoked set and, after a restart, every **child** VAID
+fails closed — its ancestry cannot be assembled, which is `Unavailable`, which
+fails closed (R.4.2 / R.4.5) — while every **root** VAID keeps verifying, because a
+root is trivially complete and never consults the resolver. The outage is total for
+delegated credentials and invisible for root ones, appears at restart rather than
+at deploy, and is first mistaken for a signing or clock problem.
+`RevocationBackend` takes both halves and has no single-half constructor, so that
+state cannot be reached by omitting an argument; pass `InMemoryLineageStore` as the
+second half to say "in-memory lineage, deliberately". Make the resolver durable
+first, or both in the same change — the revoked set first is the ordering that
+produces the outage. `ReferenceIssuer.withRevocationCheck` replaced only one half
+and was **removed in 0.8.0** for this reason.
+
+**Since 0.8.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
+is *absent* — never populated, so it reports `Unavailable` and `verifyVaid` returns
+`false` until state is loaded. Until 0.8.0 the default vouched `NotRevoked` over an
+empty set, which is a fail-open posture and, being non-durable, could not detect its
+own restart. R.4.5 requires that fail-open never be the default and always be named;
+`ReferenceIssuer.assumingNothingRevoked()` is that name. Minting, attenuation and
+`verifyVaidAuthenticity` are unchanged.
+
 ```ts
-import { InMemoryRevocationList, ReferenceIssuer, RevocationStatus } from 'vaid-mint';
+import {
+  InMemoryLineageStore,
+  InMemoryRevocationList,
+  ReferenceIssuer,
+  RevocationBackend,
+  RevocationStatus,
+} from 'vaid-mint';
 
 // Your own restart-surviving store. It is handed the full ordered lineage, root
 // first, and returns a three-state status — return Unavailable when the backing
@@ -86,11 +122,25 @@ const durable = {
   },
 };
 
-const issuer = ReferenceIssuer.ephemeral(1).withRevocationCheck(durable);
+// The injected backend REPLACES BOTH default stores. Both halves are required:
+// durableLineage records every mint and resolves ancestry across a restart (see
+// `LineageStore`), and without it every CHILD VAID would fail closed after a
+// restart while every root kept verifying.
+const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+  new RevocationBackend(durable, durableLineage),
+);
 
-// Or wire the seam with the shipped in-memory list before a durable backend exists:
+// Or wire the seam with the shipped in-memory stores before a durable backend
+// exists. Naming InMemoryLineageStore is how you say "in-memory lineage,
+// deliberately" — this issuer does not survive a restart, and nothing pretends it does.
 const revocations = InMemoryRevocationList.assumeNothingRevoked();
-const dev = ReferenceIssuer.ephemeral(1).withRevocationCheck(revocations);
+const dev = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+  new RevocationBackend(revocations, new InMemoryLineageStore()),
+);
+
+// Shorthand for exactly the pre-0.8.0 posture — a vouching in-memory revoked set and
+// an in-memory lineage store. Same fail-open behaviour; the difference is the name.
+const quickstart = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
 revocations.revoke(vaid.vaid_id);
 dev.verifyVaid(vaid); // false
 ```

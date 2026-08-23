@@ -17,7 +17,9 @@ import { test } from 'node:test';
 
 import {
   assembleLineage,
+  InMemoryLineageStore,
   InMemoryRevocationList,
+  RevocationBackend,
   MAX_LINEAGE_DEPTH,
   parentResolutionOf,
   parentResolutionRoot,
@@ -26,6 +28,7 @@ import {
   RevocationStatus,
   type LineageResolver,
   type Vaid,
+  verifyVaidAuthenticity,
 } from '../src/index.js';
 
 /**
@@ -55,12 +58,23 @@ function issueChild(issuer: ReferenceIssuer, parent: Vaid, agentClass: string): 
   });
 }
 
+/**
+ * An issuer whose revocation store **vouches** over an empty set — the pre-0.8.0
+ * default, now asked for by name (R.4.5: fail-open may be configured, never
+ * defaulted). Used by every scenario whose subject is something OTHER than the
+ * default posture; a bare issuer is absent and would answer `Unavailable` before the
+ * property under test could be reached. Mirrors the Rust and Python `vouchingIssuer`.
+ */
+function vouchingIssuer(): ReferenceIssuer {
+  return ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+}
+
 // ── The four required cases ───────────────────────────────────────────────────
 
 test('TEST 1 — BYPASS: revoking a parent rejects the child attenuated from it', () => {
   // The case a leaf-only boolean check got wrong, and the reason lineage
   // checking exists (R.4.4).
-  const issuer = ReferenceIssuer.ephemeral(1);
+  const issuer = vouchingIssuer();
   const root = issueRoot(issuer, 'root');
   const child = issueChild(issuer, root, 'child');
 
@@ -106,8 +120,8 @@ test('TEST 2 — RESTART TRUNCATION: an unresolvable lineage is Unavailable, nev
 });
 
 test('TEST 3 — STORE FAILURE: an unreachable store is Unavailable and rejects', () => {
-  const issuer = ReferenceIssuer.ephemeral(1).withRevocationCheck(
-    InMemoryRevocationList.unavailable(),
+  const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+    new RevocationBackend(InMemoryRevocationList.unavailable(), new InMemoryLineageStore()),
   );
   const vaid = issueRoot(issuer, 'root');
 
@@ -126,7 +140,7 @@ test('TEST 3 — STORE FAILURE: an unreachable store is Unavailable and rejects'
 test('TEST 4 — ROOTLESS: a clean rootless VAID is NotRevoked and verifies', () => {
   // The case tests 1 and 2 must not have broken: incomplete assembly (test 2)
   // and a genuine root (here) must land on different states.
-  const issuer = ReferenceIssuer.ephemeral(1);
+  const issuer = vouchingIssuer();
   const vaid = issueRoot(issuer, 'root');
 
   assert.equal(
@@ -145,19 +159,19 @@ test('cross-language scenarios — the (scenario → status) table all three lan
 
   // clean_root: rootless, nothing revoked          -> NotRevoked
   {
-    const issuer = ReferenceIssuer.ephemeral(1);
+    const issuer = vouchingIssuer();
     assert.equal(issuer.revocationStatus(issueRoot(issuer, 'root')), RevocationStatus.NotRevoked);
   }
   // revoked_root: rootless, itself revoked         -> Revoked
   {
-    const issuer = ReferenceIssuer.ephemeral(1);
+    const issuer = vouchingIssuer();
     const root = issueRoot(issuer, 'root');
     issuer.revoke(root.vaid_id);
     assert.equal(issuer.revocationStatus(root), RevocationStatus.Revoked);
   }
   // child_parent_revoked: child of a revoked root  -> Revoked (R.4.4)
   {
-    const issuer = ReferenceIssuer.ephemeral(1);
+    const issuer = vouchingIssuer();
     const root = issueRoot(issuer, 'root');
     const child = issueChild(issuer, root, 'child');
     issuer.revoke(root.vaid_id);
@@ -165,23 +179,36 @@ test('cross-language scenarios — the (scenario → status) table all three lan
   }
   // child_clean: child of a clean root             -> NotRevoked
   {
-    const issuer = ReferenceIssuer.ephemeral(1);
+    const issuer = vouchingIssuer();
     const root = issueRoot(issuer, 'root');
     const child = issueChild(issuer, root, 'child');
     assert.equal(issuer.revocationStatus(child), RevocationStatus.NotRevoked);
   }
   // child_parent_unresolvable: restart truncation  -> Unavailable (R.4.2)
   {
-    const issuer = ReferenceIssuer.ephemeral(1);
+    const issuer = vouchingIssuer();
     const root = issueRoot(issuer, 'root');
     const child = issueChild(issuer, root, 'child');
     issuer.clearLineage();
     assert.equal(issuer.revocationStatus(child), RevocationStatus.Unavailable);
   }
+  // default_bare_issuer: NOTHING configured        -> Unavailable (R.4.5)
+  //
+  // The 0.8.0 flip, pinned as a cross-language agreement rather than left to each
+  // implementation's constructor. A bare issuer's revocation store is ABSENT: it has
+  // not been populated, cannot vouch, and says so. Verification fails closed. Before
+  // 0.8.0 this row read NotRevoked, because the default vouched over an empty set and
+  // could not detect its own restart.
+  {
+    const issuer = ReferenceIssuer.ephemeral(1);
+    const root = issueRoot(issuer, 'root');
+    assert.equal(issuer.revocationStatus(root), RevocationStatus.Unavailable);
+    assert.equal(issuer.verifyVaid(root), false, 'fails closed out of the box');
+  }
   // store_unavailable: store unreachable           -> Unavailable (R.4.3)
   {
-    const issuer = ReferenceIssuer.ephemeral(1).withRevocationCheck(
-      InMemoryRevocationList.unavailable(),
+    const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+      new RevocationBackend(InMemoryRevocationList.unavailable(), new InMemoryLineageStore()),
     );
     assert.equal(issuer.revocationStatus(issueRoot(issuer, 'root')), RevocationStatus.Unavailable);
   }
@@ -278,7 +305,9 @@ test('an injected durable-style backend is the one consulted at verification', (
     checkLineage: (): RevocationStatus =>
       reachable ? RevocationStatus.NotRevoked : RevocationStatus.Unavailable,
   };
-  const issuer = ReferenceIssuer.ephemeral(1).withRevocationCheck(backend);
+  const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+    new RevocationBackend(backend, new InMemoryLineageStore()),
+  );
   const vaid = issueRoot(issuer, 'root');
 
   assert.equal(issuer.verifyVaid(vaid), true);
@@ -294,4 +323,41 @@ test('an injected durable-style backend is the one consulted at verification', (
     true,
     'revoking through the built-in store has no effect once a backend is injected',
   );
+});
+
+// ── the 0.8.0 default and its named opt-in ───────────────────────────────────
+
+test('THE 0.8.0 DEFAULT: a bare issuer is absent and fails closed', () => {
+  // The revocation store is ABSENT, not vouching: it reports Unavailable and
+  // verification fails closed (R.4.5). Until 0.8.0 this returned NotRevoked and true.
+  const issuer = ReferenceIssuer.ephemeral(1);
+  const vaid = issueRoot(issuer, 'root');
+
+  assert.equal(
+    issuer.revocationStatus(vaid),
+    RevocationStatus.Unavailable,
+    'a bare issuer has not been told anything about revocation and must not pretend otherwise',
+  );
+  assert.equal(issuer.verifyVaid(vaid), false, 'fails closed (R.4.5)');
+  // The paired assertion matters as much as the first: the VAID is still AUTHENTIC.
+  // What changed is standing, not the document — an evaluator who sees verifyVaid
+  // return false must be able to tell that apart from a signing failure.
+  assert.equal(
+    verifyVaidAuthenticity(issuer.kernelPublicKey(), vaid),
+    true,
+    'still authentic — only STANDING failed',
+  );
+});
+
+test('assumingNothingRevoked restores the pre-0.8.0 posture, by name', () => {
+  // R.4.5 permits fail-open as a configuration and forbids it as a default; this is
+  // the configuration.
+  const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+  const vaid = issueRoot(issuer, 'root');
+
+  assert.equal(issuer.revocationStatus(vaid), RevocationStatus.NotRevoked);
+  assert.equal(issuer.verifyVaid(vaid), true);
+  // And `revoke` still reaches the store the opt-in installed.
+  issuer.revoke(vaid.vaid_id);
+  assert.equal(issuer.revocationStatus(vaid), RevocationStatus.Revoked);
 });
