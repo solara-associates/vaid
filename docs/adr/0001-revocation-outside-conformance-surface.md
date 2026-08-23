@@ -22,7 +22,7 @@ Two pieces of work are now committed:
 
 These collide on timing. A TypeScript port cannot begin against a stable target until it is known whether a conforming implementation must reproduce revocation semantics. If revocation is inside the conformance surface, new vectors must be designed and frozen before the port starts.
 
-A further constraint: as of this date no party outside Solara has built anything on VAID. The first named evaluator, Joel, returns on 4 August 2026 and is expected to read and assess rather than integrate. Any revocation format frozen before that point would be frozen without having survived contact with a single external implementer.
+A further constraint: as of this date no party outside Solara has built anything on VAID. The first external evaluator, expected 4 August 2026, will read and assess rather than integrate. Any revocation format frozen before that point would be frozen without having survived contact with a single external implementer.
 
 This shapes what has to exist first. What a first-time evaluator meets on 4 August is the specification, not the implementation. The revocation gap is discoverable in the first ten minutes of a serious read. Whether it costs credibility depends entirely on whether the spec has already named it as a deliberate decision.
 
