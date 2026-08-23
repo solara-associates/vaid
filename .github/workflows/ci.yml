@@ -559,6 +559,12 @@ jobs:
         run: node scripts/verify-capabilities.mjs
       - name: Verify docs/claims-register.json freshness (age budget + backing)
         run: node scripts/verify-claims.mjs
+      # The spec was the UNGUARDED half of this pair. capabilities.json could not
+      # go stale without turning this job red; docs/spec/*.md could only go stale,
+      # and R.6's status table did — for four weeks and five minor versions, while
+      # everything here stayed green. Local, no network.
+      - name: Verify spec status claims match the implementation (R.6 and friends)
+        run: node scripts/verify-spec-status.mjs
       # Local, no network: every package must agree WITH ITSELF (manifest vs code
       # constant vs changelog). Runs BEFORE the registry check — a package that
       # contradicts itself makes the registry answer meaningless.
