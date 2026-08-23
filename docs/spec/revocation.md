@@ -200,20 +200,42 @@ waiting.
 Stated plainly because it is the current state and an evaluator will determine it from
 the source within minutes.
 
-| | 0.1.2 (current) | 0.2 (planned) |
+| | 0.1.2 (superseded) | 0.2 onward (current: 0.7.0) |
 |---|---|---|
-| Seam present | Yes, Rust and Python | Yes, all languages |
+| Seam present | Yes, Rust and Python | Yes, Rust, Python and TypeScript |
 | Return type | Boolean | Three-state per R.4.3 |
 | Lineage-aware | No, leaf identifier only | Yes, per R.4.2 and R.4.4 |
 | Assembly failure detected | No | Yes |
 | Behaviour on store failure | Not representable | Fail closed per R.4.5 |
-| Revocation store durability | In-memory only | See note |
-| Lineage store durability | In-memory only, issuer-local | See note |
+| Revocation store durability | In-memory only | In-memory only — unchanged, see note |
+| Lineage store durability | In-memory only, issuer-local | In-memory only, issuer-local — unchanged, see note |
 
-**The 0.1.2 seam does not satisfy R.4.** It accepts a single identifier and returns a
-boolean, so revocation of a parent does not affect an attenuated child, and a failed
-check is indistinguishable from a clean one. Deployments on 0.1.2 should treat
-revocation as covering root VAIDs only, on a single issuer process, with no restart.
+**The shipped seam satisfies R.4.** The three-state, lineage-aware seam landed in
+`vaid-mint` 0.2.0 on 2026-07-27 as a deliberate breaking change with no compatibility
+shim, and it has been the only seam since; it is published on crates.io, PyPI and npm.
+The right-hand column is therefore what you get by installing the package, not a
+roadmap. The rows did not all change on one date, and the table says so rather than
+implying a single flip:
+
+- **Return type, lineage-awareness, assembly-failure detection and store-failure
+  behaviour** changed at 0.2.0 (2026-07-27), when the boolean leaf-only check was
+  replaced wholesale. ADR-0001 records the decision to ship no shim: two traits named
+  `RevocationCheck` with different safety properties was the outcome being avoided.
+- **Seam present in all three languages** completed at 0.3.0 on npm (2026-07-30), when
+  TypeScript became the third reference implementation. Before that date the
+  right-hand column was accurate for Rust and Python only.
+
+**The two durability rows did not change, and are not scheduled to.** Both stores are
+still in-memory in every published version. This is the one place where the earlier
+edition of this table was right and remains right, and it is called out because the
+rest of the row set moving could otherwise be read as durability having moved with it.
+
+**0.1.2 is retained above as history, not as deployment advice.** That seam accepted a
+single identifier and returned a boolean, so revocation of a parent did not affect an
+attenuated child and a failed check was indistinguishable from a clean one. It has not
+been the current release since 2026-07-27 and no supported deployment runs it; the
+left-hand column exists so that a reader holding an older copy of this document can
+see what changed and when.
 
 Durable backing stores are a host-application responsibility in all versions. The
 reference implementation ships in-memory stores for development. R.4.6 governs how
