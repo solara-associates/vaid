@@ -3,7 +3,13 @@
 **Date:** 2026-08-23
 **Repo:** `vaid`
 **Raised by:** on-premise deployment scoping (`solara/docs/findings/on-premise-deployment-scope.md` §3.3)
-**Status:** OPEN — one spec edit needed. **No code change proposed.**
+**Status:** OPEN. The spec edit landed (R.6, 2026-08-23) and is guarded by
+`scripts/verify-spec-status.mjs`. The default itself is **unchanged**, as this
+finding directed. The product question it declined to take has since been priced
+against the code — see `docs/findings/the-fail-open-default-priced.md`, which
+measures the flip's blast radius and recommends it at 0.8.0 with a named one-line
+opt-in. That is a recommendation awaiting a release decision, not a change.
+Original status: OPEN — one spec edit needed. **No code change proposed.**
 
 ---
 

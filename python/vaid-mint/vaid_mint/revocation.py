@@ -233,3 +233,124 @@ class InMemoryRevocationList:
             if any(vaid_id in self._revoked for vaid_id in lineage):
                 return RevocationStatus.REVOKED
             return RevocationStatus.NOT_REVOKED
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The durable seam (spec R.4.6). Two stores, injected as one.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Durability under R.4.6 is TWO stores, not one — the revoked set and the lineage
+# resolver — and getting exactly one of them durable is an outage, not a hole.
+# Persist the revoked set, leave the resolver in memory, restart:
+#
+#   - every ROOT VAID keeps verifying (trivially complete under R.4.2, no
+#     resolution needed, the durable set answers cleanly);
+#   - every CHILD VAID stops verifying (its ``parent_vaid`` is now unresolvable,
+#     so assembly is incomplete → UNAVAILABLE → fails closed under R.4.5).
+#
+# Total for delegated credentials, invisible for root ones, arriving at restart
+# rather than at deploy, and first diagnosed as a signing or clock problem because
+# revocation is the last subsystem anyone suspects when nothing was revoked. The
+# system is choosing an outage over a security hole, correctly — but it is the
+# wrong outage to have to diagnose from scratch.
+#
+# Until 0.7.0 that half-state was not merely *reachable*, it was the ONLY
+# reachable state: ``with_revocation_check`` injected the revoked set, and no
+# injection point for the resolver existed at all. A self-hoster following the
+# documented path built exactly the half that produces the outage.
+#
+# :class:`RevocationBackend` closes that by construction. It cannot be built
+# without both halves, and it is the only way to replace either, so the half-state
+# is no longer reachable **by omission** — only by explicitly naming
+# :class:`InMemoryLineageStore` as the durable resolver's replacement, which is a
+# legitimate single-process choice and is visible at the call site.
+#
+# The two halves stay separate objects. A single protocol carrying both methods
+# would make the half-state unrepresentable too, and would violate R.4.1: "the
+# check does not perform lookups and is not given the means to."
+
+
+@runtime_checkable
+class LineageStore(Protocol):
+    """The write half of the lineage resolver (spec R.4.2), alongside
+    :class:`LineageResolver`'s ``resolve_parent``.
+
+    A read-only durable resolver is inert: nothing would ever populate it, because
+    the issuer records every mint into its own map. A durable resolver therefore
+    needs :meth:`record` — the method whose absence made durable lineage
+    unimplementable from outside the package.
+
+    Implementations MUST record roots as ``None`` rather than omitting them. An
+    unrecorded root is *unknown*, and a store that omits roots turns every root
+    VAID into ``UNAVAILABLE`` at verification.
+    """
+
+    def record(self, vaid_id: str, parent: str | None) -> None:
+        """Record one mint: ``parent`` is the parent id for a child and ``None``
+        for a root. Called on every successful mint."""
+        ...
+
+    def resolve_parent(self, vaid_id: str) -> ParentResolution:
+        """As :class:`LineageResolver`."""
+        ...
+
+
+class InMemoryLineageStore:
+    """The reference lineage store: an in-process dict, non-durable, empty after
+    restart. Extracted from :class:`~vaid_mint.issuer.ReferenceIssuer` so that the
+    thing a durable store replaces is a named, injectable object rather than a
+    private attribute.
+
+    Records roots as ``None`` and children as their parent id, which is what lets
+    :meth:`resolve_parent` tell a **known root** from an **unknown** id — the
+    distinction spec R.4.2 turns on.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._entries: dict[str, str | None] = {}
+
+    def record(self, vaid_id: str, parent: str | None) -> None:
+        with self._lock:
+            self._entries[vaid_id] = parent
+
+    def resolve_parent(self, vaid_id: str) -> ParentResolution:
+        with self._lock:
+            if vaid_id not in self._entries:
+                return ParentResolution.unknown()
+            parent = self._entries[vaid_id]
+        return ParentResolution.root() if parent is None else ParentResolution.of_parent(parent)
+
+    def clear(self) -> None:
+        """Drop every recorded mint, modelling the loss of resolver state across a
+        process restart. Afterwards any VAID carrying a ``parent_vaid`` resolves to
+        ``UNAVAILABLE`` while a genuinely rootless VAID still verifies. An ops/test
+        primitive."""
+        with self._lock:
+            self._entries.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+
+@dataclass(frozen=True)
+class RevocationBackend:
+    """Both halves of durable revocation, injected together (spec R.4.6).
+
+    There is no constructor that takes one half. That is the point: the failure
+    this type exists to prevent is not a wrong value, it is a **missing second
+    argument**, and a missing argument is the one class of mistake a type can
+    refuse outright::
+
+        issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_backend(
+            RevocationBackend(check=durable_revoked, lineage=durable_lineage)
+        )
+
+    Ordering note for anyone migrating a live deployment: make the **resolver**
+    durable first, or both in the same change. Doing the revoked set first is the
+    ordering that produces the delegated-credential outage described above.
+    """
+
+    check: RevocationCheck
+    lineage: LineageStore

@@ -259,3 +259,125 @@ export class InMemoryRevocationList implements RevocationCheck {
       : RevocationStatus.NotRevoked;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The durable seam (spec R.4.6). Two stores, injected as one.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Durability under R.4.6 is TWO stores, not one — the revoked set and the lineage
+// resolver — and getting exactly one of them durable is an outage, not a hole.
+// Persist the revoked set, leave the resolver in memory, restart:
+//
+//   - every ROOT VAID keeps verifying (trivially complete under R.4.2, no
+//     resolution needed, the durable set answers cleanly);
+//   - every CHILD VAID stops verifying (its `parent_vaid` is now unresolvable, so
+//     assembly is incomplete → Unavailable → fails closed under R.4.5).
+//
+// Total for delegated credentials, invisible for root ones, arriving at restart
+// rather than at deploy, and first diagnosed as a signing or clock problem because
+// revocation is the last subsystem anyone suspects when nothing was revoked. The
+// system is choosing an outage over a security hole, correctly — but it is the
+// wrong outage to have to diagnose from scratch.
+//
+// Until 0.7.0 that half-state was not merely *reachable*, it was the ONLY
+// reachable state: the removed `withRevocationCheck` injected the revoked set, and no
+// injection point for the resolver existed at all. A self-hoster following the
+// documented path built exactly the half that produces the outage.
+//
+// `RevocationBackend` closes that by construction. It cannot be built without both
+// halves, and it is the only way to replace either, so the half-state is no longer
+// reachable **by omission** — only by explicitly naming `InMemoryLineageStore` as
+// the durable resolver's replacement, which is a legitimate single-process choice
+// and is visible at the call site.
+//
+// The two halves stay separate objects. A single interface carrying both methods
+// would make the half-state unrepresentable too, and would violate R.4.1: "the
+// check does not perform lookups and is not given the means to."
+
+/**
+ * The write half of the lineage resolver (spec R.4.2).
+ *
+ * {@link LineageResolver} is read-only, and a read-only durable resolver is inert:
+ * nothing would ever populate it, because the issuer records every mint into its
+ * own map. A durable resolver therefore needs {@link record} — the method whose
+ * absence made durable lineage unimplementable from outside the package.
+ *
+ * Implementations MUST record roots as `null` rather than omitting them. An
+ * unrecorded root is *unknown*, and a store that omits roots turns every root VAID
+ * into `Unavailable` at verification.
+ */
+export interface LineageStore extends LineageResolver {
+  /**
+   * Record one mint: `parent` is the parent id for a child and `null` for a root.
+   * Called on every successful mint, before the document is returned.
+   */
+  record(vaidId: VaidId, parent: VaidId | null): void;
+}
+
+/**
+ * The reference lineage store: an in-process map, non-durable, empty after
+ * restart. Extracted from `ReferenceIssuer` so that the thing a durable store
+ * replaces is a named, injectable object rather than a private field.
+ *
+ * Records roots as `null` and children as their parent, which is what lets
+ * {@link resolveParent} tell a **known root** from an **unknown** id — the
+ * distinction spec R.4.2 turns on.
+ */
+export class InMemoryLineageStore implements LineageStore {
+  readonly #entries = new Map<VaidId, VaidId | null>();
+
+  record(vaidId: VaidId, parent: VaidId | null): void {
+    this.#entries.set(vaidId, parent);
+  }
+
+  resolveParent(vaidId: VaidId): ParentResolution {
+    if (!this.#entries.has(vaidId)) return parentResolutionUnknown();
+    const parent = this.#entries.get(vaidId) ?? null;
+    return parent === null ? parentResolutionRoot() : parentResolutionOf(parent);
+  }
+
+  /**
+   * Drop every recorded mint, modelling the loss of resolver state across a
+   * process restart. Afterwards any VAID carrying a `parent_vaid` resolves to
+   * `Unavailable` while a genuinely rootless VAID still verifies. An ops/test
+   * primitive.
+   */
+  clear(): void {
+    this.#entries.clear();
+  }
+
+  /** Number of mints recorded. Diagnostic only. */
+  get size(): number {
+    return this.#entries.size;
+  }
+}
+
+/**
+ * Both halves of durable revocation, injected together (spec R.4.6).
+ *
+ * There is no constructor that takes one half. That is the point: the failure this
+ * type exists to prevent is not a wrong value, it is a **missing second
+ * argument**, and a missing argument is the one class of mistake a type can refuse
+ * outright.
+ *
+ * ```ts
+ * const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+ *   new RevocationBackend(durableRevoked, durableLineage),
+ * );
+ * ```
+ *
+ * Ordering note for anyone migrating a live deployment: make the **resolver**
+ * durable first, or both in the same change. Doing the revoked set first is the
+ * ordering that produces the delegated-credential outage described above.
+ */
+export class RevocationBackend {
+  /**
+   * Both halves. `check` answers about an assembled lineage; `lineage` records
+   * mints and resolves ancestry. They are separate objects and neither is handed
+   * the other (R.4.1).
+   */
+  constructor(
+    readonly check: RevocationCheck,
+    readonly lineage: LineageStore,
+  ) {}
+}
