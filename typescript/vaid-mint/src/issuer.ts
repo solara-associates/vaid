@@ -14,7 +14,11 @@
  * - **Non-durable revocation, but a pluggable seam.** The default in-memory
  *   revocation store does not survive restart. A self-hoster injects a durable
  *   backend via the three-state {@link RevocationCheck} seam
- *   ({@link ReferenceIssuer.withRevocationCheck}) without patching the package.
+ *   ({@link ReferenceIssuer.withRevocationBackend}, which requires BOTH durable
+ *   halves) without patching the package. The default store is **absent**, so
+ *   verification fails closed out of the box;
+ *   {@link ReferenceIssuer.assumingNothingRevoked} asks for the pre-0.8.0 vouching
+ *   posture by name.
  *   See `docs/spec/revocation.md` R.4 and the README's "Trust model" section.
  * - **The issuer is the lineage resolver.** It records **every** mint in an
  *   in-memory map — roots with no parent, children with their parent — so it can
@@ -60,12 +64,12 @@ import {
 } from './document.js';
 import {
   assembleLineage,
+  InMemoryLineageStore,
   InMemoryRevocationList,
-  parentResolutionOf,
-  parentResolutionRoot,
-  parentResolutionUnknown,
+  RevocationBackend,
   RevocationStatus,
   type LineageResolver,
+  type LineageStore,
   type ParentResolution,
   type RevocationCheck,
 } from './revocation.js';
@@ -136,17 +140,25 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    */
   readonly #trustDomain: string;
   /**
-   * Every minted VAID: the parent id for a child, `null` for a root. Recording
-   * roots (not just children) is what lets {@link resolveParent} distinguish a
-   * known root from an id it has never seen — the crux of spec R.4.2.
+   * The built-in in-memory lineage store {@link clearLineage} mutates. It is the
+   * default `#lineage`; injecting a backend leaves this in place but unconsulted.
    */
-  readonly #lineage = new Map<VaidId, VaidId | null>();
+  readonly #defaultLineage = new InMemoryLineageStore();
+  /**
+   * The lineage store: written on every mint, read by {@link resolveParent} to
+   * assemble ancestry at verification. Defaults to `#defaultLineage` (in-memory,
+   * empty after restart); replaced — **only together with the revocation check** —
+   * by {@link withRevocationBackend}. Recording roots (not just children) is what
+   * lets {@link resolveParent} distinguish a known root from an id it has never
+   * seen — the crux of spec R.4.2.
+   */
+  #lineage: LineageStore = this.#defaultLineage;
   /**
    * The built-in in-memory store {@link revoke} mutates. It is the default
    * `#revocation`; injecting a custom check leaves this in place but unconsulted
    * (revoke through the injected backend instead).
    */
-  readonly #defaultStore: InMemoryRevocationList;
+  #defaultStore: InMemoryRevocationList;
   /** The revocation store consulted in {@link verifyVaid}. */
   #revocation: RevocationCheck;
 
@@ -165,15 +177,24 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
     this.#kernelPublicKey = ed25519PublicKey(kernelSeed);
     this.#vaidTtlHours = vaidTtlHours;
     this.#trustDomain = trustDomain;
-    // Default revocation posture: assume-nothing-revoked, so a live issuer
-    // vouches "nothing revoked yet" and a fresh, un-revoked VAID verifies out of
-    // the box rather than failing closed on Unavailable. RESTART BEHAVIOUR: this
-    // store is non-durable and cannot detect its own restart — after a restart it
-    // is reconstructed empty and again vouches NotRevoked, so a VAID revoked
-    // before the restart verifies clean. For restart-safety, inject a durable
-    // RevocationCheck, or hold the store absent until revocation state is
-    // re-loaded. See `docs/spec/revocation.md` R.4.6.
-    this.#defaultStore = InMemoryRevocationList.assumeNothingRevoked();
+    // Default revocation posture (0.8.0 onward): ABSENT. The store has not been
+    // populated, cannot vouch for anything, and reports Unavailable, so
+    // verification FAILS CLOSED out of the box (R.4.5).
+    //
+    // Until 0.8.0 this was `assumeNothingRevoked()` — a store that vouched
+    // NotRevoked over an empty set so a fresh issuer verified immediately. Being
+    // non-durable it could not detect its own restart, so a VAID revoked before a
+    // restart verified clean afterwards: a fail-open posture, reached by
+    // assumption, arrived at by default. R.4.5 requires that fail-open never BE the
+    // default and always be named; the reference now obeys that rather than relying
+    // on R.4.6's narrower carve-out for it.
+    //
+    // Three ways forward for a caller: inject a durable backend
+    // (`withRevocationBackend`); load revocation state before verifying, so the
+    // absent store fails closed only while it warms; or ask for the old posture BY
+    // NAME with `assumingNothingRevoked()`. See `docs/spec/revocation.md` R.4.5 and
+    // R.4.6.
+    this.#defaultStore = new InMemoryRevocationList();
     this.#revocation = this.#defaultStore;
   }
 
@@ -213,10 +234,61 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * {@link revoke} store stays but is no longer consulted; revoke through the
    * injected backend instead. Returns `this` so it chains.
    */
-  withRevocationCheck(revocationCheck: RevocationCheck): this {
-    this.#revocation = revocationCheck;
+  /**
+   * Replace **both** durable halves at once (spec R.4.6): the revocation check
+   * consulted at verification, and the lineage store written on every mint and
+   * read to assemble ancestry. The built-in {@link revoke} and
+   * {@link clearLineage} stores stay but are no longer consulted; revoke through
+   * the injected backend instead. Returns `this` so it chains.
+   *
+   * **Lineage already recorded is NOT copied into the injected store.** Install
+   * the backend before the first mint — an issuer that has minted into one store
+   * and then swaps in another has ancestry split across two places, and the half
+   * in the abandoned store resolves to *unknown*, i.e. `Unavailable`, for the rest
+   * of the process's life.
+   *
+   * This is the only way to replace either half, and {@link RevocationBackend} has
+   * no single-half constructor, so "revoked set durable, lineage not" — the
+   * configuration whose symptom is that every child credential fails and every
+   * root keeps working — cannot be reached by omitting an argument.
+   */
+  withRevocationBackend(backend: RevocationBackend): this {
+    this.#revocation = backend.check;
+    this.#lineage = backend.lineage;
     return this;
   }
+
+  /**
+   * Ask for the pre-0.8.0 default **by name**: an in-memory revocation store that
+   * vouches "nothing is revoked" over an empty set, so a fresh issuer verifies
+   * immediately.
+   *
+   * This is a **fail-open posture**. The store is non-durable and cannot detect its
+   * own restart: after a restart it is reconstructed empty and again vouches
+   * `NotRevoked`, so a VAID revoked before the restart verifies clean. Fine for
+   * local development, quickstarts and tests; not for anything that must survive a
+   * restart.
+   *
+   * It exists because R.4.5 permits fail-open as an explicit configuration and
+   * forbids it as a default — *"it MUST NOT be the default; it MUST be named to
+   * state what it does rather than obscure it."* Until 0.8.0 this posture was the
+   * default and the name appeared nowhere at a call site. It is the same behaviour;
+   * the difference is that asking for it is now visible in the code that asks.
+   *
+   * The lineage store is untouched and stays in-memory. It has no fail-open posture
+   * to opt into: an unrecorded id is *unknown*, which is `Unavailable`, which fails
+   * closed.
+   *
+   * ```ts
+   * const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+   * ```
+   */
+  assumingNothingRevoked(): this {
+    this.#defaultStore = InMemoryRevocationList.assumeNothingRevoked();
+    this.#revocation = this.#defaultStore;
+    return this;
+  }
+
 
   /** The kernel public key (raw 32 bytes) a verifier binds this issuer's VAIDs against. */
   kernelPublicKey(): Uint8Array {
@@ -279,7 +351,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * Revoke a VAID in the built-in in-memory store. A revoked VAID — and every
    * VAID attenuated from it (R.4.4) — fails {@link verifyVaid}. Does not survive
    * restart. Has no effect on verification if a custom {@link RevocationCheck}
-   * was injected via {@link withRevocationCheck}; revoke through that backend
+   * was injected via {@link withRevocationBackend}; revoke through that backend
    * instead.
    */
   revoke(vaidId: VaidId): void {
@@ -293,7 +365,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * genuinely rootless VAID still verifies. An ops/test primitive.
    */
   clearLineage(): void {
-    this.#lineage.clear();
+    this.#defaultLineage.clear();
   }
 
   /**
@@ -304,9 +376,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * than mistaking it for a root.
    */
   resolveParent(vaidId: VaidId): ParentResolution {
-    if (!this.#lineage.has(vaidId)) return parentResolutionUnknown();
-    const parent = this.#lineage.get(vaidId) ?? null;
-    return parent === null ? parentResolutionRoot() : parentResolutionOf(parent);
+    return this.#lineage.resolveParent(vaidId);
   }
 
   /**
@@ -356,7 +426,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
     // Record EVERY mint — roots as `null`, children as their parent — so the
     // resolver can distinguish a known root from an id it has never seen. This is
     // the bookkeeping spec R.4.2 depends on; it changes no document bytes.
-    this.#lineage.set(vaidId, attributes.parentVaid);
+    this.#lineage.record(vaidId, attributes.parentVaid);
     return vaid;
   }
 

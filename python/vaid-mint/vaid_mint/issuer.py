@@ -9,10 +9,13 @@ leaves to the self-hoster:
   ephemerally (:meth:`ReferenceIssuer.ephemeral`) or supplied by the caller
   (:meth:`ReferenceIssuer.from_seed`). A self-hoster persists and protects that
   key however they choose.
-- **Non-durable revocation, but a pluggable seam.** The default in-memory
-  revocation store does not survive restart. A self-hoster injects a durable
+- **Non-durable revocation, a pluggable seam, and a fail-CLOSED default.** The in-memory
+  revocation and lineage stores do not survive restart. A self-hoster injects a durable
   backend via the three-state :class:`~vaid_mint.revocation.RevocationCheck` seam
-  (:meth:`ReferenceIssuer.with_revocation_check`) without patching the package. See
+  (:meth:`ReferenceIssuer.with_revocation_backend`, which requires BOTH durable
+  halves) without patching the package. The default store is **absent**, so
+  verification fails closed out of the box; :meth:`ReferenceIssuer.assuming_nothing_revoked`
+  asks for the pre-0.8.0 vouching posture by name. See
   ``docs/spec/revocation.md`` R.4 and the package README's "Trust model" section.
 - **The issuer is the lineage resolver.** It records **every** mint in an in-memory
   map — roots with no parent, children with their parent — so it can tell a known
@@ -51,8 +54,11 @@ from vaid_mint.document import (
     is_expired,
 )
 from vaid_mint.revocation import (
+    InMemoryLineageStore,
     InMemoryRevocationList,
+    LineageStore,
     ParentResolution,
+    RevocationBackend,
     RevocationCheck,
     RevocationStatus,
     assemble_lineage,
@@ -94,21 +100,38 @@ class ReferenceIssuer:
         self._trust_domain = trust_domain
         self._kernel_key = kernel_key
         self._vaid_ttl_hours = vaid_ttl_hours
-        # Every minted VAID: parent id for a child, ``None`` for a root. Recording
-        # roots (not just children) is what lets :meth:`resolve_parent` distinguish
-        # a known root from an unknown id — the crux of spec R.4.2.
-        self._lineage: dict[str, str | None] = {}
+        # The lineage half of the R.4.6 default: in-process, empty after restart.
+        # This is the store that had no injection point at all before 0.7.0 — see
+        # :class:`~vaid_mint.revocation.RevocationBackend`. Recording roots (not
+        # just children) is what lets :meth:`resolve_parent` distinguish a known
+        # root from an unknown id — the crux of spec R.4.2.
+        self._default_lineage = InMemoryLineageStore()
+        # The lineage store written on every mint and read to assemble ancestry;
+        # replaced — only together with the revocation check — by
+        # :meth:`with_revocation_backend`.
+        self._lineage: LineageStore = self._default_lineage
         # The built-in store :meth:`revoke` mutates; the default ``_revocation``.
-        # assume-nothing-revoked, so a live issuer vouches "nothing revoked yet" and
-        # a fresh, un-revoked VAID verifies out of the box. RESTART BEHAVIOUR: this
-        # store is non-durable and cannot detect its own restart — after a restart it
-        # is reconstructed empty and again vouches NOT_REVOKED, so a VAID revoked
-        # before the restart verifies clean. For restart-safety, inject a durable
-        # RevocationCheck, or hold the store absent until revocation state is
-        # re-loaded. See ``docs/spec/revocation.md`` R.4.6.
-        self._store = InMemoryRevocationList.assume_nothing_revoked()
+        #
+        # Default revocation posture (0.8.0 onward): ABSENT. The store has not been
+        # populated, cannot vouch for anything, and reports UNAVAILABLE, so
+        # verification FAILS CLOSED out of the box (R.4.5).
+        #
+        # Until 0.8.0 this was ``assume_nothing_revoked()`` — a store that vouched
+        # NOT_REVOKED over an empty set so a fresh issuer verified immediately. Being
+        # non-durable it could not detect its own restart, so a VAID revoked before a
+        # restart verified clean afterwards: a fail-open posture, reached by
+        # assumption, arrived at by default. R.4.5 requires that fail-open never BE
+        # the default and always be named; the reference now obeys that rather than
+        # relying on R.4.6's narrower carve-out for it.
+        #
+        # Three ways forward for a caller: inject a durable backend
+        # (:meth:`with_revocation_backend`); load revocation state before verifying,
+        # so the absent store fails closed only while it warms; or ask for the old
+        # posture BY NAME with :meth:`assuming_nothing_revoked`. See
+        # ``docs/spec/revocation.md`` R.4.5 and R.4.6.
+        self._store = InMemoryRevocationList()
         # The revocation store consulted in ``verify_vaid``; replaced by
-        # :meth:`with_revocation_check`.
+        # :meth:`with_revocation_backend`.
         self._revocation: RevocationCheck = self._store
 
     # ── constructors mirroring the Rust ones ──
@@ -123,18 +146,63 @@ class ReferenceIssuer:
         """Build from a raw 32-byte Ed25519 seed — for deterministic vectors."""
         return cls(Ed25519PrivateKey.from_private_bytes(seed), vaid_ttl_hours, trust_domain)
 
-    def with_revocation_check(self, revocation_check: RevocationCheck) -> "ReferenceIssuer":
-        """Replace the revocation store consulted at verification with an injected
-        :class:`~vaid_mint.revocation.RevocationCheck` — e.g. a durable,
-        restart-surviving backend that returns ``UNAVAILABLE`` when its store is
-        unreachable. The built-in :meth:`revoke` store stays but is no longer
-        consulted; revoke through the injected backend instead.
+    def with_revocation_backend(self, backend: RevocationBackend) -> "ReferenceIssuer":
+        """Replace **both** durable halves at once (spec R.4.6): the revocation
+        check consulted at verification, and the lineage store written on every
+        mint and read to assemble ancestry. The built-in :meth:`revoke` and
+        :meth:`clear_lineage` stores stay but are no longer consulted; revoke
+        through the injected backend instead.
+
+        **Lineage already recorded is NOT copied into the injected store.** Install
+        the backend before the first mint — an issuer that has minted into one
+        store and then swaps in another has ancestry split across two places, and
+        the half in the abandoned store resolves to *unknown*, i.e. ``UNAVAILABLE``,
+        for the rest of the process's life.
+
+        This is the only way to replace either half, and
+        :class:`~vaid_mint.revocation.RevocationBackend` has no single-half
+        constructor, so "revoked set durable, lineage not" — the configuration
+        whose symptom is that every child credential fails and every root keeps
+        working — cannot be reached by omitting an argument.
 
         Returns ``self`` so it chains::
 
-            issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_check(check)
+            issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_backend(
+                RevocationBackend(check=durable_revoked, lineage=durable_lineage)
+            )
         """
-        self._revocation = revocation_check
+        self._revocation = backend.check
+        self._lineage = backend.lineage
+        return self
+
+    def assuming_nothing_revoked(self) -> "ReferenceIssuer":
+        """Ask for the pre-0.8.0 default **by name**: an in-memory revocation store
+        that vouches "nothing is revoked" over an empty set, so a fresh issuer
+        verifies immediately.
+
+        This is a **fail-open posture**. The store is non-durable and cannot detect
+        its own restart: after a restart it is reconstructed empty and again vouches
+        ``NOT_REVOKED``, so a VAID revoked before the restart verifies clean. Fine
+        for local development, quickstarts and tests; not for anything that must
+        survive a restart.
+
+        It exists because R.4.5 permits fail-open as an explicit configuration and
+        forbids it as a default — *"it MUST NOT be the default; it MUST be named to
+        state what it does rather than obscure it."* Until 0.8.0 this posture was the
+        default and the name appeared nowhere at a call site. It is the same
+        behaviour; the difference is that asking for it is now visible in the code
+        that asks.
+
+        The lineage store is untouched and stays in-memory. It has no fail-open
+        posture to opt into: an unrecorded id is *unknown*, which is ``UNAVAILABLE``,
+        which fails closed.
+
+        Returns ``self`` so it chains::
+
+            issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
+        """
+        self._store = InMemoryRevocationList.assume_nothing_revoked()
+        self._revocation = self._store
         return self
 
     def kernel_public_key(self) -> bytes:
@@ -204,7 +272,10 @@ class ReferenceIssuer:
         VAID attenuated from it (R.4.4) — fails :meth:`verify_vaid`. Does not survive
         restart. No effect on verification if a custom
         :class:`~vaid_mint.revocation.RevocationCheck` was injected via
-        :meth:`with_revocation_check`; revoke through that backend instead."""
+        :meth:`with_revocation_backend`; revoke through that backend instead.
+
+        Revoking into an absent store also makes it **available**: a store you have
+        revoked into can vouch for what it holds."""
         self._store.revoke(vaid_id)
 
     def clear_lineage(self) -> None:
@@ -213,7 +284,7 @@ class ReferenceIssuer:
         resolves to ``UNAVAILABLE`` — its ancestry can no longer be completed
         (R.4.2) — while a genuinely rootless VAID still verifies. An ops/test
         primitive."""
-        self._lineage.clear()
+        self._default_lineage.clear()
 
     def resolve_parent(self, vaid_id: str) -> ParentResolution:
         """Resolve one hop from the in-memory lineage map (spec R.4.2). A recorded
@@ -221,10 +292,7 @@ class ReferenceIssuer:
         **child**; an unrecorded id is **unknown** — the distinction that makes an
         empty (post-restart) map yield ``UNAVAILABLE`` for a child rather than
         mistaking it for a root."""
-        if vaid_id not in self._lineage:
-            return ParentResolution.unknown()
-        parent = self._lineage[vaid_id]
-        return ParentResolution.root() if parent is None else ParentResolution.of_parent(parent)
+        return self._lineage.resolve_parent(vaid_id)
 
     def revocation_status(self, vaid: dict) -> RevocationStatus:
         """The revocation status of ``vaid`` under this issuer (spec R.4): assemble
@@ -285,7 +353,7 @@ class ReferenceIssuer:
         # Record EVERY mint — roots as ``None``, children as their parent — so the
         # resolver can distinguish a known root from an id it has never seen. This
         # is the bookkeeping spec R.4.2 depends on; it changes no document bytes.
-        self._lineage[vaid_id] = parent_vaid
+        self._lineage.record(vaid_id, parent_vaid)
         return signed
 
     def issue_vaid_with_key(

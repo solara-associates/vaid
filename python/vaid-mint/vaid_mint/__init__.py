@@ -82,9 +82,12 @@ from vaid_mint.verify import (
     VaidVerdict,
 )
 from vaid_mint.revocation import (
+    InMemoryLineageStore,
     InMemoryRevocationList,
     LineageResolver,
+    LineageStore,
     ParentResolution,
+    RevocationBackend,
     RevocationCheck,
     RevocationStatus,
     assemble_lineage,
@@ -112,8 +115,11 @@ __all__ = [
     "DEFAULT_VAID_TTL_HOURS",
     "RevocationCheck",
     "RevocationStatus",
+    "InMemoryLineageStore",
     "InMemoryRevocationList",
     "LineageResolver",
+    "LineageStore",
+    "RevocationBackend",
     "ParentResolution",
     "assemble_lineage",
     "verify_vaid_authenticity",
@@ -149,4 +155,4 @@ __all__ = [
     "AuditError",
 ]
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

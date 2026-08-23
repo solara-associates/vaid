@@ -24,9 +24,12 @@
 //!   ancestry ([`revocation::assemble_lineage`]) and hands it to the check, which
 //!   returns [`revocation::RevocationStatus`] (`NotRevoked`/`Revoked`/`Unavailable`)
 //!   — a VAID is revoked if **any** ancestor is (R.4.4), and verification fails
-//!   closed on `Unavailable`. The reference default store is non-durable, in-memory,
-//!   and injectable ([`issuer::ReferenceIssuer::with_revocation_check`]). Revocation
-//!   is **outside the conformance surface**: no vector polices it.
+//!   closed on `Unavailable`. The reference default store is non-durable, in-memory
+//!   and **absent** — so verification fails closed out of the box — and both it and
+//!   the lineage store are injectable together
+//!   ([`issuer::ReferenceIssuer::with_revocation_backend`]; durability under R.4.6
+//!   is two stores, and a single-half constructor does not exist). Revocation is
+//!   **outside the conformance surface**: no vector polices it.
 //!
 //! Not included here — a hosted authority layers these on top: a *durable*,
 //! hash-chained revocation store, KMS-backed kernel keys, a *durable,
@@ -63,7 +66,18 @@
 //! use vaid_mint::mint_types::{MintVaidRequest, VaidSeed};
 //!
 //! # tokio_test_block(async {
-//! let issuer = Arc::new(ReferenceIssuer::ephemeral(24, "vaid.example").unwrap());
+//! // `assuming_nothing_revoked()` is the pre-0.8.0 default, asked for BY NAME.
+//! // Since 0.8.0 a bare issuer's revocation store is ABSENT: it reports
+//! // `Unavailable` and `verify_vaid` fails closed until revocation state is loaded
+//! // (R.4.5). This is a fail-OPEN posture and it is fine here — a quickstart with
+//! // no revocation store — but it does not survive a restart. For anything that
+//! // must, inject a durable backend with `with_revocation_backend`; durability is
+//! // two stores, and `RevocationBackend` requires both.
+//! let issuer = Arc::new(
+//!     ReferenceIssuer::ephemeral(24, "vaid.example")
+//!         .unwrap()
+//!         .assuming_nothing_revoked(),
+//! );
 //! let audit = Arc::new(InMemoryAudit::new());
 //! let mint = MintService::new(issuer.clone(), audit);
 //!
@@ -122,8 +136,9 @@ pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
 pub use mint::{scope_attenuates_within, MintService, MINT_POP_FRESHNESS_SECS};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{
-    assemble_lineage, InMemoryRevocationList, LineageAssembly, LineageResolver, ParentResolution,
-    RevocationCheck, RevocationStatus,
+    assemble_lineage, InMemoryLineageStore, InMemoryRevocationList, LineageAssembly,
+    LineageResolver, LineageStore, ParentResolution, RevocationBackend, RevocationCheck,
+    RevocationStatus,
 };
 pub use verify::{
     verify_lineage_hash, verify_vaid_authenticity, verify_vaid_authenticity_graded,

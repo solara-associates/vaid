@@ -24,16 +24,45 @@ cargo add vaid-mint
 | Auth | Pluggable (`AuthorizationGate`) | Pluggable |
 | Audit | Pluggable (`AuditSink`) | Pluggable |
 
-**Revocation now has a pluggable seam, but the shipped default is still
-non-durable.** As of 0.1.2 there is a `RevocationCheck` trait: a
-self-hoster can inject their own durable, restart-surviving backend via
-`ReferenceIssuer::with_revocation_check` without patching the crate. What
-ships *by default*, however, is still the concrete in-memory revoked set
-— it does not survive a restart. If the mint process restarts and you
-have not wired a durable `RevocationCheck`, previously revoked VAIDs are
-revocable again. The seam closes the "no extension point" gap; it does
-**not** by itself make revocation durable. That is your responsibility to
-wire, or the hosted authority's to provide.
+**Revocation has a pluggable seam, but the shipped default is still
+non-durable.** A self-hoster injects their own durable, restart-surviving
+backend via `ReferenceIssuer::with_revocation_backend` without patching
+the crate. What ships *by default* is the in-memory revoked set and the
+in-memory lineage map — neither survives a restart. If the mint process
+restarts and you have not wired a durable backend, previously revoked
+VAIDs are revocable again. The seam closes the "no extension point" gap;
+it does **not** by itself make revocation durable. That is your
+responsibility to wire, or the hosted authority's to provide.
+
+**Durable revocation is two stores, not one.** Durable revocation *and*
+durable lineage resolution are both host-application responsibilities.
+`RevocationCheck` answers about an already-assembled lineage;
+`LineageStore` records every mint and resolves ancestry, and a VAID's full
+ancestry is not recoverable from the document itself. Persist only the
+revoked set and, after a restart, every **child** VAID fails closed —
+its ancestry cannot be assembled, which is `Unavailable`, which fails
+closed (R.4.2 / R.4.5) — while every **root** VAID keeps verifying,
+because a root is trivially complete and never consults the resolver. The
+outage is total for delegated credentials and invisible for root ones,
+appears at restart rather than at deploy, and is first mistaken for a
+signing or clock problem. `RevocationBackend::new` takes both halves and
+has no single-half constructor, so that state cannot be reached by
+omitting an argument; pass `InMemoryLineageStore` as the second half to
+say "in-memory lineage, deliberately". Make the resolver durable first,
+or both in the same change — the revoked set first is the ordering that
+produces the outage. `ReferenceIssuer::with_revocation_check` replaced
+only one half and was **removed in 0.8.0** for this reason.
+
+**Since 0.8.0 the default fails closed.** A bare `ReferenceIssuer`'s
+revocation store is *absent* — never populated, so it reports
+`Unavailable` and `verify_vaid` returns `false` until state is loaded.
+Until 0.8.0 the default vouched `NotRevoked` over an empty set, which is
+a fail-open posture and, being non-durable, could not detect its own
+restart. R.4.5 requires that fail-open never be the default and always
+be named; `ReferenceIssuer::assuming_nothing_revoked()` is that name. It
+is the same behaviour, asked for at the call site. Minting, attenuation
+and `verify_vaid_authenticity` are unchanged, as is every conformance
+vector — revocation is outside the conformance surface (R.1).
 
 **If you're running this in production, mitigate as follows:**
 
