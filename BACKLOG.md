@@ -1471,3 +1471,83 @@ belong in it. As a record it can hold all three kinds, and the CI job checks onl
 the derivable ones. Both are defensible; the current design is the third option —
 gate everything, derive nothing — and that is the one that reddens on a timer and
 teaches people to edit the date.
+
+---
+
+## B19 — there is no canonical VAID *string* grammar, so every consumer writes its own validator
+
+**Status:** open. Not blocked; needs a decision about whether a wire grammar is in scope for this repository.
+**Observed:** 2026-08-24, remediating CRUCIBLE's host-tenant VAID check.
+**Affects:** every consumer that accepts a VAID as a configuration value or over a wire boundary.
+
+### What breaks
+
+VAID is modelled here and in the substrate as **structured types** —
+`vaid::TenantId`, `vaid::AgentId`, `vaid::AgentClass`, `vaid::VaidId::from_uuid`.
+That is the right internal model. But consumers do not receive structured types.
+They receive a **string**: out of an env var, a config file, a `sender_vaid`
+field on a `BusEnvelope`. And there is **no published grammar for that string**.
+
+Greps across `~/solara/vaid`, `~/solara/synthera` and `~/solara/shadowstack` on
+2026-08-24 found no regex, no ABNF, no format section, and no examples presented
+as normative. The corpus of VAID strings in actual use — `vaid:host-tenant`,
+`vaid:synthera-tenant`, `vaid:test-local` — is consistent enough to *look* like a
+convention, which is precisely what makes it dangerous: it invites induction.
+
+### How it presents
+
+Not as a VAID bug. It presents as a **consumer** bug, in whichever repository
+last tightened its own validation.
+
+CRUCIBLE is the worked example and the second-order evidence. Until 2026-08-24 it
+validated its host-tenant VAID for **non-emptiness only**, so `t`, `demo-tenant`
+and `crucible-evaluate` were all accepted as VAIDs — including in its own demo
+path. Tightening that required a pattern, and with no grammar to implement, the
+pattern was **induced from observed values**:
+
+```python
+VAID_PATTERN = re.compile(r"^vaid:[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$")
+```
+
+That is a guess about a standard, marked provisional in the source
+(`infrastructure/config/settings.py`). Note what the exercise turned up: **13
+values in CRUCIBLE's own fixtures and demo paths did not match** and had to be
+repaired. Practice had already drifted from the convention it appears to follow.
+An induced validator is induced from a drifting corpus.
+
+### Why it is worse than one repository guessing
+
+Because the guess fails in **both** directions, and only one of them is loud.
+
+- **If the real grammar is NARROWER than an induced pattern**, the consumer has
+  been *accepting invalid VAIDs*. Silent. Every identity admitted under the loose
+  pattern needs re-checking, and any authorisation or lineage-scoping decision
+  keyed off one was made against an identifier the substrate would have rejected.
+  In CRUCIBLE's case that is the single-hop host-tenant scope check on the
+  envelope ingest path.
+- **If the real grammar is WIDER**, the consumer *rejects valid VAIDs*. Loud and
+  fail-closed, which is safe — but it presents to the operator as a bug in the
+  consumer, and the fix is in the consumer's regex, not their configuration.
+
+And there is no reason to expect two consumers to induce the *same* pattern. The
+failure mode of N independent inductions is N slightly different notions of what
+a VAID is, none of them authoritative, diverging quietly.
+
+### Shape of the fix
+
+Publish a normative string grammar for VAID — ABNF or a regex, with the
+character set, the length bounds, whether the `vaid:` scheme prefix is required,
+and whether `:` is legal inside the identifier (the induced pattern permits it;
+nothing says it should). Ship it as a validator in this repository so consumers
+call it instead of writing one, and state the conformance rule for a value that
+does not match.
+
+Until then, any consumer-side VAID format check in the estate is a guess, and
+should say so where a reader will see it.
+
+### Why it has not been done
+
+Nothing forced the question while VAIDs only ever crossed boundaries as
+structured types. Configuration and envelope fields made them strings, and the
+gap surfaced the first time a consumer tried to validate one properly rather
+than checking it was non-empty.
