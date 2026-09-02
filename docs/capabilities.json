@@ -155,8 +155,21 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, failing closed.",
+      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, and a status that cannot be determined (Unavailable) fails closed. THE SHIPPED DEFAULT IS NOT FAIL-CLOSED: every published vaid-mint (0.2.0 through 0.7.0, Rust, Python and TypeScript alike) constructs the issuer with an assume-nothing-revoked in-memory store, which vouches NotRevoked for every VAID it was never told about and cannot detect its own restart — a fail-open posture reached by assumption, so a VAID revoked before a restart verifies clean. An integrator gets fail-closed behaviour today only by holding the store absent or injecting a durable RevocationCheck. Fail-closed by default is unpublished 0.8.0 work — see revocation-fail-closed-default.",
       "blocked_on": null
+    },
+    {
+      "id": "revocation-fail-closed-default",
+      "title": "Fail-closed revocation by default",
+      "status": "planned",
+      "landed_in": null,
+      "packages": [],
+      "status_text": "ReferenceIssuer's revocation store starts ABSENT, so verification fails closed until revocation state is loaded (spec R.4.5), and durable revocation becomes two stores (R.4.6: revoked set AND lineage). Exists only on the unmerged release/vaid-mint-0.8.0 branch (PR #75); NO published version has it — every published vaid-mint defaults to assume-nothing-revoked (see revocation-lineage-aware). Breaking in all three languages. Do not flip this to shipped at merge: shipped means vaid-mint 0.8.0 is on crates.io, PyPI and npm, which the verification check will then enforce per package.",
+      "blocked_on": {
+        "type": "pr",
+        "repo": "solara-associates/vaid",
+        "number": 75
+      }
     },
     {
       "id": "typescript-implementation",
