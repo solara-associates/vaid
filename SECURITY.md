@@ -7,13 +7,16 @@ malformed VAID be accepted by a conforming verifier — seriously.
 ## Supported versions
 
 VAID is pre-1.0. Security fixes are applied to the latest `main` and the most
-recent published release of each SDK (`vaid-pop`, `vaid-client`). Older
-pre-release versions are not maintained.
+recent published release of each shipped package: `vaid-pop`, `vaid-mint`,
+`vaid-client` (Rust/Python/TypeScript, per registry), `vaid-langchain` (PyPI)
+and `vaid-skill` (npm). Older pre-release versions are not maintained. The
+authoritative package list is `release-map.json`; current published versions
+are whatever each registry reports, not a number written here.
 
 | Component | Supported |
 |---|---|
 | `main` (latest) | ✅ |
-| Latest published `0.1.x` SDK release | ✅ |
+| Latest published release of each package above | ✅ |
 | Anything older | ❌ |
 
 ## Reporting a vulnerability
