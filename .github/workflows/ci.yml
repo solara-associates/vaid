@@ -74,6 +74,38 @@ jobs:
       - name: node --test conformance suite (vaid-pop + vaid-mint + vaid-client)
         run: npm test --prefix typescript
 
+  name-guard:
+    name: No added line reintroduces a guarded term
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because the check is over ADDED LINES, which needs a real
+      # merge base. A shallow clone resolves no merge base, and the script exits 2
+      # rather than reporting a clean scan it did not perform.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      # The estate purged client, prospect, partner and employer names from every
+      # repository on 2026-08-23. Nothing has consulted the resulting term list
+      # since, and `synthera-site-redesign` had a term reintroduced 48 HOURS after
+      # being cleaned, by a document nobody thought to check. A purge does not
+      # immunise a repository; only a gate does.
+      #
+      # This repository is the estate's only PUBLIC one, so the list cannot be
+      # committed here in plaintext — the list IS the exposure. Entries are salted
+      # SHA-256; the script hashes 1..3-grams of added lines and compares. The
+      # failure names the file and line and never the term, because CI logs on a
+      # public repository are public.
+      #
+      # NO `continue-on-error`. A check that reports and does not block is how the
+      # thing it checks for keeps happening.
+      - name: No added line reintroduces a guarded term
+        run: node scripts/verify-no-guarded-terms.mjs "origin/${{ github.base_ref || github.event.repository.default_branch }}"
+
   readme-drift:
     name: README describes the repository that exists
     runs-on: ubuntu-latest
