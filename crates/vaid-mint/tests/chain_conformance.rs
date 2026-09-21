@@ -17,9 +17,7 @@ use serde_json::Value;
 
 use chrono::{DateTime, Utc};
 use vaid_mint::attestation::AttestationBundle;
-use vaid_mint::chain::{
-    verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey,
-};
+use vaid_mint::chain::{verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey};
 use vaid_mint::revocation::{assemble_lineage, LineageAssembly};
 use vaid_mint::{canonical_vaid_signing_bytes, Vaid};
 
