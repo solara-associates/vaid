@@ -326,7 +326,12 @@ impl MintService {
             )
             .await?;
 
-        Ok(MintVaidResponse { vaid })
+        Ok(MintVaidResponse {
+            vaid,
+            // A root has no parent to be bounded by, so its TTL is the issuer's alone.
+            expiry_bounded_by_parent: false,
+            parent_expires_at: None,
+        })
     }
 
     /// Attenuated intra-tenant delegation. An authenticated parent VAID `P` mints
@@ -476,7 +481,23 @@ impl MintService {
             )));
         }
 
-        // (8) Delegated audit — distinguishes the delegation tree from root mints.
+        // (8) Was the child's life cut short by its parent's, rather than by this
+        // issuer's TTL? Computed from the two documents rather than reported by the
+        // issuer: the issuer returns a `Vaid` and nothing else, and reading the
+        // SIGNED bytes is the stronger statement anyway — it describes the document
+        // the caller is actually holding, not the issuer's intent.
+        //
+        // The one inexact case is a tie: an issuer whose TTL lands exactly on the
+        // parent's expiry sets this true although nothing was taken away. The field
+        // is named for what is literally true of the document — the child's expiry
+        // IS the parent's bound — rather than for the issuer's arithmetic, so the
+        // tie is still an accurate statement.
+        let expiry_bounded_by_parent =
+            vaid.expires_at_as_presented() == parent.expires_at_as_presented();
+
+        // (9) Delegated audit — distinguishes the delegation tree from root mints,
+        // and records the shortening, so a caller that ignored the response can
+        // still find out from the audit trail why a credential was short-lived.
         self.audit
             .record(
                 "vaid_minted",
@@ -491,11 +512,18 @@ impl MintService {
                     "delegated": true,
                     "attenuation_verified": true,
                     "parent_tenant": parent.tenant_id().as_str(),
+                    "expiry_bounded_by_parent": expiry_bounded_by_parent,
+                    "expires_at": vaid.expires_at_as_presented(),
+                    "parent_expires_at": parent.expires_at_as_presented(),
                 }),
             )
             .await?;
 
-        Ok(MintVaidResponse { vaid })
+        Ok(MintVaidResponse {
+            vaid,
+            expiry_bounded_by_parent,
+            parent_expires_at: Some(parent.expires_at_as_presented().to_string()),
+        })
     }
 }
 
@@ -1269,6 +1297,97 @@ mod tests {
             root.expires_at().unwrap() - root.issued_at().unwrap(),
             chrono::Duration::hours(1),
             "the issuer's full TTL applies"
+        );
+    }
+
+    // ── the clamp is visible to the caller, not only in a shorter expires_at ──
+
+    /// A silent shortening was the objection to clamping. `expires_at` alone looks
+    /// like an ordinary expiry: a caller would have to know the issuer's TTL and
+    /// subtract to notice its delegation had been cut short. The response says it.
+    #[tokio::test]
+    async fn a_clamped_child_says_so_on_the_response() {
+        let (svc, _) = fixture(); // ReferenceIssuer::ephemeral(1, ..) — a 1-hour TTL
+        let parent = parent_expiring_in(600); // ten minutes left
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "visible-1");
+        let response = svc.mint_child(req, Some(&parent)).await.unwrap();
+
+        assert!(response.expiry_bounded_by_parent);
+        assert_eq!(
+            response.parent_expires_at.as_deref(),
+            Some(parent.expires_at_as_presented())
+        );
+        assert_eq!(
+            response.vaid.expires_at_as_presented(),
+            parent.expires_at_as_presented()
+        );
+    }
+
+    /// THE CONTROL. A flag that is always true carries no information, and would
+    /// pass the test above while telling a caller nothing. Here the issuer's own
+    /// TTL is the earlier bound, nothing was taken away, and the flag must be false.
+    #[tokio::test]
+    async fn an_unclamped_child_says_that_too() {
+        let (svc, _) = fixture();
+        let parent = parent_expiring_in(86_400); // a day out; the issuer TTL is an hour
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "visible-2");
+        let response = svc.mint_child(req, Some(&parent)).await.unwrap();
+
+        assert!(!response.expiry_bounded_by_parent);
+        assert_eq!(
+            response.parent_expires_at.as_deref(),
+            Some(parent.expires_at_as_presented())
+        );
+        assert!(response.vaid.expires_at().unwrap() < parent.expires_at().unwrap());
+    }
+
+    /// A root has no parent to be bounded by, and must not claim one.
+    #[tokio::test]
+    async fn a_root_mint_is_never_bounded_by_a_parent_it_does_not_have() {
+        let (svc, _) = fixture();
+        let response = svc
+            .mint_root(MintVaidRequest {
+                seed: VaidSeed {
+                    agent_class: "root".into(),
+                    version: "1.0.0".into(),
+                    tenant_id: "acme".into(),
+                    parent_vaid: None,
+                    scope_boundary: vec!["data.x".into()],
+                    capability_set: vec!["read".into()],
+                    public_key_der: None,
+                },
+                pop: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(!response.expiry_bounded_by_parent);
+        assert_eq!(response.parent_expires_at, None);
+    }
+
+    /// A caller that ignores the response still leaves a record. Without this, the
+    /// only evidence that a credential was deliberately shortened would be the
+    /// caller's own memory of a field it did not read.
+    #[tokio::test]
+    async fn the_clamp_is_recorded_in_the_audit_trail() {
+        let (svc, audit) = fixture();
+        let parent = parent_expiring_in(600);
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "visible-3");
+        svc.mint_child(req, Some(&parent)).await.unwrap();
+
+        let entries = audit.entries();
+        let details = &entries.last().expect("one entry").details;
+        assert_eq!(details["expiry_bounded_by_parent"], json!(true));
+        assert_eq!(
+            details["expires_at"],
+            json!(parent.expires_at_as_presented())
+        );
+        assert_eq!(
+            details["parent_expires_at"],
+            json!(parent.expires_at_as_presented())
         );
     }
 }

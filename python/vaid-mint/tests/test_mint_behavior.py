@@ -189,7 +189,7 @@ def test_child_within_bounds_is_minted_with_lineage_and_delegated_audit():
     svc, audit, _ = fixture()
     parent = parent_doc("aifactory", ["data.aifactory"], ["read", "write"])
     seed, pop = signed_child(parent, ["data.aifactory.sub"], ["read"], "ok-1")
-    vaid = svc.mint_child(seed, parent, pop)
+    vaid = svc.mint_child(seed, parent, pop).vaid
     assert vaid["parent_vaid"] == parent["vaid_id"]
     assert audit.entries[0].details["delegated"] is True
     assert audit.entries[0].details["attenuation_verified"] is True
@@ -311,7 +311,7 @@ def test_minted_child_verifies_and_is_contained_by_parent():
         )
     )
     seed, pop = signed_child(parent, ["data.aifactory.reports"], ["read"], "e2e")
-    child = svc.mint_child(seed, parent, pop)
+    child = svc.mint_child(seed, parent, pop).vaid
 
     assert issuer.verify_vaid(child)
     assert all(is_in_scope(parent, s) for s in child["scope_boundary"])
@@ -341,7 +341,7 @@ def test_a_child_is_clamped_to_its_parents_expiry():
     parent = _parent_expiring_in(600)
 
     seed, pop = signed_child(parent, ["data.x"], ["read"], "clamp-1")
-    child = svc.mint_child(seed, parent, pop)
+    child = svc.mint_child(seed, parent, pop).vaid
 
     assert child["expires_at"] == parent["expires_at"], (
         "the child must end exactly when its parent does, not an hour later"
@@ -357,7 +357,7 @@ def test_a_child_keeps_the_issuer_ttl_when_it_is_the_earlier_bound():
     parent = _parent_expiring_in(86_400)  # a day out; the issuer's TTL is an hour
 
     seed, pop = signed_child(parent, ["data.x"], ["read"], "clamp-2")
-    child = svc.mint_child(seed, parent, pop)
+    child = svc.mint_child(seed, parent, pop).vaid
 
     assert child["expires_at"] < parent["expires_at"], (
         "the issuer's TTL is the earlier bound here and must still apply"
@@ -386,7 +386,7 @@ def test_delegation_works_across_a_second_boundary():
     time.sleep(1.1)
 
     seed, pop = signed_child(parent, ["data.aifactory"], ["read"], "boundary")
-    child = svc.mint_child(seed, parent, pop)
+    child = svc.mint_child(seed, parent, pop).vaid
 
     assert child["expires_at"] <= parent["expires_at"]
 
@@ -433,7 +433,7 @@ def test_refusing_a_dead_parent_does_not_consume_the_pop_nonce():
         svc.mint_child(seed, dead, pop)
 
     seed_ok, pop_ok = signed_child(live, ["data.x"], ["read"], "shared-nonce")
-    assert svc.mint_child(seed_ok, live, pop_ok)["vaid_id"]
+    assert svc.mint_child(seed_ok, live, pop_ok).vaid["vaid_id"]
 
 
 def test_an_issuer_that_ignores_the_ceiling_is_caught_and_the_child_withheld():
@@ -485,3 +485,52 @@ def test_the_root_path_is_unclamped():
     issued = datetime.strptime(root["issued_at"], "%Y-%m-%dT%H:%M:%SZ")
     expires = datetime.strptime(root["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
     assert expires - issued == timedelta(hours=1), "the issuer's full TTL applies"
+
+
+# ── the clamp is visible to the caller, not only in a shorter expires_at ──
+
+
+def test_a_clamped_child_says_so_on_the_response():
+    """A silent shortening was the objection to clamping. `expires_at` alone looks
+    like an ordinary expiry: a caller would have to know the issuer's TTL and
+    subtract to notice its delegation had been cut short. The response says it."""
+    svc, _, _ = fixture()  # ReferenceIssuer.ephemeral(1, ...) — a 1-hour TTL
+    parent = _parent_expiring_in(600)  # ten minutes left
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "visible-1")
+    response = svc.mint_child(seed, parent, pop)
+
+    assert response.expiry_bounded_by_parent is True
+    assert response.parent_expires_at == parent["expires_at"]
+    assert response.vaid["expires_at"] == parent["expires_at"]
+
+
+def test_an_unclamped_child_says_that_too():
+    """THE CONTROL. A flag that is always true carries no information, and would
+    pass the test above while telling a caller nothing. Here the issuer's own TTL is
+    the earlier bound, nothing was taken away, and the flag must be false."""
+    svc, _, _ = fixture()
+    parent = _parent_expiring_in(86_400)  # a day out; the issuer's TTL is an hour
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "visible-2")
+    response = svc.mint_child(seed, parent, pop)
+
+    assert response.expiry_bounded_by_parent is False
+    assert response.parent_expires_at == parent["expires_at"]
+    assert response.vaid["expires_at"] < parent["expires_at"]
+
+
+def test_the_clamp_is_recorded_in_the_audit_trail():
+    """A caller that ignores the response still leaves a record. Without this, the
+    only evidence that a credential was deliberately shortened would be the caller's
+    own memory of a field it did not read."""
+    svc, audit, _ = fixture()
+    parent = _parent_expiring_in(600)
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "visible-3")
+    svc.mint_child(seed, parent, pop)
+
+    entry = audit.entries[-1].details
+    assert entry["expiry_bounded_by_parent"] is True
+    assert entry["expires_at"] == parent["expires_at"]
+    assert entry["parent_expires_at"] == parent["expires_at"]

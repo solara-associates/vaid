@@ -71,7 +71,12 @@ from vaid_mint.mint import (
     scope_attenuates_within,
     tenant_attenuates,
 )
-from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
+from vaid_mint.mint_types import (
+    MintChildResponse,
+    MintPop,
+    VaidSeed,
+    build_mint_pop_payload,
+)
 from vaid_mint.verify import (
     parse_vaid_document,
     verify_lineage_hash,
@@ -95,6 +100,7 @@ __all__ = [
     "MintService",
     "VaidSeed",
     "MintPop",
+    "MintChildResponse",
     "build_mint_pop_payload",
     "canonical_vaid_signing_bytes",
     "compute_lineage_hash",

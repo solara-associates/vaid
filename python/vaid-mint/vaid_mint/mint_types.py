@@ -28,6 +28,38 @@ class VaidSeed:
     public_key_der: bytes | None = None
 
 
+@dataclass(frozen=True)
+class MintChildResponse:
+    """What :meth:`~vaid_mint.mint.MintService.mint_child` returns: the signed
+    child document, and what the mint did to its lifetime.
+
+    **This replaces the bare document the method used to return** (0.8.0,
+    breaking). The reason is ADR-0007: a delegated child is **clamped** to its
+    parent's expiry rather than refused for exceeding it, and the objection to
+    clamping is that an issuer handing back a credential shorter than its stated
+    policy is a surprise the caller cannot see. ``expires_at`` alone looks like an
+    ordinary expiry; a caller would have to know the issuer's TTL and subtract to
+    notice anything had happened. So the mint says it outright.
+
+    Migrating: ``vaid = svc.mint_child(...)`` becomes
+    ``vaid = svc.mint_child(...).vaid``. The Rust and TypeScript twins already
+    returned a response object (``MintVaidResponse``) and gained the same two
+    fields, so this brings Python into line rather than inventing a shape.
+    """
+
+    #: The newly-minted, signed child VAID document.
+    vaid: dict
+    #: **The child's lifetime was bounded by its parent's, not by the issuer's
+    #: TTL.** True exactly when the issued ``expires_at`` equals
+    #: :attr:`parent_expires_at`. A caller that cares about the child's remaining
+    #: life should read this: the usual reaction is to renew the parent before
+    #: delegating, not to retry.
+    expiry_bounded_by_parent: bool
+    #: The authenticated parent's ``expires_at``, exactly as presented, so the
+    #: caller can see the bound itself and not only that one applied.
+    parent_expires_at: str
+
+
 @dataclass
 class MintPop:
     """A holder's proof-of-possession for a mint (mirror of the Rust ``MintPop``)."""

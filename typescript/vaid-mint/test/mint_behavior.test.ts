@@ -513,3 +513,74 @@ test('the root path is unclamped', async () => {
     'the issuer full TTL applies',
   );
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// the clamp is visible to the caller, not only in a shorter expires_at
+// ════════════════════════════════════════════════════════════════════════════
+
+test('a clamped child says so on the response', async () => {
+  // A silent shortening was the objection to clamping. `expires_at` alone looks
+  // like an ordinary expiry: a caller would have to know the issuer's TTL and
+  // subtract to notice its delegation had been cut short. The response says it.
+  const { service } = fixture(); // ReferenceIssuer.ephemeral(1) — a 1-hour TTL
+  const parent = parentExpiringIn(600); // ten minutes left
+
+  const response = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'visible-1'),
+    parent,
+  );
+
+  assert.equal(response.expiryBoundedByParent, true);
+  assert.equal(response.parentExpiresAt, parent.expires_at);
+  assert.equal(response.vaid.expires_at, parent.expires_at);
+});
+
+test('an unclamped child says that too', async () => {
+  // THE CONTROL. A flag that is always true carries no information, and would pass
+  // the test above while telling a caller nothing. Here the issuer's own TTL is the
+  // earlier bound, nothing was taken away, and the flag must be false.
+  const { service } = fixture();
+  const parent = parentExpiringIn(86_400); // a day out; the issuer TTL is an hour
+
+  const response = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'visible-2'),
+    parent,
+  );
+
+  assert.equal(response.expiryBoundedByParent, false);
+  assert.equal(response.parentExpiresAt, parent.expires_at);
+  assert.ok(Date.parse(response.vaid.expires_at) < Date.parse(parent.expires_at));
+});
+
+test('a root mint is never bounded by a parent it does not have', async () => {
+  const { service } = fixture();
+  const response = await service.mintRoot({
+    seed: {
+      agentClass: 'root',
+      version: '1.0.0',
+      tenantId: 'acme',
+      parentVaid: null,
+      scopeBoundary: ['data.x'],
+      capabilitySet: ['read'],
+    },
+  });
+
+  assert.equal(response.expiryBoundedByParent, false);
+  assert.equal(response.parentExpiresAt, null);
+});
+
+test('the clamp is recorded in the audit trail', async () => {
+  // A caller that ignores the response still leaves a record. Without this, the
+  // only evidence that a credential was deliberately shortened would be the
+  // caller's own memory of a field it did not read.
+  const { service, audit } = fixture();
+  const parent = parentExpiringIn(600);
+
+  await service.mintChild(signedChild(parent, ['data.x'], ['read'], 'visible-3'), parent);
+
+  const recorded = audit.entries();
+  const entry = recorded[recorded.length - 1]!;
+  assert.equal(entry.details.expiry_bounded_by_parent, true);
+  assert.equal(entry.details.expires_at, parent.expires_at);
+  assert.equal(entry.details.parent_expires_at, parent.expires_at);
+});

@@ -88,11 +88,32 @@ pub struct MintPopPayload {
     pub issued_at: DateTime<Utc>,
 }
 
-/// A mint response: the newly-minted, signed VAID.
+/// A mint response: the newly-minted, signed VAID, and what the mint did to its
+/// lifetime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MintVaidResponse {
     pub vaid: Vaid,
+    /// **The child's lifetime was bounded by its parent's, not by the issuer's
+    /// TTL** (ADR-0007). True exactly when the issued `expires_at` equals
+    /// `parent_expires_at`; always false for a root mint, which has no parent to
+    /// be bounded by.
+    ///
+    /// **Why this field exists.** Clamping was chosen over refusing because
+    /// refusing makes a fixed-TTL issuer unable to delegate at all. The objection
+    /// to clamping is that an issuer returning a credential shorter than its
+    /// stated policy is a surprise the caller cannot see — `expires_at` alone
+    /// looks like an ordinary expiry, and a caller would have to know the
+    /// issuer's TTL and subtract to notice. This says so outright, so a shortened
+    /// delegation is a fact the caller is handed rather than one it has to infer.
+    ///
+    /// A caller that cares about the child's remaining life should read it: the
+    /// usual reaction is to renew the parent before delegating, not to retry.
+    pub expiry_bounded_by_parent: bool,
+    /// The authenticated parent's `expires_at`, exactly as presented, or `None`
+    /// for a root mint. Carried alongside the flag so the caller can see the bound
+    /// itself rather than only that one applied.
+    pub parent_expires_at: Option<String>,
 }
 
 impl VaidSeed {

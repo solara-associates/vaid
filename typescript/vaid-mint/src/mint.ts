@@ -303,7 +303,8 @@ export class MintService {
       delegated: false,
     });
 
-    return { vaid };
+    // A root has no parent to be bounded by, so its TTL is the issuer's alone.
+    return { vaid, expiryBoundedByParent: false, parentExpiresAt: null };
   }
 
   /**
@@ -438,7 +439,22 @@ export class MintService {
       );
     }
 
-    // (8) Delegated audit — distinguishes the delegation tree from root mints.
+    // (8) Was the child's life cut short by its parent's, rather than by this
+    // issuer's TTL? Computed from the two documents rather than reported by the
+    // issuer: the issuer returns a `Vaid` and nothing else, and reading the SIGNED
+    // bytes is the stronger statement anyway — it describes the document the caller
+    // is actually holding, not the issuer's intent.
+    //
+    // The one inexact case is a tie: an issuer whose TTL lands exactly on the
+    // parent's expiry sets this true although nothing was taken away. The field is
+    // named for what is literally true of the document — the child's expiry IS the
+    // parent's bound — rather than for the issuer's arithmetic, so the tie is still
+    // an accurate statement.
+    const expiryBoundedByParent = vaid.expires_at === parent.expires_at;
+
+    // (9) Delegated audit — distinguishes the delegation tree from root mints, and
+    // records the shortening, so a caller that ignored the response can still find
+    // out from the audit trail why a credential was short-lived.
     await this.#audit.record('vaid_minted', {
       agent_class: seed.agentClass,
       version: seed.version,
@@ -450,9 +466,12 @@ export class MintService {
       delegated: true,
       attenuation_verified: true,
       parent_tenant: parent.tenant_id,
+      expiry_bounded_by_parent: expiryBoundedByParent,
+      expires_at: vaid.expires_at,
+      parent_expires_at: parent.expires_at,
     });
 
-    return { vaid };
+    return { vaid, expiryBoundedByParent, parentExpiresAt: parent.expires_at };
   }
 }
 
