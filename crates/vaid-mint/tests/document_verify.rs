@@ -31,6 +31,7 @@ fn public_key_and_doc() -> (Vec<u8>, Vaid) {
             None,
             vec!["data.x".into()],
             vec!["read".into()],
+            None,
         )
         .unwrap();
     (issuer.kernel_public_key().to_vec(), vaid)

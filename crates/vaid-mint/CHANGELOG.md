@@ -3,6 +3,77 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — UNRELEASED
+
+### Fixed — BREAKING: a child VAID can no longer outlive its parent (vaid#79)
+
+`mint_child` enforced four containment properties — tenant, lineage, scope,
+capabilities — and not the fifth. A child's `expires_at` was never compared to its
+parent's, and `expires = now + ttl` is evaluated afresh at every mint, so **any**
+child minted after its parent expired later than its parent, by exactly the
+delegation delay. `verify_chain` then reported `Attenuated` over a chain whose root
+had already expired: a third party holding only the kernel public key — the party
+detached-chain presentation exists to serve (ADR-0003) — was told the delegation was
+legitimately derived, when the authority it derived from no longer existed.
+
+Enforced now in two places from **one matcher**, as scope and capability containment
+already are, so the two cannot drift:
+
+- **At mint.** The delegating parent's `expires_at` is passed to the issuer as a
+  ceiling and the child is issued with the earlier of that and the issuer's own TTL.
+  A delegation from a parent that has **already expired** is refused with
+  `Unauthorized` before the proof-of-possession, so it burns no nonce; an unreadable
+  parent expiry is expired and refused by the same rule. The mint then checks the
+  document the issuer actually returned and withholds a child that still exceeds its
+  parent — a ceiling an issuer may ignore is not a guarantee.
+- **At verify.** `verify_chain_at` refuses a chain in which any child's `expires_at`
+  exceeds its parent's (`NotAttenuated`, true at every instant), and one in which any
+  **ancestor** has lapsed at the verification instant (`Expired`, a new verdict). The
+  leaf's own standing is still not consulted — that is vaid#76, open.
+
+Clamping rather than refusing was measured, not assumed: refusing an over-long child
+leaves an issuer with a fixed TTL unable to delegate at all beyond the whole second
+in which the parent was minted.
+
+This matches `draft-niyikiza-oauth-attenuating-agent-tokens-01` §4.4 invariant **I3**
+(TTL monotonicity) on the `exp` half. `iat` monotonicity is not enforced.
+
+**No signed field changes, no new member, no `sig_version` bump.** The break is
+behavioural: documents that verified as attenuated yesterday may now verify as
+`Expired` or `NotAttenuated`, and delegated children are shorter-lived than the
+issuer's TTL alone would give them.
+
+### Added — `chain_expiry_v1.json`, a predicate conformance vector
+
+Two surfaces, byte-identical across Rust, Python and TypeScript: `expiry_containment`
+pins the matcher (equality permitted, one second later refused, comparison by parsed
+instant rather than by string, absent or unreadable fails closed) and `cases` pins the
+walk (an expired root, an expired intermediate, a child outliving its parent, and two
+positive controls). Every chain case states the instant its verdict is asserted at.
+
+### Changed — `chain_v1.json` states its verification instant
+
+The vector's three documents expired on 2026-06-05 and its verdict was asserted
+against the wall clock, so from that date it was pinning `attenuated` over a chain
+whose every ancestor was dead — and all three implementations agreed with it. It now
+carries `expected.verification_instant`, which is normative. **No document in it
+moved**: every per-hop digest and signature is unchanged, and only the top-level
+contract digest, which covers the expectation, differs.
+
+### Changed — BREAKING: the issuer seam takes an expiry ceiling
+
+`issue_vaid_with_key` / `issueVaidWithKey` and `issue_vaid_with_lineage` /
+`issueVaidWithLineage` take a `not_after` upper bound on the issued `expires_at`
+(`None`/absent on the root path — a root has no parent to be contained by).
+Third-party issuer implementations must add the parameter; in Rust and TypeScript
+this is a compile error rather than a silent behaviour change.
+
+### Added — `is_expired_at` / `Vaid::is_expired_at` / `isExpired(vaid, now)`
+
+The standing predicate against a stated instant rather than the wall clock, so a
+chain's verdict is reproducible (BACKLOG B9, on the verify side). `is_expired`
+remains the wall-clock convenience.
+
 ## [0.7.0]
 
 ### Fixed — a verifier canonicalizes the member VALUES it was presented (BACKLOG B7)

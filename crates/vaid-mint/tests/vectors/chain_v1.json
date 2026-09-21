@@ -1,5 +1,5 @@
 {
-  "_comment": "Chain-presentation conformance vector (v1), per ADR-0003 §3. ADDITIVE: it introduces no new signed field and no new encoding rule inside signed bytes. `mint_v1.json` and `mint_pop_v1.json` are untouched and are NOT re-frozen by this vector's existence. Each entry of `chain` is an ordinary v3 VAID document, UNSIGNED (`kernel_signature` empty); a conforming implementation MUST reproduce each `digest_sha256_hex` by nulling `kernel_signature`, canonicalizing per JCS (RFC 8785) and SHA-256, and MUST reproduce each `signature_hex` from the kernel seed. What this vector pins BEYOND mint_v1 is the walk: presented with these three documents (the leaf plus the two ancestors as a detached bundle), a conforming verifier MUST assemble exactly `expected.assembled_lineage` — ORDERED ROOT FIRST, LEAF LAST — and MUST reach `expected.verification`. Authority narrows strictly at every hop in BOTH dimensions (scope by prefix extension, capabilities by removal), and `tenant_id` and `trust_domain` are constant across the chain, because cross-tenant delegation is denied at mint. Revocation and expiry are NOT consulted by chain verification and are not represented here. `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this vector publishes its own kernel private seed, so anyone can sign documents under it — a real trust domain here would be a published forgery generator for that deployment. RFC 2606 reserves `.example`. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
+  "_comment": "Chain-presentation conformance vector (v1), per ADR-0003 §3. ADDITIVE: it introduces no new signed field and no new encoding rule inside signed bytes. `mint_v1.json` and `mint_pop_v1.json` are untouched and are NOT re-frozen by this vector's existence. Each entry of `chain` is an ordinary v3 VAID document, UNSIGNED (`kernel_signature` empty); a conforming implementation MUST reproduce each `digest_sha256_hex` by nulling `kernel_signature`, canonicalizing per JCS (RFC 8785) and SHA-256, and MUST reproduce each `signature_hex` from the kernel seed. What this vector pins BEYOND mint_v1 is the walk: presented with these three documents (the leaf plus the two ancestors as a detached bundle), a conforming verifier MUST assemble exactly `expected.assembled_lineage` — ORDERED ROOT FIRST, LEAF LAST — and MUST reach `expected.verification`. Authority narrows strictly at every hop in BOTH dimensions (scope by prefix extension, capabilities by removal), and `tenant_id` and `trust_domain` are constant across the chain, because cross-tenant delegation is denied at mint. Revocation is NOT consulted by chain verification and is not represented here. EXPIRY NOW IS: since vaid#79, a chain with a lapsed ancestor is `expired` and a child outliving its parent is `not_attenuated`. This vector is a positive control for that rule — all three documents share one expiry, so containment holds with equality — and it is asserted at `expected.verification_instant`, without which the verdict below would be false. The negative cases live in `chain_expiry_v1.json`. `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this vector publishes its own kernel private seed, so anyone can sign documents under it — a real trust domain here would be a published forgery generator for that deployment. RFC 2606 reserves `.example`. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
   "chain": [
     {
       "_role": "root",
@@ -183,7 +183,7 @@
       "signature_hex": "0bc3dcf68478ad5e839c76328bece0d8de7e1c347ef41d955dd5afd76d1069610aa3c37b07d90f5041d73cd1c668627feb50038544ad762c6098215ff2159100"
     }
   ],
-  "digest_sha256_hex": "991e5e655b46a0e5274e053606497e116f0a9c4869142b9df4a702faa39ad607",
+  "digest_sha256_hex": "15fc10fd10f7e25140624e6a6800b670834ffa4345a4cc16bf4fa0037161b84a",
   "ed25519": {
     "_comment": "Deterministic kernel key (same RFC 8032 seed as mint_v1.json and operator_pop_v1.json). EVERY hop is signed by this ONE key: the chain is single-trust-domain, which is what the shipped verifier supports.",
     "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
@@ -191,12 +191,13 @@
     "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
   },
   "expected": {
-    "_comment": "`assembled_lineage` is the output of assembling the leaf's ancestry against a bundle holding the other two documents: root first, leaf last. `verification` is the verdict of full chain verification — authenticate every document, pin each hop against the signed `parent_vaid`, then check containment at every hop.",
+    "_comment": "`assembled_lineage` is the output of assembling the leaf's ancestry against a bundle holding the other two documents: root first, leaf last. `verification` is the verdict of full chain verification — authenticate every document, pin each hop against the signed `parent_vaid`, then check containment at every hop. `verification_instant` is the instant the verdict is asserted AT, and it is normative: a conforming implementation MUST evaluate this chain at exactly this instant, not at its own clock. It was added in the same change that made chain verification refuse a chain with a lapsed ancestor (vaid#79). Before that, the verdict below was asserted against whatever the clock said, and these three documents expired on 2026-06-05 — so from that date on, this vector was pinning ATTENUATED over a chain whose every ancestor was dead, and every implementation passed. The instant is inside `digest_sha256_hex` because it is part of the contract: the verdict does not mean anything without it. No document changed, no signed byte moved, no per-hop digest or signature moved, and `sig_version` is untouched; only the top-level contract digest, which covers this expectation, does.",
     "assembled_lineage": [
       "c0000000-0000-0000-0000-000000000001",
       "c0000000-0000-0000-0000-000000000002",
       "c0000000-0000-0000-0000-000000000003"
     ],
-    "verification": "attenuated"
+    "verification": "attenuated",
+    "verification_instant": "2026-06-04T18:00:00Z"
   }
 }

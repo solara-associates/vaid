@@ -68,7 +68,12 @@ class LocalMint:
             version="1.0.0",
             tenant_id=tenant,
             issued_at="2026-06-04T12:00:00Z",
-            expires_at="2026-06-05T12:00:00Z",
+            # Far-future by convention (verdict_v1: "pinned by distance, not by a
+            # clock"). This fixture carried 2026-06-05, a date that was future when
+            # it was written and is past now — so every delegation below was a
+            # delegation from an ALREADY-EXPIRED parent, which only passed because
+            # nothing compared the two expiries (vaid#79).
+            expires_at="2999-01-01T00:00:00Z",
             public_key_der=list(range(32)),
             parent_vaid=parent_vaid,
             scope_boundary=scope,

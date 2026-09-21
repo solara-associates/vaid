@@ -7,7 +7,9 @@ Identity) standard. It does two things:
   verified proof-of-possession, or generate-and-discard.
 - **`mint_child`** — **attenuated delegation**: an authenticated parent VAID
   mints a child whose authority is always a *subset* of its own
-  (`child ⊆ parent`), verified fail-closed at mint time.
+  (`child ⊆ parent`), verified fail-closed at mint time. Lifetime is part of
+  authority: the child is clamped to the parent's `expires_at` and cannot outlive
+  it (ADR-0007).
 
 ## Install
 
@@ -133,9 +135,17 @@ consumed:
    empty-child guard: empty child scope = ⊤ is allowed only under an empty/⊤
    parent);
 5. every child capability is held by the parent (`has_capability`);
+5a. the parent has **not already expired** — its `expires_at` is the ceiling the
+   child is clamped to, and a ceiling in the past would issue a child dead on
+   arrival (ADR-0007). An unreadable parent expiry is expired;
 6. the child proves possession of its BYO key.
 
-Scope and capabilities use the **single** matchers on the VAID document, so
+The child is then issued with the earlier of the issuer's TTL and the parent's
+`expires_at`, and the **document that comes back is checked against the parent**:
+the ceiling is an instruction to the issuer seam, and an issuer that ignores it does
+not get to put an over-long child into circulation through this mint.
+
+Scope, capabilities and expiry use the **single** matchers on the VAID document, so
 mint-time containment and any runtime check cannot drift.
 
 ## Reuse, not reimplementation

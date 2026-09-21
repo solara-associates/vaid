@@ -15,7 +15,11 @@
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::Value;
 
-use vaid_mint::chain::{verify_chain, ChainVerification, PresentedBundle};
+use chrono::{DateTime, Utc};
+use vaid_mint::attestation::AttestationBundle;
+use vaid_mint::chain::{
+    verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey,
+};
 use vaid_mint::revocation::{assemble_lineage, LineageAssembly};
 use vaid_mint::{canonical_vaid_signing_bytes, Vaid};
 
@@ -126,6 +130,12 @@ fn reproduces_the_frozen_assembled_lineage() {
 
 /// THE WALK, part 2: the verdict. This is the assertion the vector exists for —
 /// two implementations could agree on every digest and still disagree here.
+///
+/// Asserted AT the vector's own `verification_instant`. It used to be asserted
+/// against the wall clock, and these three documents expired on 2026-06-05: from
+/// that date this test was pinning `attenuated` over a chain whose every ancestor
+/// was dead, and it passed, because nothing consulted expiry (vaid#79). A verdict
+/// that depends on the calendar is not frozen.
 #[test]
 fn reproduces_the_frozen_verification_verdict() {
     let v = vector();
@@ -138,7 +148,21 @@ fn reproduces_the_frozen_verification_verdict() {
     let leaf = docs.last().expect("chain is non-empty").clone();
     let bundle = PresentedBundle::new(docs);
 
-    let verdict = verify_chain(&kernel_public_key(&v), &leaf, &bundle);
+    let instant: DateTime<Utc> = DateTime::parse_from_rfc3339(
+        v["expected"]["verification_instant"]
+            .as_str()
+            .expect("the vector must state the instant its verdict holds at"),
+    )
+    .expect("verification_instant must be RFC 3339")
+    .with_timezone(&Utc);
+
+    let verdict = verify_chain_at(
+        &SingleKernelKey::new(&kernel_public_key(&v)),
+        &leaf,
+        &bundle,
+        &AttestationBundle::default(),
+        instant,
+    );
 
     let expected = v["expected"]["verification"].as_str().unwrap();
     let actual = match verdict {
@@ -146,6 +170,7 @@ fn reproduces_the_frozen_verification_verdict() {
         ChainVerification::Inauthentic => "inauthentic",
         ChainVerification::Unverifiable => "unverifiable",
         ChainVerification::NotAttenuated => "not_attenuated",
+        ChainVerification::Expired => "expired",
         ChainVerification::ConsentExpired => "consent_expired",
     };
     assert_eq!(actual, expected, "chain verification verdict drift");

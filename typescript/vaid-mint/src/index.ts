@@ -91,6 +91,11 @@ export {
   // all: Python exported it, Rust kept it crate-private, and this package
   // defined it as `export` in the module but never re-exported it here.
   scopeAttenuatesWithin,
+  // Expiry containment (vaid#79), both forms: over a parent document, and over two
+  // bare timestamps — the form the mint needs before the child's document exists,
+  // and the form `chain_expiry_v1.json` pins as a predicate.
+  expiryAttenuates,
+  expiryAttenuatesWithin,
   tenantAttenuates,
 } from './mint.js';
 

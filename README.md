@@ -137,7 +137,8 @@ records.
 
 - **`vaid-mint`** — the reference mint, in all three languages. It issues VAIDs and
   supports attenuated delegation, where a child's authority is always a subset of
-  its parent's. All three enforce TTL at verification and expose a pluggable
+  its parent's — scope, capabilities, tenant, and, since ADR-0007, lifetime: a
+  child is clamped to its parent's expiry and cannot outlive it. All three enforce TTL at verification and expose a pluggable
   three-state, lineage-aware `RevocationCheck` seam
   ([`docs/spec/revocation.md`](docs/spec/revocation.md) R.4). Revoking a parent
   revokes its attenuated children, and verification fails closed when revocation
@@ -172,14 +173,17 @@ separate questions with separate answers.
 ([ADR-0003](docs/adr/0003-attenuation-verification-via-detached-chain.md)) — a leaf
 carries its own scope and capabilities, not its ancestors', so authenticity alone
 cannot answer *was this authority legitimately derived*. The presenter supplies the
-ancestor documents alongside the leaf and the verifier walks them. No new signed
+ancestor documents alongside the leaf and the verifier walks them, checking scope,
+capabilities, tenant and expiry at every hop, and refusing a chain whose root or
+intermediate has already lapsed (`Expired`, ADR-0007). No new signed
 field was needed: `parent_vaid` is already inside the canonical signing bytes, so
 the chain is pinned by the signature that already exists.
 
-The result is deliberately four-valued rather than boolean —
-`Attenuated`, `Inauthentic`, `Unverifiable`, `NotAttenuated` — because collapsing
-them is how a verifier reports *attenuation satisfied* when it means *attenuation
-unverifiable*.
+The result is deliberately many-valued rather than boolean — `Attenuated`,
+`Inauthentic`, `Unverifiable`, `NotAttenuated`, `Expired`, `ConsentExpired` —
+because collapsing them is how a verifier reports *attenuation satisfied* when it
+means *attenuation unverifiable*, or reports *you were never authorized* when it
+means *this delegation has run out*.
 
 **Cross-issuer delegation needs consent.** When a hop crosses kernel keys, the
 child must present a **consent attestation** signed by the issuer that minted the
@@ -309,6 +313,7 @@ The cross-language set:
 | `mint_v1.json` | the signed VAID document |
 | `mint_pop_v1.json` | the mint-time proof-of-possession |
 | `chain_v1.json` | detached chain presentation |
+| `chain_expiry_v1.json` | expiry containment — a child may not outlive its parent, and a lapsed ancestor is not attenuation |
 | `attestation_v1.json` | cross-issuer consent attestations |
 | `scope_v1.json` | segment-bounded scope containment |
 | `roundtrip_v1.json` | verification over presented bytes |
@@ -316,7 +321,8 @@ The cross-language set:
 | `pathquery_v1.json` | path-with-query canonicalization |
 | `completion_v1.json` | completion records |
 
-Every vector above `verdict_v1.json` pins a success. That leaves a gap those
+Every vector above `verdict_v1.json` pins a success, and `chain_expiry_v1.json`
+carries its own positive controls for the same reason. That leaves a gap those
 vectors cannot close: they prove the implementations agree on documents that
 *work*, and say nothing about whether they agree on documents that do not. A
 verifier accepting an expired VAID in one language and rejecting it in another is

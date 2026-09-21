@@ -6,7 +6,9 @@ end-to-end verify). These are behavioral, not byte-identity; the frozen vector
 
 from __future__ import annotations
 
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -76,7 +78,12 @@ def parent_doc(tenant, scope, caps) -> dict:
         version="1.0.0",
         tenant_id=tenant,
         issued_at="2026-06-04T12:00:00Z",
-        expires_at="2026-06-05T12:00:00Z",
+        # Far-future by convention (verdict_v1: "pinned by distance, not by a
+        # clock"). This fixture carried 2026-06-05, a date that was future when
+        # it was written and is past now — so every delegation below was a
+        # delegation from an ALREADY-EXPIRED parent, which only passed because
+        # nothing compared the two expiries (vaid#79).
+        expires_at="2999-01-01T00:00:00Z",
         public_key_der=[],
         parent_vaid=None,
         scope_boundary=list(scope),
@@ -311,3 +318,170 @@ def test_minted_child_verifies_and_is_contained_by_parent():
     assert all(has_capability(parent, c) for c in child["capability_set"])
     # sanity: the derived lineage_hash on the child is self-consistent
     assert child["lineage_hash"] == compute_lineage_hash(child["parent_vaid"], child["agent_id"])
+
+
+# ── expiry containment at mint (vaid#79) ──
+
+
+def _parent_expiring_in(seconds: int) -> dict:
+    """A parent whose expiry sits ``seconds`` either side of now. Anchored to the
+    clock rather than to a hard-coded date, because a hard-coded date is how this
+    file's own parent fixture quietly became an expired parent."""
+    p = parent_doc("acme", ["data.x"], ["read"])
+    p["expires_at"] = (
+        datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return p
+
+
+def test_a_child_is_clamped_to_its_parents_expiry():
+    """The mint half of vaid#79. The issuer's TTL is an hour; the parent has ten
+    minutes left; the child gets the parent's expiry, not the issuer's."""
+    svc, _, issuer = fixture()  # ReferenceIssuer.ephemeral(1, ...) — a 1-hour TTL
+    parent = _parent_expiring_in(600)
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "clamp-1")
+    child = svc.mint_child(seed, parent, pop)
+
+    assert child["expires_at"] == parent["expires_at"], (
+        "the child must end exactly when its parent does, not an hour later"
+    )
+
+
+def test_a_child_keeps_the_issuer_ttl_when_it_is_the_earlier_bound():
+    """THE CONTROL on the clamp. A clamp that always returned the parent's expiry
+    would pass the test above and would be wrong: the issuer's own TTL still binds
+    when it is the shorter of the two. Without this case, `min` and `parent` are
+    indistinguishable."""
+    svc, _, _ = fixture()
+    parent = _parent_expiring_in(86_400)  # a day out; the issuer's TTL is an hour
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "clamp-2")
+    child = svc.mint_child(seed, parent, pop)
+
+    assert child["expires_at"] < parent["expires_at"], (
+        "the issuer's TTL is the earlier bound here and must still apply"
+    )
+
+
+def test_delegation_works_across_a_second_boundary():
+    """The regression this policy exists for. Under a refuse-instead-of-clamp rule,
+    ONE issuer with ONE TTL could only delegate inside the same whole second as the
+    parent's mint: `expires = now + ttl` is re-evaluated at every mint, so a child
+    minted a second later outlived its parent by a second and was refused. Measured,
+    not assumed — this test sleeps past a second boundary."""
+    audit = InMemoryAudit()
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    svc = MintService(issuer, audit)
+    parent = svc.mint_root(
+        VaidSeed(
+            agent_class="parent",
+            version="1.0.0",
+            tenant_id="aifactory",
+            scope_boundary=["data.aifactory"],
+            capability_set=["read"],
+        )
+    )
+
+    time.sleep(1.1)
+
+    seed, pop = signed_child(parent, ["data.aifactory"], ["read"], "boundary")
+    child = svc.mint_child(seed, parent, pop)
+
+    assert child["expires_at"] <= parent["expires_at"]
+
+
+def test_delegating_from_an_already_expired_parent_is_refused():
+    """The one case a clamp cannot answer: the ceiling is in the past, so the child
+    would be issued dead. Refused before the PoP, with both expiries named."""
+    svc, _, _ = fixture()
+    parent = _parent_expiring_in(-60)
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "dead-parent")
+    with pytest.raises(UnauthorizedError) as e:
+        svc.mint_child(seed, parent, pop)
+
+    message = str(e.value)
+    assert parent["expires_at"] in message, (
+        "the refusal must name the parent's expiry — a caller that cannot see which "
+        "bound it hit has to guess"
+    )
+    assert "expired" in message
+
+
+def test_an_unreadable_parent_expiry_refuses_the_delegation():
+    """Fail closed: an expiry that cannot be read is expired, so it is refused by
+    the same line rather than clamped to a ceiling nobody can evaluate."""
+    svc, _, _ = fixture()
+    parent = parent_doc("acme", ["data.x"], ["read"])
+    parent["expires_at"] = "whenever"
+
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "unreadable")
+    with pytest.raises(UnauthorizedError):
+        svc.mint_child(seed, parent, pop)
+
+
+def test_refusing_a_dead_parent_does_not_consume_the_pop_nonce():
+    """The refusal sits with the other containment checks, BEFORE the PoP, so a
+    caller that renews the parent and retries is not denied for the wrong reason."""
+    svc, _, _ = fixture()
+    dead = _parent_expiring_in(-60)
+    live = _parent_expiring_in(600)
+
+    seed, pop = signed_child(dead, ["data.x"], ["read"], "shared-nonce")
+    with pytest.raises(UnauthorizedError):
+        svc.mint_child(seed, dead, pop)
+
+    seed_ok, pop_ok = signed_child(live, ["data.x"], ["read"], "shared-nonce")
+    assert svc.mint_child(seed_ok, live, pop_ok)["vaid_id"]
+
+
+def test_an_issuer_that_ignores_the_ceiling_is_caught_and_the_child_withheld():
+    """Step 7a. `not_after` is an instruction to a seam a deployment supplies; the
+    invariant is a property of the document. An issuer written before this rule — or
+    one that simply gets it wrong — must not be able to put an over-long child into
+    circulation through this mint."""
+    svc, _, issuer = fixture()
+    parent = _parent_expiring_in(600)
+
+    class IgnoresTheCeiling:
+        """Delegates everything to the real issuer but drops the ceiling."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def issue_vaid_with_key(self, **kwargs):
+            kwargs.pop("not_after", None)
+            return self._inner.issue_vaid_with_key(**kwargs)
+
+    svc._issuer = IgnoresTheCeiling(issuer)
+    seed, pop = signed_child(parent, ["data.x"], ["read"], "bad-issuer")
+
+    with pytest.raises(UnauthorizedError) as e:
+        svc.mint_child(seed, parent, pop)
+    assert "not_after" in str(e.value)
+
+
+def test_the_root_path_is_unclamped():
+    """A root has no parent to be contained by, so nothing bounds its TTL. Stated as
+    a test because a clamp applied indiscriminately would silently shorten every
+    root mint in the estate."""
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    svc = MintService(issuer, InMemoryAudit())
+
+    root = svc.mint_root(
+        VaidSeed(
+            agent_class="root",
+            version="1.0.0",
+            tenant_id="acme",
+            scope_boundary=["data.acme"],
+            capability_set=["read"],
+        )
+    )
+
+    issued = datetime.strptime(root["issued_at"], "%Y-%m-%dT%H:%M:%SZ")
+    expires = datetime.strptime(root["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
+    assert expires - issued == timedelta(hours=1), "the issuer's full TTL applies"

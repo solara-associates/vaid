@@ -34,7 +34,7 @@ import {
   canonicalAttestationSigningBytes,
   type ConsentAttestation,
 } from './attestation.js';
-import { MintError } from './error.js';
+import { MintError, UnauthorizedError } from './error.js';
 import { isValidTrustDomain, kernelKeyThumbprint } from './issuerIdentity.js';
 import {
   ed25519PublicKey,
@@ -99,15 +99,26 @@ export interface VaidIssuer {
    * Issue a VAID under a caller-supplied public key (the BYO-key path — the mint
    * has already verified proof-of-possession of the matching private key). The
    * issuer signs the document with the kernel key.
+   *
+   * `notAfter` is an upper bound on the issued `expires_at`: the mint passes the
+   * delegating parent's expiry, and the issued document ends at the earlier of that
+   * and this issuer's own TTL (vaid#79). Absent — the root path — means no ceiling.
+   * An issuer that ignores it emits a child outliving its parent;
+   * {@link MintService.mintChild} checks the returned document and withholds it, so
+   * ignoring the ceiling is caught rather than trusted.
    */
-  issueVaidWithKey(attributes: IssueAttributes, publicKeyDer: Uint8Array): Vaid;
+  issueVaidWithKey(
+    attributes: IssueAttributes,
+    publicKeyDer: Uint8Array,
+    notAfter?: string | null,
+  ): Vaid;
 
   /**
    * Issue a VAID under an issuer-generated keypair, discarding the private half
    * (no holder key is registered, so no PoP applies). The generate-and-discard
    * root/bootstrap path.
    */
-  issueVaidWithLineage(attributes: IssueAttributes): Vaid;
+  issueVaidWithLineage(attributes: IssueAttributes, notAfter?: string | null): Vaid;
 
   /**
    * Verify a VAID against this issuer: correct signature scheme, kernel signature
@@ -323,11 +334,35 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
     return this.#revocation.checkLineage(lineage);
   }
 
-  #buildAndSign(attributes: IssueAttributes, publicKeyDer: Uint8Array): Vaid {
+  #buildAndSign(
+    attributes: IssueAttributes,
+    publicKeyDer: Uint8Array,
+    notAfter?: string | null,
+  ): Vaid {
     const agentId = crypto.randomUUID();
     const vaidId: VaidId = agentId; // VaidId::from_uuid(agent_id) — the same UUID.
     const now = new Date();
-    const expires = new Date(now.getTime() + attributesTtlMillis(this.#vaidTtlHours));
+    let expires = new Date(now.getTime() + attributesTtlMillis(this.#vaidTtlHours));
+
+    // CLAMP (vaid#79). `notAfter` is the delegating parent's own expiry, and a child
+    // may not outlive the authority it derives from — so this issuer's TTL is a
+    // ceiling on the child's life, not a promise about it. Without the clamp,
+    // `now + ttl` is re-evaluated at every mint and a child issued one second after
+    // its parent outlives it by one second, every time.
+    //
+    // Applied HERE rather than in the mint because only the issuer knows what it
+    // would otherwise have stamped. The mint checks the returned document anyway
+    // (`mintChild` step 7a): a cap the issuer may ignore is not a guarantee.
+    if (notAfter != null) {
+      const ceiling = Date.parse(notAfter);
+      if (Number.isNaN(ceiling)) {
+        throw new UnauthorizedError(
+          `not_after '${notAfter}' is not a readable RFC 3339 timestamp — an ` +
+            'expiry ceiling that cannot be read bounds nothing',
+        );
+      }
+      if (ceiling < expires.getTime()) expires = new Date(ceiling);
+    }
     const lineageHash = computeLineageHash(attributes.parentVaid, agentId);
 
     // Build the full document with an empty signature, sign its canonical bytes
@@ -360,15 +395,19 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
     return vaid;
   }
 
-  issueVaidWithKey(attributes: IssueAttributes, publicKeyDer: Uint8Array): Vaid {
-    return this.#buildAndSign(attributes, publicKeyDer);
+  issueVaidWithKey(
+    attributes: IssueAttributes,
+    publicKeyDer: Uint8Array,
+    notAfter?: string | null,
+  ): Vaid {
+    return this.#buildAndSign(attributes, publicKeyDer, notAfter);
   }
 
-  issueVaidWithLineage(attributes: IssueAttributes): Vaid {
+  issueVaidWithLineage(attributes: IssueAttributes, notAfter?: string | null): Vaid {
     // Generate a keypair and discard the private half — no holder key is
     // registered, so no proof-of-possession applies.
     const agentSeed = randomEd25519Seed();
-    return this.#buildAndSign(attributes, ed25519PublicKey(agentSeed));
+    return this.#buildAndSign(attributes, ed25519PublicKey(agentSeed), notAfter);
   }
 
   verifyVaid(vaid: Vaid): boolean {
