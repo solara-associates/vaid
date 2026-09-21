@@ -49,6 +49,28 @@ behavioural: documents that verified as attenuated yesterday may now verify as
 `Expired` or `NotAttenuated`, and delegated children are shorter-lived than the
 issuer's TTL alone would give them.
 
+### Added — the clamp is visible to the caller, not only in a shorter `expires_at`
+
+A delegated child is **clamped** to its parent's expiry rather than refused for
+exceeding it, and the objection to clamping is that an issuer handing back a
+credential shorter than its stated policy is a surprise the caller cannot see:
+`expires_at` alone looks like an ordinary expiry, and a caller would have to know
+the issuer's TTL and subtract to notice. So the mint says it outright.
+
+The mint response carries **`expiry_bounded_by_parent`** — true exactly when the
+issued `expires_at` equals the parent's, false for a root mint — and
+**`parent_expires_at`**, so the caller can see the bound itself and not only that
+one applied. The delegated audit entry records both alongside the issued expiry, so
+a caller that ignores the response still leaves a trail explaining why a credential
+was short-lived.
+
+### Changed — BREAKING (Python only): `mint_child` returns a response, not the document
+
+`MintChildResponse`, carrying `.vaid` plus the two fields above.
+`vaid = svc.mint_child(...)` becomes `vaid = svc.mint_child(...).vaid`. The Rust and
+TypeScript twins already returned a response object, so this brings Python into line
+rather than inventing a shape. `mint_root` is unchanged.
+
 ### Added — `chain_expiry_v1.json`, a predicate conformance vector
 
 Two surfaces, byte-identical across Rust, Python and TypeScript: `expiry_containment`

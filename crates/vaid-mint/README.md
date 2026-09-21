@@ -141,7 +141,10 @@ consumed:
 6. the child proves possession of its BYO key.
 
 The child is then issued with the earlier of the issuer's TTL and the parent's
-`expires_at`, and the **document that comes back is checked against the parent**:
+`expires_at` — and the response says whether that bound bit, via
+`expiry_bounded_by_parent` and `parent_expires_at`, because a credential silently
+shorter than the issuer's stated policy is a surprise a caller cannot see. The
+**document that comes back is checked against the parent** too:
 the ceiling is an instruction to the issuer seam, and an issuer that ignores it does
 not get to put an over-long child into circulation through this mint.
 

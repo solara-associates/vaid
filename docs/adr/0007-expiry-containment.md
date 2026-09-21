@@ -63,6 +63,32 @@ parent's expiry does not. A refusing mint can only delegate inside the whole sec
 in which its parent was minted. That is not a rule anyone would keep; they would
 remove it.
 
+### 1a. The clamp is REPORTED to the caller
+
+`MintVaidResponse` (`MintChildResponse` in Python) carries
+`expiry_bounded_by_parent` and the parent's `expires_at`, and the delegated audit
+entry records both.
+
+The objection to clamping is real and is not answered by clamping being the right
+default: an issuer that hands back a credential shorter than its stated policy,
+saying nothing, has made "why did my 24-hour VAID last four minutes" a support
+question. `expires_at` alone does not answer it — it looks like an ordinary expiry,
+and a caller would have to know the issuer's TTL and subtract to notice anything had
+happened.
+
+Computed from the two documents (`child.expires_at == parent.expires_at`) rather
+than reported by the issuer, because the issuer seam returns a document and nothing
+else, and because a statement about the signed bytes describes what the caller is
+actually holding rather than what the issuer meant. The one inexact case is a tie —
+an issuer whose TTL lands exactly on the parent's expiry reports `true` although
+nothing was taken away — so the field is named for what is literally true of the
+document rather than for the issuer's arithmetic.
+
+In Python this forced `mint_child` to stop returning the bare document. That is a
+breaking change and it is the right one: Rust and TypeScript already returned a
+response object, and the alternative — a second method, or a mutable out-parameter —
+would have left the signal easy to not read.
+
 ### 2. A delegation from an ALREADY-EXPIRED parent is refused
 
 The one case a clamp cannot answer: the ceiling is in the past, so the child would be

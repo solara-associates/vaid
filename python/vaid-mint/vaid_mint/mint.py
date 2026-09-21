@@ -37,7 +37,12 @@ from vaid_mint.document import (
 )
 from vaid_mint.error import IdentityError, UnauthorizedError
 from vaid_mint.issuer import ReferenceIssuer
-from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
+from vaid_mint.mint_types import (
+    MintChildResponse,
+    MintPop,
+    VaidSeed,
+    build_mint_pop_payload,
+)
 
 # Freshness window for a mint proof-of-possession, in seconds.
 MINT_POP_FRESHNESS_SECS = 300
@@ -240,7 +245,9 @@ class MintService:
         )
         return vaid
 
-    def mint_child(self, seed: VaidSeed, parent: dict | None, pop: MintPop | None = None) -> dict:
+    def mint_child(
+        self, seed: VaidSeed, parent: dict | None, pop: MintPop | None = None
+    ) -> MintChildResponse:
         """Attenuated delegation — mirror of the Rust ``mint_child``. All of
         (parent present, same tenant, bound lineage, scope ⊆, caps ⊆, parent still
         live) are checked fail-closed BEFORE the PoP so a rejected delegation never
@@ -353,7 +360,22 @@ class MintService:
                 "and the child has not been returned"
             )
 
-        # (8) Delegated audit.
+        # (8) Was the child's life cut short by its parent's, rather than by this
+        # issuer's TTL? Computed from the two documents rather than reported by the
+        # issuer: the issuer returns a document and nothing else, and reading the
+        # SIGNED bytes is the stronger statement anyway — it describes the document
+        # the caller is actually holding, not the issuer's intent.
+        #
+        # The one inexact case is a tie: an issuer whose TTL lands exactly on the
+        # parent's expiry sets this true although nothing was taken away. The field
+        # is named for what is literally true of the document — the child's expiry
+        # IS the parent's bound — rather than for the issuer's arithmetic, so the
+        # tie is still an accurate statement.
+        expiry_bounded_by_parent = vaid["expires_at"] == parent["expires_at"]
+
+        # (9) Delegated audit — distinguishes the delegation tree from root mints,
+        # and records the shortening, so a caller that ignored the response can
+        # still find out from the audit trail why a credential was short-lived.
         self._audit.record(
             "vaid_minted",
             {
@@ -367,6 +389,13 @@ class MintService:
                 "delegated": True,
                 "attenuation_verified": True,
                 "parent_tenant": parent["tenant_id"],
+                "expiry_bounded_by_parent": expiry_bounded_by_parent,
+                "expires_at": vaid["expires_at"],
+                "parent_expires_at": parent["expires_at"],
             },
         )
-        return vaid
+        return MintChildResponse(
+            vaid=vaid,
+            expiry_bounded_by_parent=expiry_bounded_by_parent,
+            parent_expires_at=parent["expires_at"],
+        )
