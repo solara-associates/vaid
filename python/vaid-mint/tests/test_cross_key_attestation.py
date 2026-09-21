@@ -74,7 +74,12 @@ class Org:
             version="1.0.0",
             tenant_id=tenant,
             issued_at="2026-06-04T12:00:00Z",
-            expires_at="2026-06-05T12:00:00Z",
+            # Far-future by convention (verdict_v1: "pinned by distance, not by a
+            # clock"). This fixture carried 2026-06-05, a date that was future when
+            # it was written and is past now — so every delegation below was a
+            # delegation from an ALREADY-EXPIRED parent, which only passed because
+            # nothing compared the two expiries (vaid#79).
+            expires_at="2999-01-01T00:00:00Z",
             public_key_der=list(range(32)),
             parent_vaid=parent_vaid,
             scope_boundary=scope,
@@ -716,10 +721,27 @@ def test_a_forged_and_expired_attestation_reports_inauthentic() -> None:
     ), "forgery outranks staleness in the verdict"
 
 
-def test_an_expired_parent_document_does_not_affect_the_verdict() -> None:
-    """Document expiry stays UNCONSULTED. An attestation may outlive the parent VAID
-    it delegates from; this pass deliberately does not change that. Pinned so the
-    property is not lost by accident."""
+def test_an_expired_parent_document_is_expired_not_attenuated() -> None:
+    """An ancestor past its own ``expires_at`` makes the chain ``EXPIRED``.
+
+    **This test asserted the opposite until Session 240.** It was called
+    ``test_an_expired_parent_document_does_not_affect_the_verdict``, it pinned
+    ``ATTENUATED`` over an already-expired root, and its docstring said the property
+    was pinned "so it is not lost by accident" — a defect written down as a
+    requirement, green, and load-bearing. vaid#79 is that defect; the assertion
+    below is its inversion.
+
+    Note which fault is reported. The child here ALSO outlives the expired root, so
+    two rules are broken at once; the lapse is checked before hop containment, so
+    the verdict is ``EXPIRED`` rather than ``NOT_ATTENUATED``. That order is fixed
+    in all three implementations, because three verifiers that reject the same chain
+    for three different reasons agree on every boolean and disagree about what
+    happened.
+
+    What is still NOT consulted: the LEAF's own expiry, and revocation anywhere on
+    the chain (vaid#76, open). An attestation may still outlive the parent VAID it
+    delegates from — that is the attestation's own window, checked separately.
+    """
     a, b = org_a(), org_b()
     now = datetime.now(timezone.utc)
 
@@ -745,8 +767,8 @@ def test_an_expired_parent_document_does_not_affect_the_verdict() -> None:
             AttestationBundle([consent]),
             now,
         )
-        is ChainVerification.ATTENUATED
+        is ChainVerification.EXPIRED
     ), (
-        "document expiry is not consulted by chain verification, and did not become "
-        "consulted when attestation expiry landed"
+        "a chain whose root has already expired must not report attenuated — the "
+        "authority the child derives from no longer exists (vaid#79)"
     )

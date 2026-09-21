@@ -38,13 +38,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from vaid_mint.error import IdentityError
+from vaid_mint.error import IdentityError, UnauthorizedError
 from vaid_mint.issuer_identity import (
     is_valid_trust_domain,
     kernel_key_thumbprint,
 )
 from vaid_mint.document import (
     VAID_SIG_VERSION_V3,
+    _parse_rfc3339,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
@@ -250,11 +251,32 @@ class ReferenceIssuer:
         scope_boundary: list[str],
         capability_set: list[str],
         public_key_der: bytes,
+        not_after: str | None,
     ) -> dict:
         agent_id = str(uuid.uuid4())
         vaid_id = agent_id  # VaidId::from_uuid(agent_id) — same UUID
         now = datetime.now(timezone.utc)
         expires = now + timedelta(hours=self._vaid_ttl_hours)
+
+        # CLAMP (vaid#79). ``not_after`` is the delegating parent's own expiry, and
+        # a child may not outlive the authority it derives from — so this issuer's
+        # TTL is a ceiling on the child's life, not a promise about it. Without the
+        # clamp, ``now + ttl`` is re-evaluated at every mint and a child issued one
+        # second after its parent outlives it by one second, every time.
+        #
+        # Applied HERE rather than in the mint because only the issuer knows what it
+        # would otherwise have stamped, and because an issuer that silently ignored
+        # the cap would produce an over-long child that nothing downstream could tell
+        # from a legitimate one. The mint checks the returned document anyway
+        # (``mint_child`` step 7a): a cap the issuer may ignore is not a guarantee.
+        if not_after is not None:
+            cap = _parse_rfc3339(not_after)
+            if cap is None:
+                raise UnauthorizedError(
+                    f"not_after {not_after!r} is not a readable RFC 3339 timestamp "
+                    "— an expiry ceiling that cannot be read bounds nothing"
+                )
+            expires = min(expires, cap)
         lineage_hash = compute_lineage_hash(parent_vaid, agent_id)
 
         unsigned = build_unsigned_vaid_document(
@@ -298,9 +320,16 @@ class ReferenceIssuer:
         scope_boundary: list[str],
         capability_set: list[str],
         public_key_der: bytes,
+        not_after: str | None = None,
     ) -> dict:
         """Issue under a caller-supplied public key (BYO-key path; PoP already
-        verified by the mint)."""
+        verified by the mint).
+
+        ``not_after`` is an upper bound on the issued ``expires_at``: the mint passes
+        the delegating parent's expiry, and the issued document ends at the earlier
+        of that and this issuer's own TTL (vaid#79). ``None`` — the root path — means
+        no ceiling.
+        """
         return self._build_and_sign(
             agent_class=agent_class,
             version=version,
@@ -309,6 +338,7 @@ class ReferenceIssuer:
             scope_boundary=scope_boundary,
             capability_set=capability_set,
             public_key_der=public_key_der,
+            not_after=not_after,
         )
 
     def issue_vaid_with_lineage(
@@ -320,8 +350,13 @@ class ReferenceIssuer:
         parent_vaid: str | None,
         scope_boundary: list[str],
         capability_set: list[str],
+        not_after: str | None = None,
     ) -> dict:
-        """Issue under an issuer-generated keypair, discarding the private half."""
+        """Issue under an issuer-generated keypair, discarding the private half.
+
+        ``not_after`` bounds the issued ``expires_at`` exactly as in
+        :meth:`issue_vaid_with_key`.
+        """
         ephemeral = Ed25519PrivateKey.generate()
         public_key_der = ephemeral.public_key().public_bytes_raw()
         return self._build_and_sign(
@@ -332,6 +367,7 @@ class ReferenceIssuer:
             scope_boundary=scope_boundary,
             capability_set=capability_set,
             public_key_der=public_key_der,
+            not_after=not_after,
         )
 
     def verify_vaid(self, vaid: dict) -> bool:

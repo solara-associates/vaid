@@ -26,6 +26,7 @@ fn issue_root(issuer: &ReferenceIssuer, class: &str) -> vaid_mint::document::Vai
             None,
             vec![],
             vec![],
+            None,
         )
         .unwrap()
 }
@@ -45,6 +46,7 @@ fn issue_child(
             Some(parent.vaid_id()),
             vec![],
             vec![],
+            None,
         )
         .unwrap()
 }

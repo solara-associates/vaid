@@ -66,9 +66,11 @@ from vaid_mint.attestation import (
     verify_attestation_authenticity,
 )
 from vaid_mint.issuer_identity import kernel_key_thumbprint
+from vaid_mint.document import is_expired_at
 from vaid_mint.mint import (
     caps_attenuate,
     caps_attenuate_within,
+    expiry_attenuates,
     scope_attenuates,
     scope_attenuates_within,
     tenant_attenuates,
@@ -80,7 +82,7 @@ from vaid_mint.verify import verify_vaid_authenticity
 class ChainVerification(enum.Enum):
     """The outcome of an end-to-end chain verification.
 
-    Only ``ATTENUATED`` is success. The three failure states are kept apart
+    Only ``ATTENUATED`` is success. The failure states are kept apart
     deliberately, because collapsing them is how a verifier ends up reporting
     *attenuation satisfied* when it means *attenuation unverifiable* — the same
     conflation R.4.2 forbids for revocation.
@@ -100,6 +102,20 @@ class ChainVerification(enum.Enum):
     #: The chain is complete and authentic, but some child claims authority its
     #: parent does not hold.
     NOT_ATTENUATED = "not_attenuated"
+    #: An ancestor of the leaf has **passed its own ``expires_at``** at the
+    #: verification instant. The chain is authentic and complete and every hop
+    #: contains the next — and the authority at the top of it no longer exists.
+    #:
+    #: Kept apart from the other four for the same reason ``CONSENT_EXPIRED`` is.
+    #: Nothing was forged, so ``INAUTHENTIC`` would misdescribe it; no child
+    #: overreached, so ``NOT_ATTENUATED`` would be wrong — the child asked for
+    #: exactly what it was given, and what it was given has lapsed. The operational
+    #: difference is the point: this says *the delegation has run out*, the others
+    #: say *you were never authorized*.
+    #:
+    #: **This is not revocation.** An expired ancestor lapsed on its own schedule;
+    #: chain verification still consults no revocation state (vaid#76).
+    EXPIRED = "expired"
     #: A cross-key hop's consent attestation is **authentic but outside its validity
     #: window** — lapsed, or not yet valid beyond the permitted clock skew.
     #:
@@ -273,7 +289,9 @@ def verify_chain_at(
        failed signature is ``INAUTHENTIC``.
     2. **Pin each hop** against the signed ``parent_vaid``.
     3. **Fail closed on an incomplete chain** — ``UNVERIFIABLE``.
-    4. **Check containment** — tenant (same-key hops), scope, capabilities.
+    4. **Check containment** — tenant (same-key hops), scope, capabilities, and
+       expiry: no child may outlive its parent, and no ancestor may have lapsed at
+       ``now`` (vaid#79, AAT I3).
     5. **Require consent on a cross-key hop**, current at ``now`` — a valid
        :func:`~vaid_mint.attestation.build_unsigned_attestation` object for exactly
        that ``(parent, child)`` pair, signed by the issuer that minted the parent.
@@ -320,6 +338,24 @@ def verify_chain_at(
             return ChainVerification.UNVERIFIABLE
         chain_docs.append(doc)
 
+    # Step 3a — no ANCESTOR of the leaf may have lapsed at ``now`` (vaid#79).
+    #
+    # Checked over the ancestors, root first, BEFORE any containment: a chain whose
+    # root died an hour ago is not a chain whose child overreached, and reporting
+    # the first fault found keeps the three implementations reporting the SAME
+    # fault rather than merely the same boolean.
+    #
+    # THE LEAF IS DELIBERATELY NOT CHECKED HERE. Whether chain verification should
+    # also consult the leaf's own standing — expiry and revocation — is vaid#76,
+    # open and wider than this. The leaf is the document the caller holds and can
+    # check with ``is_expired``; its ancestors are the ones it cannot, and the
+    # reason vaid#79 matters is that a caller doing the obvious conscientious thing
+    # still accepted a leaf whose parent died hours ago. That gap is closed here;
+    # #76's is not, and pretending otherwise would be the wider claim.
+    for ancestor in chain_docs[:-1]:
+        if is_expired_at(ancestor, now):
+            return ChainVerification.EXPIRED
+
     # Steps 4 and 5 — containment at every hop, root first, plus consent wherever a
     # hop crosses a kernel key.
     for parent, child in zip(chain_docs, chain_docs[1:]):
@@ -337,6 +373,14 @@ def verify_chain_at(
         if not scope_attenuates(parent, child["scope_boundary"]):
             return ChainVerification.NOT_ATTENUATED
         if not caps_attenuate(parent, child["capability_set"]):
+            return ChainVerification.NOT_ATTENUATED
+
+        # Expiry containment — the fifth property, same matcher the mint refuses
+        # on. Distinct from the lapse check above: this one is about the SHAPE of
+        # the chain and holds at every instant, including long before anything has
+        # expired. A child whose expiry exceeds its parent's is a document that was
+        # never built consistently, and it is NOT_ATTENUATED at any ``now``.
+        if not expiry_attenuates(parent, child.get("expires_at")):
             return ChainVerification.NOT_ATTENUATED
 
         # Same kernel key: one issuer signed both ends and enforced consent at mint

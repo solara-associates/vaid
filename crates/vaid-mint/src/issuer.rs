@@ -84,6 +84,14 @@ pub trait VaidIssuer: Send + Sync {
     /// Issue a VAID under a caller-supplied public key (the BYO-key path — the
     /// mint has already verified proof-of-possession of the matching private
     /// key). The issuer signs the document with the kernel key.
+    ///
+    /// `not_after` is an upper bound on the issued `expires_at`: the mint passes
+    /// the delegating parent's expiry, and the issued document ends at the earlier
+    /// of that and this issuer's own TTL (vaid#79). `None` — the root path — means
+    /// no ceiling. An issuer that ignores it emits a child outliving its parent;
+    /// [`MintService::mint_child`](crate::MintService::mint_child) checks the
+    /// returned document and withholds it, so ignoring the ceiling is caught rather
+    /// than trusted.
     #[allow(clippy::too_many_arguments)]
     fn issue_vaid_with_key(
         &self,
@@ -94,6 +102,7 @@ pub trait VaidIssuer: Send + Sync {
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
         public_key_der: Vec<u8>,
+        not_after: Option<&str>,
     ) -> MintResult<Vaid>;
 
     /// Issue a VAID under an issuer-generated keypair, discarding the private
@@ -107,6 +116,7 @@ pub trait VaidIssuer: Send + Sync {
         parent_vaid: Option<VaidId>,
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
+        not_after: Option<&str>,
     ) -> MintResult<Vaid>;
 
     /// Verify a VAID against this issuer: correct signature scheme, kernel
@@ -370,12 +380,34 @@ impl ReferenceIssuer {
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
         public_key_der: Vec<u8>,
+        not_after: Option<&str>,
     ) -> MintResult<Vaid> {
         let agent_id = AgentId::new();
         // Whole-second, per E.6 — see `whole_second_now`. `expires` stays whole
         // because a whole number of hours added to a whole second is one.
         let now = whole_second_now();
-        let expires = now + Duration::hours(self.vaid_ttl_hours);
+        let mut expires = now + Duration::hours(self.vaid_ttl_hours);
+
+        // CLAMP (vaid#79). `not_after` is the delegating parent's own expiry, and a
+        // child may not outlive the authority it derives from — so this issuer's TTL
+        // is a ceiling on the child's life, not a promise about it. Without the
+        // clamp, `now + ttl` is re-evaluated at every mint and a child issued one
+        // second after its parent outlives it by one second, every time.
+        //
+        // Applied HERE rather than in the mint because only the issuer knows what it
+        // would otherwise have stamped. The mint checks the returned document anyway
+        // (`mint_child` step 7a): a cap the issuer may ignore is not a guarantee.
+        if let Some(ceiling) = not_after {
+            match crate::document::parse_rfc3339(ceiling) {
+                Some(cap) => expires = expires.min(cap),
+                None => {
+                    return Err(MintError::Unauthorized(format!(
+                        "not_after '{ceiling}' is not a readable RFC 3339 timestamp \
+                         — an expiry ceiling that cannot be read bounds nothing"
+                    )))
+                }
+            }
+        }
         let lineage_hash = compute_lineage_hash(parent_vaid, &agent_id);
 
         // Build the full document with an empty signature, sign its canonical
@@ -448,6 +480,7 @@ impl VaidIssuer for ReferenceIssuer {
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
         public_key_der: Vec<u8>,
+        not_after: Option<&str>,
     ) -> MintResult<Vaid> {
         self.build_and_sign_vaid(
             agent_class,
@@ -457,6 +490,7 @@ impl VaidIssuer for ReferenceIssuer {
             scope_boundary,
             capability_set,
             public_key_der,
+            not_after,
         )
     }
 
@@ -468,6 +502,7 @@ impl VaidIssuer for ReferenceIssuer {
         parent_vaid: Option<VaidId>,
         scope_boundary: Vec<String>,
         capability_set: Vec<String>,
+        not_after: Option<&str>,
     ) -> MintResult<Vaid> {
         let rng = SystemRandom::new();
         let agent_pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng)
@@ -484,6 +519,7 @@ impl VaidIssuer for ReferenceIssuer {
             scope_boundary,
             capability_set,
             public_key_der,
+            not_after,
         )
     }
 
@@ -525,6 +561,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
             )
             .unwrap();
         assert!(
@@ -546,6 +583,7 @@ mod tests {
                 None,
                 vec!["data.x".into()],
                 vec!["read".into()],
+                None,
             )
             .unwrap();
         // Re-serialize, widen the scope, deserialize — the signature no longer
@@ -571,6 +609,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
             )
             .unwrap();
         assert!(a.verify_vaid(&vaid));
@@ -591,6 +630,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
             )
             .unwrap();
         assert!(issuer.verify_vaid(&vaid));
@@ -611,6 +651,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
             )
             .unwrap();
         assert!(vaid.is_expired(), "fixture must be expired");
@@ -636,6 +677,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
             )
             .unwrap();
         assert!(issuer.verify_vaid(&vaid), "not yet revoked → verifies");
@@ -661,6 +703,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
             )
             .unwrap();
         assert_eq!(

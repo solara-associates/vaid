@@ -56,11 +56,12 @@ import {
   isCurrent,
   verifyAttestationAuthenticity,
 } from './attestation.js';
-import { type Vaid } from './document.js';
+import { isExpired, type Vaid } from './document.js';
 import { kernelKeyThumbprint } from './issuerIdentity.js';
 import {
   capsAttenuate,
   capsAttenuateWithin,
+  expiryAttenuates,
   scopeAttenuates,
   scopeAttenuatesWithin,
   tenantAttenuates,
@@ -80,7 +81,7 @@ import { type VaidId } from 'vaid-pop';
 /**
  * The outcome of an end-to-end chain verification.
  *
- * Only `Attenuated` is success. The three failure states are kept apart
+ * Only `Attenuated` is success. The failure states are kept apart
  * deliberately, because collapsing them is how a verifier ends up reporting
  * *attenuation satisfied* when it means *attenuation unverifiable* — the same
  * conflation R.4.2 forbids for revocation.
@@ -107,6 +108,21 @@ export const ChainVerification = {
    * does not hold.
    */
   NotAttenuated: 'not_attenuated',
+  /**
+   * An ancestor of the leaf has **passed its own `expires_at`** at the verification
+   * instant. The chain is authentic and complete and every hop contains the next —
+   * and the authority at the top of it no longer exists.
+   *
+   * Kept apart from the other four for the same reason `ConsentExpired` is. Nothing
+   * was forged, so `Inauthentic` would misdescribe it; no child overreached, so
+   * `NotAttenuated` would be wrong too — the child asked for exactly what it was
+   * given, and what it was given has lapsed. This says *the delegation has run
+   * out*; the others say *you were never authorized*.
+   *
+   * **This is not revocation.** An expired ancestor lapsed on its own schedule;
+   * chain verification still consults no revocation state (vaid#76).
+   */
+  Expired: 'expired',
   /**
    * A cross-key hop's consent attestation is **authentic but outside its validity
    * window** — lapsed, or not yet valid beyond the permitted clock skew.
@@ -405,6 +421,24 @@ export function verifyChainAt(
     chainDocs.push(doc);
   }
 
+  // Step 3a — no ANCESTOR of the leaf may have lapsed at `now` (vaid#79).
+  //
+  // Checked over the ancestors, root first, BEFORE any containment: a chain whose
+  // root died an hour ago is not a chain whose child overreached, and reporting the
+  // first fault found keeps the three implementations reporting the SAME fault
+  // rather than merely the same boolean.
+  //
+  // THE LEAF IS DELIBERATELY NOT CHECKED HERE. Whether chain verification should
+  // also consult the leaf's own standing — expiry and revocation — is vaid#76, open
+  // and wider than this. The leaf is the document the caller holds and can check
+  // with `isExpired`; its ancestors are the ones it cannot, and the reason vaid#79
+  // matters is that a caller doing the obvious conscientious thing still accepted a
+  // leaf whose parent died hours ago. That gap is closed here; #76's is not, and
+  // pretending otherwise would be the wider claim.
+  for (let i = 0; i + 1 < chainDocs.length; i += 1) {
+    if (isExpired(chainDocs[i]!, now)) return ChainVerification.Expired;
+  }
+
   // Steps 4 and 5 — containment at every hop, root first, plus consent wherever a
   // hop crosses a kernel key.
   for (let i = 0; i + 1 < chainDocs.length; i += 1) {
@@ -424,6 +458,15 @@ export function verifyChainAt(
       return ChainVerification.NotAttenuated;
     }
     if (!capsAttenuate(parent, child.capability_set)) {
+      return ChainVerification.NotAttenuated;
+    }
+
+    // Expiry containment — the same single matcher the mint checks its issuer's
+    // output against. Distinct from the lapse check above: this one is about the
+    // SHAPE of the chain and holds at every instant, including long before anything
+    // has expired. A child whose expiry exceeds its parent's is a document that was
+    // never built consistently, and it is NotAttenuated at any `now`.
+    if (!expiryAttenuates(parent, child.expires_at)) {
       return ChainVerification.NotAttenuated;
     }
 

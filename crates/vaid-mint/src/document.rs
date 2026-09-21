@@ -451,8 +451,27 @@ impl Vaid {
     /// always behaved this way; this is the third implementation arriving at the
     /// rule the other two already had, not a new rule.
     pub fn is_expired(&self) -> bool {
+        self.is_expired_at(Utc::now())
+    }
+
+    /// [`is_expired`](Vaid::is_expired) against a **given** instant rather than
+    /// the wall clock.
+    ///
+    /// The same predicate with the clock read lifted out. `is_expired` is the
+    /// convenience for a caller with no reason to control time; anything that must
+    /// be reproducible — a conformance vector, a boundary case, replaying a
+    /// historical decision — asks at a stated instant instead, and
+    /// [`verify_chain_at`](crate::chain::verify_chain_at) passes its own `now`
+    /// down here so a chain's verdict does not depend on when the suite happened
+    /// to run (BACKLOG B9, on the verify side).
+    ///
+    /// Fails closed identically. The boundary is `now > expires_at`, so a document
+    /// is live **at** its own `expires_at` and expired the first instant after it —
+    /// stated because the three implementations must agree on the boundary and not
+    /// merely on the interior.
+    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
         match self.expires_at() {
-            Some(expires_at) => Utc::now() > expires_at,
+            Some(expires_at) => now > expires_at,
             None => true,
         }
     }

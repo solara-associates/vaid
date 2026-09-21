@@ -133,6 +133,45 @@ pub(crate) fn caps_attenuate_within(parent_caps: &[String], child_caps: &[String
         .all(|c| crate::document::caps_contain(parent_caps, c))
 }
 
+/// Does `child_expires_at` fall at or before `parent`'s `expires_at`?
+///
+/// The fifth containment property, and the one vaid#79 found missing: a child's
+/// authority is derived from its parent's, and authority that outlives the
+/// authority it came from was never contained by it. AAT I3 (TTL monotonicity),
+/// `draft-niyikiza-oauth-attenuating-agent-tokens-01` §4.4.
+///
+/// **One matcher, two call sites**, exactly as [`scope_attenuates`] and
+/// [`caps_attenuate`] are: [`MintService::mint_child`] refuses a delegation this
+/// rejects, and [`verify_chain_at`](crate::chain::verify_chain_at) refuses a
+/// presented hop it rejects. A second implementation of the rule is how the two
+/// would drift apart.
+///
+/// **Equality is allowed.** A child expiring at exactly its parent's `expires_at`
+/// holds authority for no instant in which the parent holds none.
+///
+/// **Fails closed.** An unreadable or absent expiry on either side is not
+/// containment — the same rule [`Vaid::is_expired`] states for standing.
+///
+/// The comparison is over PARSED instants, never over the strings: a presented
+/// timestamp may be in any valid RFC 3339 form (ADR-0006), and two spellings of
+/// the same instant do not compare as text.
+pub(crate) fn expiry_attenuates(parent: &Vaid, child_expires_at: Option<&str>) -> bool {
+    expiry_attenuates_within(parent.expires_at_as_presented(), child_expires_at)
+}
+
+/// The same predicate over bare timestamps rather than documents — the form the
+/// mint needs, where the child's document does not exist yet and its expiry is
+/// only the instant the issuer says it would stamp.
+pub fn expiry_attenuates_within(parent_expires_at: &str, child_expires_at: Option<&str>) -> bool {
+    match (
+        crate::document::parse_rfc3339(parent_expires_at),
+        child_expires_at.and_then(crate::document::parse_rfc3339),
+    ) {
+        (Some(parent), Some(child)) => child <= parent,
+        _ => false,
+    }
+}
+
 /// The mint service. Holds the issuer (kernel signer) and the audit sink, plus
 /// the single-use PoP nonce set (at-mint replay defense).
 pub struct MintService {
@@ -255,6 +294,7 @@ impl MintService {
                 seed.scope_boundary.clone(),
                 seed.capability_set.clone(),
                 key.clone(),
+                None, // a root has no parent to be contained by
             )?
         } else {
             // Generate-and-discard: no holder key registered, so no PoP applies.
@@ -265,6 +305,7 @@ impl MintService {
                 seed.parent_vaid,
                 seed.scope_boundary.clone(),
                 seed.capability_set.clone(),
+                None, // a root has no parent to be contained by
             )?
         };
 
@@ -297,6 +338,8 @@ impl MintService {
     /// 3. `C.parent_vaid == Some(P.vaid_id)` — lineage bound to the authenticated parent;
     /// 4. `C.scope ⊆ P.scope` — `scope_attenuates`;
     /// 5. `C.caps ⊆ P.caps` — `caps_attenuate`;
+    /// 5a. the parent is **not already expired** — its expiry is the ceiling the
+    ///    child is clamped to at step 7, and a ceiling in the past bounds nothing.
     /// 6. child **BYO-key PoP** holds — `mint_child` is always BYO-key.
     ///
     /// Attenuation (2–5) runs BEFORE the PoP so a rejected delegation never
@@ -364,6 +407,28 @@ impl MintService {
             ));
         }
 
+        // (5a) The parent must still be alive (vaid#79).
+        //
+        // The child's expiry is CLAMPED to the parent's at issuance (step 7), so a
+        // delegation can never produce a child that outlives its parent and no
+        // working delegation is refused for a TTL the caller did not choose. The one
+        // case a clamp cannot answer is a parent that has already expired: the
+        // clamp's own ceiling is in the past, so the child would be issued
+        // dead-on-arrival. That is refused instead, HERE — with (4) and (5) and
+        // before the PoP, so the refusal burns no nonce.
+        //
+        // An unreadable expiry is expired (`is_expired` is total and fails closed),
+        // so a parent whose expiry cannot be read is refused by the same line.
+        if parent.is_expired() {
+            return Err(MintError::Unauthorized(format!(
+                "authenticated parent {} expired at '{}' — a child may not outlive \
+                 the authority it derives from, and a child of a dead parent would \
+                 be issued already expired. Renew the parent, then delegate",
+                parent.vaid_id(),
+                parent.expires_at_as_presented()
+            )));
+        }
+
         // (6) Child BYO-key PoP. Runs AFTER attenuation: an unauthorized
         // delegation must not burn a nonce. mint_child is always BYO-key.
         let key = seed.public_key_der.as_ref().ok_or_else(|| {
@@ -376,6 +441,8 @@ impl MintService {
         self.verify_pop_at_mint(seed, key, request.pop.as_ref())?;
 
         // (7) Issue the attenuated child. parent_vaid is Some → lineage recorded.
+        // The parent's expiry is passed as a ceiling: the child ends at the earlier
+        // of that and the issuer's own TTL.
         let vaid = self.issuer.issue_vaid_with_key(
             AgentClass::new(&seed.agent_class),
             seed.version.clone(),
@@ -384,7 +451,30 @@ impl MintService {
             seed.scope_boundary.clone(),
             seed.capability_set.clone(),
             key.clone(),
+            Some(parent.expires_at_as_presented()),
         )?;
+
+        // (7a) ...and CHECK what came back. The ceiling above is an instruction to
+        // the issuer; this is the property. An issuer is a seam a deployment
+        // supplies, and one that ignores `not_after` — a third-party implementation
+        // written before this rule existed, or one that simply gets it wrong — would
+        // emit a child outliving its parent that nothing downstream could
+        // distinguish from a legitimate one. The same matcher the chain verifier
+        // refuses on is applied to the document actually issued, so the mint never
+        // hands out a document its own verifier would reject.
+        //
+        // This one refusal DOES consume the nonce, unavoidably: the PoP has already
+        // been spent by the time a document exists to check. That is the right trade
+        // — it fires only for a broken issuer, never for a caller's mistake.
+        if !expiry_attenuates(parent, Some(vaid.expires_at_as_presented())) {
+            return Err(MintError::Unauthorized(format!(
+                "issuer returned a child expiring '{}', after the parent's '{}', \
+                 despite a not_after ceiling — the issuer does not honour expiry \
+                 containment and the child has not been returned",
+                vaid.expires_at_as_presented(),
+                parent.expires_at_as_presented()
+            )));
+        }
 
         // (8) Delegated audit — distinguishes the delegation tree from root mints.
         self.audit
@@ -921,5 +1011,265 @@ mod tests {
             .capability_set()
             .iter()
             .all(|c| parent.has_capability(c)));
+    }
+
+    // ── expiry containment at mint (vaid#79) ──
+
+    /// A parent whose expiry sits `seconds` either side of now. Anchored to the
+    /// clock rather than to a hard-coded date, because a hard-coded date is how the
+    /// Python twin's parent fixture quietly became an expired parent.
+    fn parent_expiring_in(seconds: i64) -> Vaid {
+        use chrono::SubsecRound;
+        let expires = (Utc::now() + chrono::Duration::seconds(seconds)).trunc_subsecs(0);
+        Vaid::with_lineage(
+            AgentId::new(),
+            AgentClass::new("parent"),
+            "1.0.0".into(),
+            TenantId::new("acme"),
+            Utc::now() - chrono::Duration::hours(1),
+            expires,
+            vec![],
+            vec![],
+            None,
+            vec!["data.x".into()],
+            "lineage".into(),
+            vec!["read".into()],
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
+        )
+    }
+
+    /// The mint half of vaid#79. The issuer's TTL is an hour; the parent has ten
+    /// minutes left; the child gets the parent's expiry, not the issuer's.
+    #[tokio::test]
+    async fn child_is_clamped_to_its_parents_expiry() {
+        let (svc, _) = fixture(); // ReferenceIssuer::ephemeral(1, ..) — a 1-hour TTL
+        let parent = parent_expiring_in(600);
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "clamp-1");
+        let child = svc.mint_child(req, Some(&parent)).await.unwrap().vaid;
+
+        assert_eq!(
+            child.expires_at_as_presented(),
+            parent.expires_at_as_presented(),
+            "the child must end exactly when its parent does, not an hour later"
+        );
+    }
+
+    /// THE CONTROL on the clamp. A clamp that always returned the parent's expiry
+    /// would pass the test above and would be wrong: the issuer's own TTL still
+    /// binds when it is the shorter of the two.
+    #[tokio::test]
+    async fn child_keeps_the_issuer_ttl_when_it_is_the_earlier_bound() {
+        let (svc, _) = fixture();
+        let parent = parent_expiring_in(86_400); // a day out; the issuer's TTL is an hour
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "clamp-2");
+        let child = svc.mint_child(req, Some(&parent)).await.unwrap().vaid;
+
+        assert!(
+            child.expires_at().unwrap() < parent.expires_at().unwrap(),
+            "the issuer's TTL is the earlier bound here and must still apply"
+        );
+    }
+
+    /// The regression this policy exists for. Under a refuse-instead-of-clamp rule,
+    /// ONE issuer with ONE TTL could only delegate inside the same whole second as
+    /// the parent's mint: `expires = now + ttl` is re-evaluated at every mint, so a
+    /// child minted a second later outlived its parent and was refused. Measured,
+    /// not assumed — this test sleeps past a second boundary.
+    #[tokio::test]
+    async fn delegation_works_across_a_second_boundary() {
+        let (svc, _) = fixture();
+        let parent = svc
+            .mint_root(MintVaidRequest {
+                seed: VaidSeed {
+                    agent_class: "parent".into(),
+                    version: "1.0.0".into(),
+                    tenant_id: "acme".into(),
+                    parent_vaid: None,
+                    scope_boundary: vec!["data.x".into()],
+                    capability_set: vec!["read".into()],
+                    public_key_der: None,
+                },
+                pop: None,
+            })
+            .await
+            .unwrap()
+            .vaid;
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "boundary");
+        let child = svc.mint_child(req, Some(&parent)).await.unwrap().vaid;
+
+        assert!(child.expires_at().unwrap() <= parent.expires_at().unwrap());
+    }
+
+    /// The one case a clamp cannot answer: the ceiling is in the past, so the child
+    /// would be issued dead. Refused before the PoP, with the expiry named.
+    #[tokio::test]
+    async fn delegating_from_an_already_expired_parent_is_refused() {
+        let (svc, _) = fixture();
+        let parent = parent_expiring_in(-60);
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "dead-parent");
+        let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
+
+        let message = format!("{err}");
+        assert!(
+            message.contains(parent.expires_at_as_presented()),
+            "the refusal must name the parent's expiry: {message}"
+        );
+        assert!(message.contains("expired"), "{message}");
+    }
+
+    /// Fail closed: an expiry that cannot be read is expired, so it is refused by
+    /// the same line rather than clamped to a ceiling nobody can evaluate.
+    #[tokio::test]
+    async fn an_unreadable_parent_expiry_refuses_the_delegation() {
+        let (svc, _) = fixture();
+        let parent = Vaid::with_lineage(
+            AgentId::new(),
+            AgentClass::new("parent"),
+            "1.0.0".into(),
+            TenantId::new("acme"),
+            Utc::now(),
+            Utc::now() + chrono::Duration::hours(1),
+            vec![],
+            vec![],
+            None,
+            vec!["data.x".into()],
+            "lineage".into(),
+            vec!["read".into()],
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
+        );
+        // Rewrite the presented expiry to something unreadable, exactly as a
+        // presenter could (ADR-0006: the verifier canonicalizes what it is given).
+        let mut json = serde_json::to_value(&parent).unwrap();
+        json["expires_at"] = serde_json::Value::String("whenever".into());
+        let parent: Vaid = serde_json::from_value(json).unwrap();
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "unreadable");
+        assert!(svc.mint_child(req, Some(&parent)).await.is_err());
+    }
+
+    /// The refusal sits with the other containment checks, BEFORE the PoP, so a
+    /// caller that renews the parent and retries is not denied for the wrong reason.
+    #[tokio::test]
+    async fn refusing_a_dead_parent_does_not_consume_the_pop_nonce() {
+        let (svc, _) = fixture();
+        let dead = parent_expiring_in(-60);
+        let live = parent_expiring_in(600);
+
+        let req = signed_child(&dead, vec!["data.x"], vec!["read"], "shared-nonce");
+        assert!(svc.mint_child(req, Some(&dead)).await.is_err());
+
+        let req_ok = signed_child(&live, vec!["data.x"], vec!["read"], "shared-nonce");
+        assert!(svc.mint_child(req_ok, Some(&live)).await.is_ok());
+    }
+
+    /// Step 7a. `not_after` is an instruction to a seam a deployment supplies; the
+    /// invariant is a property of the document. An issuer written before this rule —
+    /// or one that simply gets it wrong — must not be able to put an over-long child
+    /// into circulation through this mint.
+    #[tokio::test]
+    async fn an_issuer_that_ignores_the_ceiling_is_caught_and_the_child_withheld() {
+        /// Delegates everything to the real issuer but drops the ceiling.
+        struct IgnoresTheCeiling(ReferenceIssuer);
+
+        impl VaidIssuer for IgnoresTheCeiling {
+            #[allow(clippy::too_many_arguments)]
+            fn issue_vaid_with_key(
+                &self,
+                agent_class: AgentClass,
+                version: String,
+                tenant_id: TenantId,
+                parent_vaid: Option<VaidId>,
+                scope_boundary: Vec<String>,
+                capability_set: Vec<String>,
+                public_key_der: Vec<u8>,
+                _not_after: Option<&str>,
+            ) -> MintResult<Vaid> {
+                self.0.issue_vaid_with_key(
+                    agent_class,
+                    version,
+                    tenant_id,
+                    parent_vaid,
+                    scope_boundary,
+                    capability_set,
+                    public_key_der,
+                    None,
+                )
+            }
+
+            fn issue_vaid_with_lineage(
+                &self,
+                agent_class: AgentClass,
+                version: String,
+                tenant_id: TenantId,
+                parent_vaid: Option<VaidId>,
+                scope_boundary: Vec<String>,
+                capability_set: Vec<String>,
+                _not_after: Option<&str>,
+            ) -> MintResult<Vaid> {
+                self.0.issue_vaid_with_lineage(
+                    agent_class,
+                    version,
+                    tenant_id,
+                    parent_vaid,
+                    scope_boundary,
+                    capability_set,
+                    None,
+                )
+            }
+
+            fn verify_vaid(&self, vaid: &Vaid) -> bool {
+                self.0.verify_vaid(vaid)
+            }
+
+        }
+
+        let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+        let svc = MintService::new(
+            Arc::new(IgnoresTheCeiling(issuer)),
+            Arc::new(InMemoryAudit::default()),
+        );
+        let parent = parent_expiring_in(600);
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "bad-issuer");
+        let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
+        assert!(format!("{err}").contains("not_after"), "{err}");
+    }
+
+    /// A root has no parent to be contained by, so nothing bounds its TTL. Stated as
+    /// a test because a clamp applied indiscriminately would silently shorten every
+    /// root mint in the estate.
+    #[tokio::test]
+    async fn the_root_path_is_unclamped() {
+        let (svc, _) = fixture();
+        let root = svc
+            .mint_root(MintVaidRequest {
+                seed: VaidSeed {
+                    agent_class: "root".into(),
+                    version: "1.0.0".into(),
+                    tenant_id: "acme".into(),
+                    parent_vaid: None,
+                    scope_boundary: vec!["data.x".into()],
+                    capability_set: vec!["read".into()],
+                    public_key_der: None,
+                },
+                pop: None,
+            })
+            .await
+            .unwrap()
+            .vaid;
+
+        assert_eq!(
+            root.expires_at().unwrap() - root.issued_at().unwrap(),
+            chrono::Duration::hours(1),
+            "the issuer's full TTL applies"
+        );
     }
 }

@@ -26,7 +26,7 @@
 //! does not enforce attenuation, so a child claiming authority its parent never
 //! held can be signed and presented.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use uuid::Uuid;
 
@@ -45,6 +45,17 @@ use vaid_mint::{
 struct LocalMint {
     key_pair: Ed25519KeyPair,
     public_key: Vec<u8>,
+    /// ONE instant for every document this mint issues.
+    ///
+    /// It used to read the clock per document and stamp `now + 1h`, so a chain
+    /// built across a second boundary gave each child an expiry one second AFTER
+    /// its parent's. That was invisible until expiry containment became a rule
+    /// (vaid#79) and then surfaced as an intermittent `NotAttenuated` on a 63-hop
+    /// chain — the continuous form of the defect, reproduced by a test fixture
+    /// rather than by a contrived case. A conforming mint clamps a child to its
+    /// parent; this fixture models that by issuing every document against one
+    /// instant, which is the simplest thing that is also correct.
+    issued_at: DateTime<Utc>,
 }
 
 impl LocalMint {
@@ -57,6 +68,7 @@ impl LocalMint {
         Self {
             key_pair,
             public_key,
+            issued_at: Utc::now(),
         }
     }
 
@@ -90,7 +102,7 @@ impl LocalMint {
         trust_domain: &str,
         tenant: &str,
     ) -> Vaid {
-        let now = Utc::now();
+        let now = self.issued_at;
         let unsigned = Vaid::with_lineage(
             agent_id,
             AgentClass::new("test"),
