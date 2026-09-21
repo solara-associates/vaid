@@ -58,6 +58,10 @@ export {
   computeLineageHash,
   hasCapability,
   isExpired,
+  // RFC 3339 with a MANDATORY offset — `Date.parse` accepts an offsetless
+  // string as local time, which is how this implementation disagreed with the
+  // other two and with itself across timezones (vaid#79, ADR-0007).
+  parseRfc3339,
   hasConformingTimestamps,
   isInScope,
   VAID_SIG_VERSION_V3,

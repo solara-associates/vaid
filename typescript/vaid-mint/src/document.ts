@@ -197,9 +197,45 @@ const E6_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
  * read is not a document that can be shown to be unexpired.
  */
 export function isExpired(vaid: Vaid, now: Date = new Date()): boolean {
-  const expires = Date.parse(vaid.expires_at);
-  if (Number.isNaN(expires)) return true;
+  const expires = parseRfc3339(vaid.expires_at);
+  if (expires === null) return true;
   return now.getTime() > expires;
+}
+
+/**
+ * RFC 3339 requires an offset. `Date.parse` does not.
+ *
+ * ECMAScript parses a date-time string with **no** offset as **local time**
+ * (ECMA-262, Date Time String Format), so `Date.parse('2999-01-01T00:00:00')`
+ * returns a different instant on every machine, and never the one the signer
+ * wrote — they wrote no instant at all. Two consequences, both found by the
+ * `chain_expiry_v1` vector rather than reasoned about:
+ *
+ * 1. **This implementation disagreed with the other two.** Python's
+ *    `_parse_rfc3339` returns `None` for a naive timestamp and Rust's
+ *    `DateTime::parse_from_rfc3339` refuses it, so both call such a document
+ *    EXPIRED — fail closed. TypeScript called it live, for as long as the
+ *    offsetless local time said so.
+ * 2. **The verdict depended on the verifier's timezone.** The same document and
+ *    the same comparison gave `refused` on a UTC+2 laptop and `permitted` on a
+ *    UTC CI runner. A verifier whose answer moves with the machine is not a
+ *    verifier.
+ *
+ * So the offset is required here, explicitly, rather than inherited from whatever
+ * `Date.parse` is lenient about. Everything RFC 3339 does allow — `Z`, `+00:00`,
+ * `-05:00`, fractional seconds, lower-case `t`/`z` — still parses, because the
+ * profile question (E.6) is asked separately by {@link hasConformingTimestamps}
+ * and a non-conforming timestamp must still verify if its signer signed it.
+ *
+ * Returns epoch milliseconds, or `null` if the value is not a readable RFC 3339
+ * timestamp. Total: never throws.
+ */
+export function parseRfc3339(value: string | null | undefined): number | null {
+  if (typeof value !== 'string') return null;
+  // An offset is mandatory: `Z`/`z`, or ±HH:MM after the time.
+  if (!/(?:[Zz]|[+-]\d{2}:\d{2})$/.test(value)) return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /**
