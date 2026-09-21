@@ -26,6 +26,7 @@ import {
   hasCapability,
   isExpired,
   isInScope,
+  parseRfc3339,
   scopeContains,
   type Vaid,
 } from './document.js';
@@ -178,10 +179,9 @@ export function expiryAttenuatesWithin(
   parentExpiresAt: string | null | undefined,
   childExpiresAt: string | null | undefined,
 ): boolean {
-  if (parentExpiresAt == null || childExpiresAt == null) return false;
-  const parent = Date.parse(parentExpiresAt);
-  const child = Date.parse(childExpiresAt);
-  if (Number.isNaN(parent) || Number.isNaN(child)) return false;
+  const parent = parseRfc3339(parentExpiresAt);
+  const child = parseRfc3339(childExpiresAt);
+  if (parent === null || child === null) return false;
   return child <= parent;
 }
 

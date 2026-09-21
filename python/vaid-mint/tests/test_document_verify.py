@@ -17,6 +17,7 @@ from vaid_mint import (
     verify_lineage_hash,
     verify_vaid_authenticity,
 )
+from vaid_mint.document import is_expired
 
 MINT_VECTOR = Path(__file__).resolve().parents[1] / "vaid_mint" / "vectors" / "mint_v1.json"
 
@@ -73,3 +74,23 @@ def test_verifies_the_frozen_mint_vector_with_public_key_only():
     sig[0] ^= 0x01
     bad["kernel_signature"] = list(sig)
     assert not verify_vaid_authenticity(public_key, bad), "a one-byte signature flip must fail"
+
+
+# ── RFC 3339 requires an offset (vaid#79, Session 240) ──
+
+
+def test_an_offsetless_expiry_is_expired_not_live() -> None:
+    """The three implementations must agree, and for a while they did not.
+
+    JavaScript's ``Date.parse`` reads a date-time with no offset as LOCAL time, so
+    the TypeScript twin called such a document **live** — and gave a different
+    answer on a UTC+2 laptop than on a UTC runner. Python and Rust both refuse it
+    and call it expired, fail-closed. Pinned in all three so the agreement is a
+    tested property rather than a coincidence of three parsers.
+
+    ``verdict_v1.json`` covers an unreadable expiry and a numeric-offset expiry. It
+    has no offsetless case, which is why nothing caught this.
+    """
+    assert is_expired({"expires_at": "2999-01-01T00:00:00"}) is True
+    assert is_expired({"expires_at": "2999-01-01T00:00:00Z"}) is False
+    assert is_expired({"expires_at": "2999-01-01T00:00:00+00:00"}) is False
