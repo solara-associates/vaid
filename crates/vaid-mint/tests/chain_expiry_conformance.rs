@@ -39,7 +39,9 @@ fn unhex(s: &str) -> Vec<u8> {
 
 fn keypair(v: &Value) -> Ed25519KeyPair {
     Ed25519KeyPair::from_seed_unchecked(&unhex(
-        v["ed25519"]["kernel_private_key_seed_hex"].as_str().unwrap(),
+        v["ed25519"]["kernel_private_key_seed_hex"]
+            .as_str()
+            .unwrap(),
     ))
     .expect("vector seed is a usable Ed25519 seed")
 }
@@ -115,7 +117,8 @@ fn every_expiry_containment_case() {
         );
         let want = case["expected"].as_str().unwrap() == "permitted";
         assert_eq!(
-            permitted, want,
+            permitted,
+            want,
             "expiry containment drift: {name} — expected {}",
             case["expected"].as_str().unwrap()
         );

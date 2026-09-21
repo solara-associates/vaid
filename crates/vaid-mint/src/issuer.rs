@@ -108,6 +108,7 @@ pub trait VaidIssuer: Send + Sync {
     /// Issue a VAID under an issuer-generated keypair, discarding the private
     /// half (no holder key is registered, so no PoP applies). The
     /// generate-and-discard root/bootstrap path.
+    #[allow(clippy::too_many_arguments)]
     fn issue_vaid_with_lineage(
         &self,
         agent_class: AgentClass,

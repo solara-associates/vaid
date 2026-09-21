@@ -51,9 +51,7 @@ use vaid_mint::attestation::{
     canonical_attestation_signing_bytes, verify_attestation_authenticity, AttestationBundle,
     ConsentAttestation,
 };
-use vaid_mint::chain::{
-    verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey,
-};
+use vaid_mint::chain::{verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey};
 use vaid_mint::document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, scope_contains, Vaid, SCOPE_SEPARATORS,
 };
@@ -380,9 +378,11 @@ fn check_chain_expiry(v: &Value) -> Check {
                 &to_hex(kp.sign(&digest).as_ref()),
                 entry["signature_hex"].as_str().unwrap_or_default(),
             )?;
-            docs.push(unsigned.with_kernel_signature(unhex(
-                entry["signature_hex"].as_str().unwrap_or_default(),
-            )));
+            docs.push(
+                unsigned.with_kernel_signature(unhex(
+                    entry["signature_hex"].as_str().unwrap_or_default(),
+                )),
+            );
         }
 
         let leaf = match docs.last() {
