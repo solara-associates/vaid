@@ -58,8 +58,8 @@ use chrono::{DateTime, Utc};
 use crate::attestation::{verify_attestation_authenticity, AttestationBundle};
 use crate::document::{Vaid, VaidId};
 use crate::mint::{
-    caps_attenuate, caps_attenuate_within, scope_attenuates, scope_attenuates_within,
-    tenant_attenuates,
+    caps_attenuate, caps_attenuate_within, expiry_attenuates, scope_attenuates,
+    scope_attenuates_within, tenant_attenuates,
 };
 use crate::revocation::{assemble_lineage, LineageAssembly, LineageResolver, ParentResolution};
 use crate::verify::verify_vaid_authenticity;
@@ -135,8 +135,8 @@ impl LineageResolver for PresentedBundle {
 
 /// The outcome of an end-to-end chain verification.
 ///
-/// Only [`Attenuated`](ChainVerification::Attenuated) is success. The three
-/// failure states are kept apart deliberately, because collapsing them is how a
+/// Only [`Attenuated`](ChainVerification::Attenuated) is success. The failure
+/// states are kept apart deliberately, because collapsing them is how a
 /// verifier ends up reporting *attenuation satisfied* when it means *attenuation
 /// unverifiable* — the same conflation R.4.2 forbids for revocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +155,22 @@ pub enum ChainVerification {
     /// The chain is complete and authentic, but some child claims authority its
     /// parent does not hold.
     NotAttenuated,
+    /// An ancestor of the leaf has **passed its own `expires_at`** at the
+    /// verification instant. The chain is authentic and complete and every hop
+    /// contains the next — and the authority at the top of it no longer exists.
+    ///
+    /// Kept apart from the other four for the same reason
+    /// [`ConsentExpired`](ChainVerification::ConsentExpired) is. Nothing was
+    /// forged, so [`Inauthentic`](ChainVerification::Inauthentic) would
+    /// misdescribe it; no child overreached, so
+    /// [`NotAttenuated`](ChainVerification::NotAttenuated) would be wrong too —
+    /// the child asked for exactly what it was given, and what it was given has
+    /// lapsed. This says *the delegation has run out*; the others say *you were
+    /// never authorized*.
+    ///
+    /// **This is not revocation.** An expired ancestor lapsed on its own
+    /// schedule; chain verification still consults no revocation state (vaid#76).
+    Expired,
     /// A cross-key hop's consent attestation is **authentic but outside its
     /// validity window** — lapsed, or not yet valid beyond the permitted clock
     /// skew.
@@ -399,6 +415,26 @@ pub fn verify_chain_at(
         chain_docs.push(doc);
     }
 
+    // Step 3a — no ANCESTOR of the leaf may have lapsed at `now` (vaid#79).
+    //
+    // Checked over the ancestors, root first, BEFORE any containment: a chain whose
+    // root died an hour ago is not a chain whose child overreached, and reporting
+    // the first fault found keeps the three implementations reporting the SAME
+    // fault rather than merely the same boolean.
+    //
+    // THE LEAF IS DELIBERATELY NOT CHECKED HERE. Whether chain verification should
+    // also consult the leaf's own standing — expiry and revocation — is vaid#76,
+    // open and wider than this. The leaf is the document the caller holds and can
+    // check with `is_expired`; its ancestors are the ones it cannot, and the reason
+    // vaid#79 matters is that a caller doing the obvious conscientious thing still
+    // accepted a leaf whose parent died hours ago. That gap is closed here; #76's
+    // is not, and pretending otherwise would be the wider claim.
+    for ancestor in &chain_docs[..chain_docs.len().saturating_sub(1)] {
+        if ancestor.is_expired_at(now) {
+            return ChainVerification::Expired;
+        }
+    }
+
     // Steps 4 and 5 — containment at every hop, root first, plus consent wherever a
     // hop crosses a kernel key.
     for pair in chain_docs.windows(2) {
@@ -427,6 +463,15 @@ pub fn verify_chain_at(
             return ChainVerification::NotAttenuated;
         }
         if !caps_attenuate(parent, child.capability_set()) {
+            return ChainVerification::NotAttenuated;
+        }
+
+        // Expiry containment — the same single matcher the mint refuses on.
+        // Distinct from the lapse check above: this one is about the SHAPE of the
+        // chain and holds at every instant, including long before anything has
+        // expired. A child whose expiry exceeds its parent's is a document that
+        // was never built consistently, and it is NotAttenuated at any `now`.
+        if !expiry_attenuates(parent, Some(child.expires_at_as_presented())) {
             return ChainVerification::NotAttenuated;
         }
 

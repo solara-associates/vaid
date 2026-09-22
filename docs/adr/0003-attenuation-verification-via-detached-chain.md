@@ -4,6 +4,8 @@
 **Date:** 30 July 2026
 **Repo:** solara-associates/vaid
 **Decision owner:** A. Smeyatsky
+**Amended by:** ADR-0007 (a child VAID may not outlive its parent) — step 4 below
+gains expiry containment, and the procedure gains a lapse check over the ancestors
 **Supersedes:** the undocumented v0.2 deferral cited in prose as "ADR-0003"
 **Related:** ADR-0001 (revocation outside the conformance surface), ADR-0002
 (capabilities manifest), ADR-0004 (v3 issuer identifier and kernel key
@@ -102,7 +104,10 @@ Given a leaf `L` and the ancestor documents presented alongside it:
    *attenuation satisfied*. Cycles and implausible depth
    (`MAX_LINEAGE_DEPTH`) resolve the same way.
 4. **Check containment.** `scope_L ⊆ scope_P1 ⊆ … ⊆ scope_root`, and the same for
-   capabilities, using the single existing matchers so the verify-time check
+   capabilities — and, since ADR-0007, for expiry: no child's `expires_at` may exceed
+   its parent's, and no ancestor may have lapsed at the verification instant (which
+   is `Expired`, a verdict this ADR did not have). Using the single existing matchers
+   so the verify-time check
    cannot drift from the mint-time one.
 
 ### Chain substitution is prevented by the existing signature

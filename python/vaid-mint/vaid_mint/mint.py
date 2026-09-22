@@ -27,10 +27,22 @@ from vaid_pop import canonical_request_signing_bytes
 
 from vaid_mint.audit import AuditSink
 from vaid_mint.authz import AuthorizationGate, PermitAll
-from vaid_mint.document import caps_contain, has_capability, is_in_scope, scope_contains
+from vaid_mint.document import (
+    _parse_rfc3339,
+    is_expired,
+    caps_contain,
+    has_capability,
+    is_in_scope,
+    scope_contains,
+)
 from vaid_mint.error import IdentityError, UnauthorizedError
 from vaid_mint.issuer import ReferenceIssuer
-from vaid_mint.mint_types import MintPop, VaidSeed, build_mint_pop_payload
+from vaid_mint.mint_types import (
+    MintChildResponse,
+    MintPop,
+    VaidSeed,
+    build_mint_pop_payload,
+)
 
 # Freshness window for a mint proof-of-possession, in seconds.
 MINT_POP_FRESHNESS_SECS = 300
@@ -100,6 +112,36 @@ def caps_attenuate_within(parent_caps: list[str], child_caps: list[str]) -> bool
     """The same predicate over a bare capability set — the attestation counterpart
     of :func:`scope_attenuates_within`."""
     return all(caps_contain(parent_caps, c) for c in child_caps)
+
+
+def expiry_attenuates(parent: dict, child_expires_at: object) -> bool:
+    """Does ``child_expires_at`` fall at or before ``parent``'s ``expires_at``?
+
+    The fifth containment property, and the one vaid#79 found missing: a child's
+    authority is derived from its parent's, and authority that outlives the
+    authority it came from was never contained by it. AAT I3 (TTL monotonicity),
+    ``draft-niyikiza-oauth-attenuating-agent-tokens-01`` §4.4.
+
+    **One matcher, two call sites**, exactly as ``scope_attenuates`` and
+    ``caps_attenuate`` are: :meth:`MintService.mint_child` refuses a delegation this
+    rejects, and :func:`~vaid_mint.chain.verify_chain_at` refuses a presented hop it
+    rejects. A second implementation of the rule is how the two would drift apart,
+    which is the defect pattern this repo keeps finding.
+
+    **Equality is allowed.** A child expiring at exactly its parent's
+    ``expires_at`` is contained — it holds authority for no instant in which the
+    parent holds none. Only strictly later is refused.
+
+    **Fails closed.** An unparseable or absent expiry on either side is not
+    containment: it is an expiry that cannot be read, and a rule that cannot be
+    evaluated must not report that it passed. This mirrors
+    :func:`~vaid_mint.document.is_expired`, where an unreadable expiry is expired.
+    """
+    parent_expires = _parse_rfc3339(parent.get("expires_at"))
+    child_expires = _parse_rfc3339(child_expires_at)
+    if parent_expires is None or child_expires is None:
+        return False
+    return child_expires <= parent_expires
 
 
 class MintService:
@@ -203,10 +245,14 @@ class MintService:
         )
         return vaid
 
-    def mint_child(self, seed: VaidSeed, parent: dict | None, pop: MintPop | None = None) -> dict:
+    def mint_child(
+        self, seed: VaidSeed, parent: dict | None, pop: MintPop | None = None
+    ) -> MintChildResponse:
         """Attenuated delegation — mirror of the Rust ``mint_child``. All of
-        (parent present, same tenant, bound lineage, scope ⊆, caps ⊆) are checked
-        fail-closed BEFORE the PoP so a rejected delegation never burns a nonce."""
+        (parent present, same tenant, bound lineage, scope ⊆, caps ⊆, parent still
+        live) are checked fail-closed BEFORE the PoP so a rejected delegation never
+        burns a nonce. The child's expiry is clamped to the parent's at issuance and
+        the issued document is checked against it (vaid#79)."""
         # (1) The parent's authority must have travelled — fail closed.
         if parent is None:
             raise UnauthorizedError(
@@ -251,6 +297,26 @@ class MintService:
                 "attenuation denied"
             )
 
+        # (5a) The parent must still be alive (vaid#79).
+        #
+        # The child's expiry is CLAMPED to the parent's at issuance (step 7), so a
+        # delegation can never produce a child that outlives its parent and no
+        # working delegation is refused for a TTL the caller did not choose. The one
+        # case a clamp cannot answer is a parent that has already expired: the
+        # clamp's own ceiling is in the past, so the child would be issued
+        # dead-on-arrival. That is refused instead, HERE — with (4) and (5) and
+        # before the PoP, so the refusal burns no nonce.
+        #
+        # An unreadable expiry is expired (``is_expired`` is total and fails closed),
+        # so a parent whose expiry cannot be read is refused by the same line.
+        if is_expired(parent):
+            raise UnauthorizedError(
+                f"authenticated parent {parent['vaid_id']} expired at "
+                f"{parent.get('expires_at')!r} — a child may not outlive the "
+                "authority it derives from, and a child of a dead parent would be "
+                "issued already expired. Renew the parent, then delegate"
+            )
+
         # (6) Child BYO-key PoP. AFTER attenuation: an unauthorized delegation must
         # not burn a nonce. mint_child is always BYO-key.
         if seed.public_key_der is None:
@@ -260,7 +326,9 @@ class MintService:
             )
         self._verify_pop_at_mint(seed, seed.public_key_der, pop)
 
-        # (7) Issue the attenuated child (issuer records lineage).
+        # (7) Issue the attenuated child (issuer records lineage), with the
+        # parent's expiry as a ceiling: the child ends at the earlier of that and
+        # the issuer's own TTL.
         vaid = self._issuer.issue_vaid_with_key(
             agent_class=seed.agent_class,
             version=seed.version,
@@ -269,9 +337,45 @@ class MintService:
             scope_boundary=seed.scope_boundary,
             capability_set=seed.capability_set,
             public_key_der=seed.public_key_der,
+            not_after=parent["expires_at"],
         )
 
-        # (8) Delegated audit.
+        # (7a) ...and CHECK what came back. The ceiling above is an instruction to
+        # the issuer; this is the property. An issuer is a seam a deployment
+        # supplies, and one that ignores ``not_after`` — a third-party
+        # implementation written before this rule existed, or one that simply gets
+        # it wrong — would emit a child outliving its parent that nothing
+        # downstream could distinguish from a legitimate one. The same matcher the
+        # chain verifier refuses on is applied to the document actually issued, so
+        # the mint never hands out a document its own verifier would reject.
+        #
+        # This one refusal DOES consume the nonce, unavoidably: the PoP has already
+        # been spent by the time a document exists to check. That is the right
+        # trade — it fires only for a broken issuer, never for a caller's mistake.
+        if not expiry_attenuates(parent, vaid.get("expires_at")):
+            raise UnauthorizedError(
+                f"issuer returned a child expiring {vaid.get('expires_at')!r}, "
+                f"after the parent's {parent.get('expires_at')!r}, despite a "
+                "not_after ceiling — the issuer does not honour expiry containment "
+                "and the child has not been returned"
+            )
+
+        # (8) Was the child's life cut short by its parent's, rather than by this
+        # issuer's TTL? Computed from the two documents rather than reported by the
+        # issuer: the issuer returns a document and nothing else, and reading the
+        # SIGNED bytes is the stronger statement anyway — it describes the document
+        # the caller is actually holding, not the issuer's intent.
+        #
+        # The one inexact case is a tie: an issuer whose TTL lands exactly on the
+        # parent's expiry sets this true although nothing was taken away. The field
+        # is named for what is literally true of the document — the child's expiry
+        # IS the parent's bound — rather than for the issuer's arithmetic, so the
+        # tie is still an accurate statement.
+        expiry_bounded_by_parent = vaid["expires_at"] == parent["expires_at"]
+
+        # (9) Delegated audit — distinguishes the delegation tree from root mints,
+        # and records the shortening, so a caller that ignored the response can
+        # still find out from the audit trail why a credential was short-lived.
         self._audit.record(
             "vaid_minted",
             {
@@ -285,6 +389,13 @@ class MintService:
                 "delegated": True,
                 "attenuation_verified": True,
                 "parent_tenant": parent["tenant_id"],
+                "expiry_bounded_by_parent": expiry_bounded_by_parent,
+                "expires_at": vaid["expires_at"],
+                "parent_expires_at": parent["expires_at"],
             },
         )
-        return vaid
+        return MintChildResponse(
+            vaid=vaid,
+            expiry_bounded_by_parent=expiry_bounded_by_parent,
+            parent_expires_at=parent["expires_at"],
+        )

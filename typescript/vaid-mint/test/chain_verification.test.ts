@@ -82,7 +82,12 @@ class LocalMint {
       version: '1.0.0',
       tenantId: tenant as Vaid['tenant_id'],
       issuedAt: '2026-06-04T12:00:00Z' as Vaid['issued_at'],
-      expiresAt: '2026-06-05T12:00:00Z' as Vaid['expires_at'],
+      // Far-future by convention (verdict_v1: "pinned by distance, not by a
+      // clock"). This fixture carried 2026-06-05, a date that was future when it
+      // was written and is past now — so every chain below was a chain of
+      // ALREADY-EXPIRED documents, which only verified because nothing consulted
+      // expiry (vaid#79).
+      expiresAt: '2999-01-01T00:00:00Z' as Vaid['expires_at'],
       publicKeyDer: Array.from({ length: 32 }, (_, i) => i),
       parentVaid,
       scopeBoundary: scope,

@@ -52,12 +52,13 @@ import {
   type Vaid,
 } from './document.js';
 import {
+  AttestationBundle,
   canonicalAttestationSigningBytes,
   verifyAttestationAuthenticity,
   type ConsentAttestation,
 } from './attestation.js';
-import { PresentedBundle, verifyChain } from './chain.js';
-import { scopeAttenuatesWithin } from './mint.js';
+import { PresentedBundle, SingleKernelKey, verifyChainAt } from './chain.js';
+import { expiryAttenuatesWithin, scopeAttenuatesWithin } from './mint.js';
 import { RevocationStatus } from './revocation.js';
 import {
   isVerdictValid,
@@ -113,7 +114,37 @@ export interface ChainVector {
     kernel_key_thumbprint: string;
   };
   chain: ChainVectorEntry[];
-  expected: { _comment?: string; assembled_lineage: string[]; verification: string };
+  expected: {
+    _comment?: string;
+    assembled_lineage: string[];
+    verification: string;
+    verification_instant: string;
+  };
+}
+
+/** One case of `chain_expiry_v1.json`: a chain plus the instant its verdict holds at. */
+export interface ChainExpiryCase {
+  name: string;
+  why: string;
+  chain: ChainVectorEntry[];
+  verification_instant: string;
+  expected_verification: string;
+}
+
+/** `chain_expiry_v1.json` — the expiry invariant (vaid#79), on both surfaces. */
+export interface ChainExpiryVector {
+  ed25519: {
+    kernel_private_key_seed_hex: string;
+    kernel_public_key_hex: string;
+    kernel_key_thumbprint: string;
+  };
+  expiry_containment: {
+    name: string;
+    parent_expires_at: string | null;
+    child_expires_at: string | null;
+    expected: string;
+  }[];
+  cases: ChainExpiryCase[];
 }
 
 /** `attestation_v1.json` — the frozen consent attestation. */
@@ -316,16 +347,83 @@ export function checkChain(v: ChainVector): void {
     ...e.document,
     kernel_signature: Array.from(fromHex(e.signature_hex)),
   }));
-  const verdict = verifyChain(
-    fromHex(v.ed25519.kernel_public_key_hex),
+  // AT the instant the vector states, never at this machine's clock. Every document
+  // in chain_v1 expired on 2026-06-05; verified against a wall clock, this assertion
+  // silently changed meaning on that date and went on passing because nothing
+  // consulted expiry (vaid#79).
+  const verdict = verifyChainAt(
+    new SingleKernelKey(fromHex(v.ed25519.kernel_public_key_hex)),
     docs[docs.length - 1]!,
     new PresentedBundle(docs),
+    new AttestationBundle(),
+    new Date(v.expected.verification_instant),
   );
   if (verdict !== v.expected.verification) {
     throw new ConformanceError(
       `chain verdict '${verdict}' != frozen '${v.expected.verification}' — the ` +
         'installed verifier disagrees with the frozen walk',
     );
+  }
+}
+
+/**
+ * `chain_expiry_v1.json` — the expiry invariant (vaid#79), on both surfaces.
+ *
+ * A predicate vector: it carries no digest of its own, so the assertion IS the
+ * verdict. Every document is still re-derived from the vector's kernel seed first,
+ * because a verdict over bytes nobody checked is a verdict about nothing.
+ */
+export function checkChainExpiry(v: ChainExpiryVector): void {
+  const seed = fromHex(v.ed25519.kernel_private_key_seed_hex);
+  const publicKey = fromHex(v.ed25519.kernel_public_key_hex);
+
+  for (const c of v.expiry_containment) {
+    const permitted = expiryAttenuatesWithin(c.parent_expires_at, c.child_expires_at);
+    if (permitted !== (c.expected === 'permitted')) {
+      throw new ConformanceError(
+        `expiry containment '${c.name}': expected ${c.expected}, got ` +
+          `${permitted ? 'permitted' : 'refused'}`,
+      );
+    }
+  }
+
+  for (const c of v.cases) {
+    for (const entry of c.chain) {
+      const digest = canonicalVaidSigningBytes(entry.document);
+      assertHex(`${c.name} / ${entry._role} digest`, toHex(digest), entry.digest_sha256_hex);
+      assertHex(
+        `${c.name} / ${entry._role} signature`,
+        toHex(ed25519Sign(digest, seed)),
+        entry.signature_hex,
+      );
+    }
+
+    const docs = c.chain.map((e) => ({
+      ...e.document,
+      kernel_signature: Array.from(fromHex(e.signature_hex)),
+    }));
+    const verdict = verifyChainAt(
+      new SingleKernelKey(publicKey),
+      docs[docs.length - 1]!,
+      new PresentedBundle(docs),
+      new AttestationBundle(),
+      new Date(c.verification_instant),
+    );
+    if (verdict !== c.expected_verification) {
+      throw new ConformanceError(
+        `chain verdict '${verdict}' != frozen '${c.expected_verification}' for ` +
+          `'${c.name}' — the installed verifier disagrees with the frozen expiry rule`,
+      );
+    }
+  }
+
+  // The controls are load-bearing: an implementation that refuses everything
+  // satisfies every negative case above and nothing here.
+  if (!v.cases.some((c) => c.expected_verification === 'attenuated')) {
+    throw new ConformanceError('chain_expiry_v1 carries no positive control');
+  }
+  if (!v.expiry_containment.some((c) => c.expected === 'permitted')) {
+    throw new ConformanceError('chain_expiry_v1 carries no positive containment control');
   }
 }
 
@@ -628,6 +726,7 @@ export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
   },
   'mint_pop_v1.json': (v: MintPopVector) => checkMintPop(v),
   'chain_v1.json': (v: ChainVector) => checkChain(v),
+  'chain_expiry_v1.json': (v: ChainExpiryVector) => checkChainExpiry(v),
   'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
   'scope_v1.json': (v: ScopeVector) => checkScope(v),
   'roundtrip_v1.json': (v: RoundtripVector) => checkRoundtrip(v),

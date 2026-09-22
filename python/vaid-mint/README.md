@@ -6,7 +6,11 @@ The Python mirror of the Rust `vaid-mint` crate: the open, self-hostable
 - **`mint_root`** — mint a root/operator VAID (BYO-key with proof-of-possession,
   or generate-and-discard), gated by an explicit `AuthorizationGate`.
 - **`mint_child`** — **attenuated delegation**: an authenticated parent mints a
-  child whose authority is always a subset of its own (`child ⊆ parent`).
+  child whose authority is always a subset of its own (`child ⊆ parent`). Lifetime
+  is part of authority: the child is clamped to the parent's `expires_at` and
+  cannot outlive it (ADR-0007). Returns a `MintChildResponse` — `.vaid` is the
+  document, and `.expiry_bounded_by_parent` says whether the parent's expiry cut the
+  child short.
 
 ## Trust model — read this before using the mint
 

@@ -200,7 +200,7 @@ waiting.
 Stated plainly because it is the current state and an evaluator will determine it from
 the source within minutes.
 
-| | 0.1.2 (superseded) | 0.2 onward (current: 0.7.0) |
+| | 0.1.2 (superseded) | 0.2 onward (current: 0.8.0) |
 |---|---|---|
 | Seam present | Yes, Rust and Python | Yes, Rust, Python and TypeScript |
 | Return type | Boolean | Three-state per R.4.3 |

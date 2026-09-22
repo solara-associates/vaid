@@ -31,6 +31,7 @@ fn public_key_and_doc() -> (Vec<u8>, Vaid) {
             None,
             vec!["data.x".into()],
             vec!["read".into()],
+            None,
         )
         .unwrap();
     (issuer.kernel_public_key().to_vec(), vaid)
@@ -117,4 +118,54 @@ fn verifies_the_frozen_mint_vector_with_public_key_only() {
     doc2["kernel_signature"] = json!(bad_sig);
     let tampered: Vaid = serde_json::from_value(doc2).unwrap();
     assert!(!verify_vaid_authenticity(&public_key, &tampered));
+}
+
+// ── RFC 3339 requires an offset (vaid#79, Session 240) ──
+
+/// The three implementations must agree, and for a while they did not.
+///
+/// JavaScript's `Date.parse` reads a date-time with no offset as LOCAL time, so the
+/// TypeScript twin called such a document **live** — and gave a different answer on
+/// a UTC+2 laptop than on a UTC runner. This implementation and the Python one both
+/// refuse it and call it expired, fail-closed. Pinned in all three so the agreement
+/// is a tested property rather than a coincidence of three parsers.
+///
+/// `verdict_v1.json` covers an unreadable expiry and a numeric-offset expiry. It has
+/// no offsetless case, which is why nothing caught this.
+#[test]
+fn an_offsetless_expiry_is_expired_not_live() {
+    let naive = vaid_with_expiry("2999-01-01T00:00:00");
+    let zulu = vaid_with_expiry("2999-01-01T00:00:00Z");
+    let offset = vaid_with_expiry("2999-01-01T00:00:00+00:00");
+
+    assert!(
+        naive.is_expired(),
+        "an offsetless expiry is not readable — fail closed"
+    );
+    assert!(!zulu.is_expired());
+    assert!(!offset.is_expired(), "RFC 3339 allows a numeric offset");
+}
+
+/// Build a document carrying exactly this `expires_at`, as presented.
+///
+/// Routed through JSON rather than the constructor because the constructor takes a
+/// `DateTime<Utc>` and formats it — which would make an unrepresentable timestamp
+/// unrepresentable in the test too, and this test is about presented bytes
+/// (ADR-0006).
+fn vaid_with_expiry(expires_at: &str) -> Vaid {
+    let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();
+    let doc = issuer
+        .issue_vaid_with_lineage(
+            AgentClass::new("probe"),
+            "1.0.0".into(),
+            TenantId::new("t"),
+            None,
+            vec![],
+            vec![],
+            None,
+        )
+        .unwrap();
+    let mut json = serde_json::to_value(&doc).unwrap();
+    json["expires_at"] = serde_json::Value::String(expires_at.to_string());
+    serde_json::from_value(json).unwrap()
 }

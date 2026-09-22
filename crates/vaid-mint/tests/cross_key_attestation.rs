@@ -1036,12 +1036,25 @@ fn a_forged_and_expired_attestation_reports_inauthentic() {
     );
 }
 
-/// Document expiry stays UNCONSULTED. An attestation may outlive the parent VAID it
-/// delegates from, and this pass deliberately does not change that: the chain
-/// verifier has never consulted document expiry, and whether it should is a separate
-/// decision. Pinned as a test so the property is not lost by accident.
+/// An ancestor past its own `expires_at` makes the chain `Expired`.
+///
+/// **This test asserted the opposite until Session 240.** It was called
+/// `an_expired_parent_document_does_not_affect_the_verdict`, it pinned `Attenuated`
+/// over an already-expired root, and its doc comment said the property was pinned
+/// "so it is not lost by accident" — a defect written down as a requirement, green,
+/// and load-bearing. vaid#79 is that defect; the assertion below is its inversion.
+///
+/// Note which fault is reported. The child here ALSO outlives the expired root, so
+/// two rules are broken at once; the lapse is checked before hop containment, so the
+/// verdict is `Expired` rather than `NotAttenuated`. That order is fixed in all three
+/// implementations, because three verifiers that reject the same chain for three
+/// different reasons agree on every boolean and disagree about what happened.
+///
+/// What is still NOT consulted: the LEAF's own expiry, and revocation anywhere on the
+/// chain (vaid#76, open). An attestation may still outlive the parent VAID it
+/// delegates from — that is the attestation's own window, checked separately.
 #[test]
-fn an_expired_parent_document_does_not_affect_the_verdict() {
+fn an_expired_parent_document_is_expired_not_attenuated() {
     let a = Org::new(1, "a.example");
     let b = Org::new(2, "b.example");
     let now = Utc::now();
@@ -1082,8 +1095,8 @@ fn an_expired_parent_document_does_not_affect_the_verdict() {
             &AttestationBundle::new(vec![consent]),
             now,
         ),
-        ChainVerification::Attenuated,
-        "document expiry is not consulted by chain verification, and did not become \
-         consulted when attestation expiry landed"
+        ChainVerification::Expired,
+        "a chain whose root has already expired must not report attenuated — the \
+         authority the child derives from no longer exists (vaid#79)"
     );
 }

@@ -149,10 +149,29 @@ def is_expired(vaid: dict) -> bool:
     document whose expiry cannot be read is not a document that can be shown to be
     unexpired.
     """
+    return is_expired_at(vaid, datetime.now(timezone.utc))
+
+
+def is_expired_at(vaid: dict, now: datetime) -> bool:
+    """:func:`is_expired` against a **given** instant rather than the wall clock.
+
+    The same predicate, with the clock read lifted out. :func:`is_expired` is the
+    convenience for a caller with no reason to control time; anything that must be
+    reproducible — a conformance vector, a boundary case, replaying a historical
+    decision — asks at a stated instant instead, and
+    :func:`~vaid_mint.chain.verify_chain_at` passes its own ``now`` down here so a
+    chain's verdict does not depend on when the suite happened to run (BACKLOG B9,
+    on the verify side).
+
+    Fails closed identically: an unparseable or absent ``expires_at`` is expired.
+    The boundary is ``now > expires_at``, so a document is live **at** its own
+    ``expires_at`` and expired the first instant after it — stated here because the
+    three implementations must agree on the boundary, not merely on the interior.
+    """
     expires_at = _parse_rfc3339(vaid.get("expires_at"))
     if expires_at is None:
         return True
-    return datetime.now(timezone.utc) > expires_at
+    return now.astimezone(timezone.utc) > expires_at
 
 
 def has_conforming_timestamps(vaid: dict) -> bool:

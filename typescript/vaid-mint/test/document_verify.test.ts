@@ -16,6 +16,8 @@ import { test } from 'node:test';
 import { fromHex } from 'vaid-pop';
 
 import {
+  isExpired,
+  parseRfc3339,
   ReferenceIssuer,
   verifyLineageHash,
   verifyVaidAuthenticity,
@@ -126,4 +128,38 @@ test('verifies the frozen mint vector with the public key only', () => {
   const flipped = Array.from(signature);
   flipped[0] ^= 0x01;
   assert.equal(verifyVaidAuthenticity(publicKey, { ...signed, kernel_signature: flipped }), false);
+});
+
+// ── RFC 3339 requires an offset (vaid#79, Session 240) ──
+
+test('an offsetless expiry is EXPIRED, not live — and the three implementations agree', () => {
+  // `Date.parse` reads a date-time with no offset as LOCAL time, so this
+  // implementation used to call such a document live, while Python's
+  // `_parse_rfc3339` and Rust's `DateTime::parse_from_rfc3339` both refuse it and
+  // call it expired. TypeScript was the odd one out, fail-OPEN, and nothing tested
+  // it: `verdict_v1.json` pins an unreadable expiry and a numeric-offset expiry,
+  // and has no offsetless case.
+  assert.equal(isExpired({ expires_at: '2999-01-01T00:00:00' } as Vaid), true);
+  assert.equal(isExpired({ expires_at: '2999-01-01T00:00:00Z' } as Vaid), false);
+});
+
+test('the verdict does not move with the verifier timezone', () => {
+  // The bug this closes was found by a vector case that passed on a UTC+2 laptop
+  // and failed on a UTC runner — the same document, the same comparison, two
+  // answers. Asserted here over the forms RFC 3339 does allow, so a future
+  // loosening of the parser has to break this test to get through.
+  for (const [a, b] of [
+    ['2026-06-05T12:00:00Z', '2026-06-05T13:00:00+01:00'],
+    ['2026-06-05T12:00:00Z', '2026-06-05T07:00:00-05:00'],
+    ['2026-06-05T12:00:00z', '2026-06-05T12:00:00+00:00'],
+  ]) {
+    assert.equal(
+      parseRfc3339(a),
+      parseRfc3339(b),
+      `${a} and ${b} are the same instant and must parse identically`,
+    );
+  }
+  assert.equal(parseRfc3339('2026-06-05T12:00:00'), null, 'no offset is not RFC 3339');
+  assert.equal(parseRfc3339('whenever'), null);
+  assert.equal(parseRfc3339(null), null);
 });
