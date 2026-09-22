@@ -21,7 +21,15 @@ import { utcWholeSecondRfc3339, verifySignedPayload, type Rfc3339Utc } from 'vai
 
 import type { AuditSink } from './audit.js';
 import { PermitAll, type AuthorizationGate } from './authz.js';
-import { capsContain, hasCapability, isInScope, scopeContains, type Vaid } from './document.js';
+import {
+  capsContain,
+  hasCapability,
+  isExpired,
+  isInScope,
+  parseRfc3339,
+  scopeContains,
+  type Vaid,
+} from './document.js';
 import { IdentityError, UnauthorizedError } from './error.js';
 import type { VaidIssuer } from './issuer.js';
 import {
@@ -130,6 +138,51 @@ export function capsAttenuateWithin(
   childCaps: readonly string[],
 ): boolean {
   return childCaps.every((c) => capsContain(parentCaps, c));
+}
+
+/**
+ * Does `childExpiresAt` fall at or before `parent`'s `expires_at`?
+ *
+ * The fifth containment property, and the one vaid#79 found missing: a child's
+ * authority is derived from its parent's, and authority that outlives the authority
+ * it came from was never contained by it. AAT I3 (TTL monotonicity),
+ * `draft-niyikiza-oauth-attenuating-agent-tokens-01` §4.4.
+ *
+ * **One matcher, two call sites**, exactly as {@link scopeAttenuates} and
+ * {@link capsAttenuate} are: {@link MintService.mintChild} checks the document its
+ * issuer returned against it, and `verifyChainAt` refuses a presented hop it
+ * rejects. A second implementation of the rule is how the two would drift apart.
+ *
+ * **Equality is allowed.** A child expiring at exactly its parent's `expires_at`
+ * holds authority for no instant in which the parent holds none.
+ *
+ * **Fails closed.** An unreadable or absent expiry on either side is not
+ * containment — the same rule {@link isExpired} states for standing.
+ *
+ * The comparison is over PARSED instants, never over the strings: a presented
+ * timestamp may be in any valid RFC 3339 form (ADR-0006), and two spellings of the
+ * same instant do not compare as text.
+ */
+export function expiryAttenuates(
+  parent: Vaid,
+  childExpiresAt: string | null | undefined,
+): boolean {
+  return expiryAttenuatesWithin(parent.expires_at, childExpiresAt);
+}
+
+/**
+ * The same predicate over bare timestamps rather than documents — the form the mint
+ * needs, where the child's document does not exist yet and its expiry is only the
+ * ceiling the issuer was handed.
+ */
+export function expiryAttenuatesWithin(
+  parentExpiresAt: string | null | undefined,
+  childExpiresAt: string | null | undefined,
+): boolean {
+  const parent = parseRfc3339(parentExpiresAt);
+  const child = parseRfc3339(childExpiresAt);
+  if (parent === null || child === null) return false;
+  return child <= parent;
 }
 
 /**
@@ -250,7 +303,8 @@ export class MintService {
       delegated: false,
     });
 
-    return { vaid };
+    // A root has no parent to be bounded by, so its TTL is the issuer's alone.
+    return { vaid, expiryBoundedByParent: false, parentExpiresAt: null };
   }
 
   /**
@@ -263,7 +317,9 @@ export class MintService {
    * 3. `C.parentVaid == P.vaid_id` — lineage bound to the authenticated parent;
    * 4. `C.scope ⊆ P.scope` — {@link scopeAttenuates};
    * 5. `C.caps ⊆ P.caps` — {@link capsAttenuate};
-   * 6. child **BYO-key PoP** holds — `mintChild` is always BYO-key.
+   * 5a. the parent is **not already expired** — its expiry is the ceiling the child
+ *     is clamped to at step 7, and a ceiling in the past bounds nothing;
+ * 6. child **BYO-key PoP** holds — `mintChild` is always BYO-key.
    *
    * Attenuation (2–5) runs BEFORE the PoP so a rejected delegation never consumes
    * a nonce. The child is issued with `parent_vaid` set (the issuer records
@@ -322,6 +378,27 @@ export class MintService {
       );
     }
 
+    // (5a) The parent must still be alive (vaid#79).
+    //
+    // The child's expiry is CLAMPED to the parent's at issuance (step 7), so a
+    // delegation can never produce a child that outlives its parent and no working
+    // delegation is refused for a TTL the caller did not choose. The one case a
+    // clamp cannot answer is a parent that has already expired: the clamp's own
+    // ceiling is in the past, so the child would be issued dead-on-arrival. That is
+    // refused instead, HERE — with (4) and (5) and before the PoP, so the refusal
+    // burns no nonce.
+    //
+    // An unreadable expiry is expired (`isExpired` fails closed), so a parent whose
+    // expiry cannot be read is refused by the same line.
+    if (isExpired(parent)) {
+      throw new UnauthorizedError(
+        `authenticated parent ${parent.vaid_id} expired at ` +
+          `'${parent.expires_at}' — a child may not outlive the authority it ` +
+          'derives from, and a child of a dead parent would be issued already ' +
+          'expired. Renew the parent, then delegate',
+      );
+    }
+
     // (6) Child BYO-key PoP. Runs AFTER attenuation: an unauthorized delegation
     // must not burn a nonce. mintChild is always BYO-key.
     if (seed.publicKeyDer == null) {
@@ -332,10 +409,52 @@ export class MintService {
     }
     this.#verifyPopAtMint(seed, seed.publicKeyDer, request.pop);
 
-    // (7) Issue the attenuated child. parentVaid is set → lineage recorded.
-    const vaid = this.#issuer.issueVaidWithKey(attributes, seed.publicKeyDer);
+    // (7) Issue the attenuated child. parentVaid is set → lineage recorded. The
+    // parent's expiry is passed as a ceiling: the child ends at the earlier of that
+    // and the issuer's own TTL.
+    const vaid = this.#issuer.issueVaidWithKey(
+      attributes,
+      seed.publicKeyDer,
+      parent.expires_at,
+    );
 
-    // (8) Delegated audit — distinguishes the delegation tree from root mints.
+    // (7a) ...and CHECK what came back. The ceiling above is an instruction to the
+    // issuer; this is the property. An issuer is a seam a deployment supplies, and
+    // one that ignores `notAfter` — a third-party implementation written before
+    // this rule existed, or one that simply gets it wrong — would emit a child
+    // outliving its parent that nothing downstream could distinguish from a
+    // legitimate one. The same matcher the chain verifier refuses on is applied to
+    // the document actually issued, so the mint never hands out a document its own
+    // verifier would reject.
+    //
+    // This one refusal DOES consume the nonce, unavoidably: the PoP has already
+    // been spent by the time a document exists to check. That is the right trade —
+    // it fires only for a broken issuer, never for a caller's mistake.
+    if (!expiryAttenuates(parent, vaid.expires_at)) {
+      throw new UnauthorizedError(
+        `issuer returned a child expiring '${vaid.expires_at}', after the ` +
+          `parent's '${parent.expires_at}', despite a notAfter ceiling — the ` +
+          'issuer does not honour expiry containment and the child has not been ' +
+          'returned',
+      );
+    }
+
+    // (8) Was the child's life cut short by its parent's, rather than by this
+    // issuer's TTL? Computed from the two documents rather than reported by the
+    // issuer: the issuer returns a `Vaid` and nothing else, and reading the SIGNED
+    // bytes is the stronger statement anyway — it describes the document the caller
+    // is actually holding, not the issuer's intent.
+    //
+    // The one inexact case is a tie: an issuer whose TTL lands exactly on the
+    // parent's expiry sets this true although nothing was taken away. The field is
+    // named for what is literally true of the document — the child's expiry IS the
+    // parent's bound — rather than for the issuer's arithmetic, so the tie is still
+    // an accurate statement.
+    const expiryBoundedByParent = vaid.expires_at === parent.expires_at;
+
+    // (9) Delegated audit — distinguishes the delegation tree from root mints, and
+    // records the shortening, so a caller that ignored the response can still find
+    // out from the audit trail why a credential was short-lived.
     await this.#audit.record('vaid_minted', {
       agent_class: seed.agentClass,
       version: seed.version,
@@ -347,9 +466,12 @@ export class MintService {
       delegated: true,
       attenuation_verified: true,
       parent_tenant: parent.tenant_id,
+      expiry_bounded_by_parent: expiryBoundedByParent,
+      expires_at: vaid.expires_at,
+      parent_expires_at: parent.expires_at,
     });
 
-    return { vaid };
+    return { vaid, expiryBoundedByParent, parentExpiresAt: parent.expires_at };
   }
 }
 

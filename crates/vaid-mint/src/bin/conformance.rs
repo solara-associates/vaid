@@ -42,19 +42,21 @@
 use std::collections::BTreeSet;
 use std::process::ExitCode;
 
+use chrono::{DateTime, Utc};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use vaid_mint::attestation::{
-    canonical_attestation_signing_bytes, verify_attestation_authenticity, ConsentAttestation,
+    canonical_attestation_signing_bytes, verify_attestation_authenticity, AttestationBundle,
+    ConsentAttestation,
 };
-use vaid_mint::chain::{verify_chain, ChainVerification, PresentedBundle};
+use vaid_mint::chain::{verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey};
 use vaid_mint::document::{
     canonical_vaid_signing_bytes, compute_lineage_hash, scope_contains, Vaid, SCOPE_SEPARATORS,
 };
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
-use vaid_mint::mint::scope_attenuates_within;
+use vaid_mint::mint::{expiry_attenuates_within, scope_attenuates_within};
 use vaid_mint::revocation::RevocationStatus;
 use vaid_mint::verify::{verify_vaid_authenticity, verify_vaid_standing_from_json, VaidVerdict};
 
@@ -263,20 +265,160 @@ fn check_chain(v: &Value) -> Check {
         Some(l) => l.clone(),
         None => return err("chain vector is empty"),
     };
-    let verdict = verify_chain(kp.public_key().as_ref(), &leaf, &PresentedBundle::new(docs));
-    let actual = match verdict {
-        ChainVerification::Attenuated => "attenuated",
-        ChainVerification::Inauthentic => "inauthentic",
-        ChainVerification::Unverifiable => "unverifiable",
-        ChainVerification::NotAttenuated => "not_attenuated",
-        ChainVerification::ConsentExpired => "consent_expired",
+    // AT the instant the vector states, never at this machine's clock. Every
+    // document in chain_v1 expired on 2026-06-05; verified against a wall clock,
+    // this assertion silently changed meaning on that date and went on passing
+    // because nothing consulted expiry (vaid#79).
+    let instant = match instant_of(&v["expected"]["verification_instant"]) {
+        Some(i) => i,
+        None => return err("chain vector states no verification_instant".to_string()),
     };
+    let verdict = verify_chain_at(
+        &SingleKernelKey::new(kp.public_key().as_ref()),
+        &leaf,
+        &PresentedBundle::new(docs),
+        &AttestationBundle::default(),
+        instant,
+    );
+    let actual = verdict_name(verdict);
     let want = v["expected"]["verification"].as_str().unwrap_or_default();
     if actual != want {
         return err(format!(
             "chain verdict '{actual}' != frozen '{want}' — the installed verifier \
              disagrees with the frozen walk"
         ));
+    }
+    Ok(())
+}
+
+/// The wire spelling of a chain verdict. One mapping, used by every chain check, so
+/// two checks cannot name the same verdict differently.
+fn verdict_name(verdict: ChainVerification) -> &'static str {
+    match verdict {
+        ChainVerification::Attenuated => "attenuated",
+        ChainVerification::Inauthentic => "inauthentic",
+        ChainVerification::Unverifiable => "unverifiable",
+        ChainVerification::NotAttenuated => "not_attenuated",
+        ChainVerification::Expired => "expired",
+        ChainVerification::ConsentExpired => "consent_expired",
+    }
+}
+
+/// A vector-stated verification instant, parsed. `None` if absent or unreadable —
+/// which is a failure at the call site, never a silent fall back to the clock.
+fn instant_of(value: &Value) -> Option<DateTime<Utc>> {
+    let text = value.as_str()?;
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
+/// `chain_expiry_v1.json` — the expiry invariant (vaid#79), on both surfaces.
+///
+/// A predicate vector: it carries no digest of its own, so the assertion IS the
+/// verdict. Every document is still re-derived from the vector's kernel seed first,
+/// because a verdict over bytes nobody checked is a verdict about nothing.
+fn check_chain_expiry(v: &Value) -> Check {
+    for case in v["expiry_containment"].as_array().unwrap_or(&Vec::new()) {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let parent = case["parent_expires_at"].as_str().unwrap_or("");
+        let child = case["child_expires_at"].as_str();
+        let permitted = expiry_attenuates_within(parent, child);
+        let want = case["expected"].as_str().unwrap_or_default() == "permitted";
+        if permitted != want {
+            return err(format!(
+                "expiry containment '{name}': expected {}, got {}",
+                case["expected"].as_str().unwrap_or_default(),
+                if permitted { "permitted" } else { "refused" }
+            ));
+        }
+    }
+
+    let empty = Vec::new();
+    let cases = v["cases"].as_array().unwrap_or(&empty);
+    if cases.is_empty() {
+        return err("chain_expiry vector has no cases".to_string());
+    }
+
+    let mut saw_positive_chain = false;
+    let mut saw_positive_containment = false;
+    for case in v["expiry_containment"].as_array().unwrap_or(&empty) {
+        if case["expected"].as_str() == Some("permitted") {
+            saw_positive_containment = true;
+        }
+    }
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>").to_string();
+        let seed = unhex(
+            v["ed25519"]["kernel_private_key_seed_hex"]
+                .as_str()
+                .unwrap_or_default(),
+        );
+        let kp = match Ed25519KeyPair::from_seed_unchecked(&seed) {
+            Ok(k) => k,
+            Err(e) => return err(format!("vector seed is not a usable Ed25519 seed: {e:?}")),
+        };
+
+        let mut docs: Vec<Vaid> = Vec::new();
+        for entry in case["chain"].as_array().unwrap_or(&empty) {
+            let role = entry["_role"].as_str().unwrap_or("?");
+            let unsigned: Vaid = match serde_json::from_value(entry["document"].clone()) {
+                Ok(d) => d,
+                Err(e) => return err(format!("{name} / {role}: does not deserialize: {e}")),
+            };
+            let digest = canonical_vaid_signing_bytes(&unsigned);
+            assert_hex(
+                &format!("{name} / {role} digest"),
+                &to_hex(&digest),
+                entry["digest_sha256_hex"].as_str().unwrap_or_default(),
+            )?;
+            assert_hex(
+                &format!("{name} / {role} signature"),
+                &to_hex(kp.sign(&digest).as_ref()),
+                entry["signature_hex"].as_str().unwrap_or_default(),
+            )?;
+            docs.push(
+                unsigned.with_kernel_signature(unhex(
+                    entry["signature_hex"].as_str().unwrap_or_default(),
+                )),
+            );
+        }
+
+        let leaf = match docs.last() {
+            Some(l) => l.clone(),
+            None => return err(format!("{name}: empty chain")),
+        };
+        let instant = match instant_of(&case["verification_instant"]) {
+            Some(i) => i,
+            None => return err(format!("{name}: no verification_instant")),
+        };
+        let actual = verdict_name(verify_chain_at(
+            &SingleKernelKey::new(kp.public_key().as_ref()),
+            &leaf,
+            &PresentedBundle::new(docs),
+            &AttestationBundle::default(),
+            instant,
+        ));
+        let want = case["expected_verification"].as_str().unwrap_or_default();
+        if actual != want {
+            return err(format!(
+                "chain verdict '{actual}' != frozen '{want}' for '{name}' — the \
+                 installed verifier disagrees with the frozen expiry rule"
+            ));
+        }
+        if want == "attenuated" {
+            saw_positive_chain = true;
+        }
+    }
+
+    // The controls are load-bearing: an implementation that refuses everything
+    // satisfies every negative case above and nothing here.
+    if !saw_positive_chain {
+        return err("chain_expiry_v1 carries no positive control".to_string());
+    }
+    if !saw_positive_containment {
+        return err("chain_expiry_v1 carries no positive containment control".to_string());
     }
     Ok(())
 }
@@ -706,6 +848,7 @@ const VECTOR_CHECKS: &[VectorCheck] = &[
     ("mint_v1.json", check_mint),
     ("mint_pop_v1.json", check_mint_pop),
     ("chain_v1.json", check_chain),
+    ("chain_expiry_v1.json", check_chain_expiry),
     ("attestation_v1.json", check_attestation),
     ("scope_v1.json", check_scope),
     ("roundtrip_v1.json", check_roundtrip),

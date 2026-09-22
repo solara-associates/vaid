@@ -21,10 +21,12 @@ import { test } from 'node:test';
 import { canonicalize, ed25519PublicKey, ed25519Sign, fromHex, sha256, toHex } from 'vaid-pop';
 
 import {
+  AttestationBundle,
   canonicalVaidSigningBytes,
   ChainVerification,
   PresentedBundle,
-  verifyChain,
+  SingleKernelKey,
+  verifyChainAt,
   type Vaid,
 } from '../src/index.js';
 import { assembleLineage } from '../src/revocation.js';
@@ -40,6 +42,8 @@ interface ChainExpected {
   _comment?: string;
   assembled_lineage: string[];
   verification: string;
+  /** The instant `verification` is asserted AT. Normative — see the vector. */
+  verification_instant: string;
 }
 
 interface ChainVector {
@@ -115,13 +119,21 @@ test('THE WALK part 1: reproduces the frozen assembled lineage', () => {
 test('THE WALK part 2: reproduces the frozen verification verdict', () => {
   // This is the assertion the vector exists for — two implementations could agree
   // on every digest and still disagree here.
+  //
+  // Asserted AT the vector's own `verification_instant`. It used to be asserted
+  // against the wall clock, and these three documents expired on 2026-06-05: from
+  // that date this test was pinning `attenuated` over a chain whose every ancestor
+  // was dead, and it passed, because nothing consulted expiry (vaid#79). A verdict
+  // that depends on the calendar is not frozen.
   const docs = chainDocs();
   const leaf = docs[docs.length - 1]!;
 
-  const verdict = verifyChain(
-    fromHex(VECTOR.ed25519.kernel_public_key_hex),
+  const verdict = verifyChainAt(
+    new SingleKernelKey(fromHex(VECTOR.ed25519.kernel_public_key_hex)),
     leaf,
     new PresentedBundle(docs),
+    new AttestationBundle(),
+    new Date(VECTOR.expected.verification_instant),
   );
 
   assert.equal(verdict, VECTOR.expected.verification, 'verification verdict drift');

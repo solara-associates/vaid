@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from importlib.resources import files
 
 import rfc8785
@@ -40,10 +41,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from vaid_pop import canonical_request_signing_bytes, verify_signed_payload
 
 from vaid_mint.attestation import (
+    AttestationBundle,
     canonical_attestation_signing_bytes,
     verify_attestation_authenticity,
 )
-from vaid_mint.chain import PresentedBundle, verify_chain
+from vaid_mint.chain import (
+    PresentedBundle,
+    SingleKernelKey,
+    verify_chain_at,
+)
 from vaid_mint.document import (
     SCOPE_SEPARATORS,
     canonical_vaid_signing_bytes,
@@ -236,13 +242,89 @@ def check_chain(v: dict) -> None:
         {**e["document"], "kernel_signature": list(bytes.fromhex(e["signature_hex"]))}
         for e in v["chain"]
     ]
-    verdict = verify_chain(
-        bytes.fromhex(v["ed25519"]["kernel_public_key_hex"]), docs[-1], PresentedBundle(docs)
+    # AT the instant the vector states, never at this machine's clock. Every
+    # document in chain_v1 expired on 2026-06-05; verified against a wall clock,
+    # this assertion silently changed meaning on that date and went on passing
+    # because nothing consulted expiry (vaid#79).
+    verdict = verify_chain_at(
+        SingleKernelKey(bytes.fromhex(v["ed25519"]["kernel_public_key_hex"])),
+        docs[-1],
+        PresentedBundle(docs),
+        AttestationBundle(),
+        datetime.fromisoformat(v["expected"]["verification_instant"]),
     )
     if verdict.value != v["expected"]["verification"]:
         raise ConformanceError(
             f"chain verdict {verdict.value!r} != frozen {v['expected']['verification']!r} "
             "— the installed verifier disagrees with the frozen walk"
+        )
+
+
+def check_chain_expiry(v: dict) -> None:
+    """`chain_expiry_v1.json` — the expiry invariant (vaid#79), on both surfaces.
+
+    A predicate vector: it carries no digest of its own, so the assertion IS the
+    verdict. Every document is still re-derived from the vector's kernel seed
+    first, because a verdict over bytes nobody checked is a verdict about nothing.
+    """
+    seed = bytes.fromhex(v["ed25519"]["kernel_private_key_seed_hex"])
+    key = Ed25519PrivateKey.from_private_bytes(seed)
+    public_key = bytes.fromhex(v["ed25519"]["kernel_public_key_hex"])
+
+    # Imported here, as check_scope imports its matcher: the firewall calls the
+    # SAME predicate the mint refuses on, never a second copy of the rule.
+    from vaid_mint.mint import expiry_attenuates
+
+    for case in v["expiry_containment"]:
+        permitted = expiry_attenuates(
+            {"expires_at": case["parent_expires_at"]}, case["child_expires_at"]
+        )
+        if permitted != (case["expected"] == "permitted"):
+            raise ConformanceError(
+                f"expiry containment {case['name']!r}: expected {case['expected']}, "
+                f"got {'permitted' if permitted else 'refused'}"
+            )
+
+    for case in v["cases"]:
+        for entry in case["chain"]:
+            digest = canonical_vaid_signing_bytes(entry["document"])
+            if digest.hex() != entry["digest_sha256_hex"]:
+                raise ConformanceError(
+                    f"{case['name']} / {entry['_role']}: digest != frozen vector"
+                )
+            if key.sign(digest).hex() != entry["signature_hex"]:
+                raise ConformanceError(
+                    f"{case['name']} / {entry['_role']}: signature != frozen vector"
+                )
+
+        docs = [
+            {
+                **e["document"],
+                "kernel_signature": list(bytes.fromhex(e["signature_hex"])),
+            }
+            for e in case["chain"]
+        ]
+        verdict = verify_chain_at(
+            SingleKernelKey(public_key),
+            docs[-1],
+            PresentedBundle(docs),
+            AttestationBundle(),
+            datetime.fromisoformat(case["verification_instant"]),
+        )
+        if verdict.value != case["expected_verification"]:
+            raise ConformanceError(
+                f"chain verdict {verdict.value!r} != frozen "
+                f"{case['expected_verification']!r} for {case['name']!r} — the "
+                "installed verifier disagrees with the frozen expiry rule"
+            )
+
+    # The controls are load-bearing: an implementation that refuses everything
+    # satisfies every negative case above and nothing here.
+    if not any(c["expected_verification"] == "attenuated" for c in v["cases"]):
+        raise ConformanceError("chain_expiry_v1 carries no positive control")
+    if not any(c["expected"] == "permitted" for c in v["expiry_containment"]):
+        raise ConformanceError(
+            "chain_expiry_v1 carries no positive containment control"
         )
 
 
@@ -507,6 +589,7 @@ VECTOR_CHECKS = {
     ],
     "mint_pop_v1.json": [check_mint_pop],
     "chain_v1.json": [check_chain],
+    "chain_expiry_v1.json": [check_chain_expiry],
     "attestation_v1.json": [check_attestation],
     "scope_v1.json": [check_scope],
     "roundtrip_v1.json": [check_roundtrip],

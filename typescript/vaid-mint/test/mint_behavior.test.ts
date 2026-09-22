@@ -335,3 +335,252 @@ test('end-to-end: a minted child verifies against its issuer and is contained by
   assert.ok(child.scope_boundary.every((s) => parent.scope_boundary.some((p) => s.startsWith(p))));
   assert.ok(child.capability_set.every((c) => parent.capability_set.includes(c)));
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// expiry containment at mint (vaid#79)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A parent whose expiry sits `seconds` either side of now. Anchored to the clock
+ * rather than to a hard-coded date, because a hard-coded date is how the Python
+ * twin's parent fixture quietly became an expired parent.
+ */
+function parentExpiringIn(seconds: number): Vaid {
+  const parent = parentDoc('acme', ['data.x'], ['read']);
+  const expires = new Date(Date.now() + seconds * 1000);
+  return {
+    ...parent,
+    expires_at: utcWholeSecondRfc3339(expires) as Vaid['expires_at'],
+  };
+}
+
+test('a child is clamped to its parent expiry', async () => {
+  // The mint half of vaid#79. The issuer's TTL is an hour; the parent has ten
+  // minutes left; the child gets the parent's expiry, not the issuer's.
+  const { service } = fixture(); // ReferenceIssuer.ephemeral(1) — a 1-hour TTL
+  const parent = parentExpiringIn(600);
+
+  const { vaid: child } = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'clamp-1'),
+    parent,
+  );
+
+  assert.equal(
+    child.expires_at,
+    parent.expires_at,
+    'the child must end exactly when its parent does, not an hour later',
+  );
+});
+
+test('a child keeps the issuer TTL when it is the earlier bound', async () => {
+  // THE CONTROL on the clamp. A clamp that always returned the parent's expiry
+  // would pass the test above and would be wrong: the issuer's own TTL still binds
+  // when it is the shorter of the two.
+  const { service } = fixture();
+  const parent = parentExpiringIn(86_400); // a day out; the issuer's TTL is an hour
+
+  const { vaid: child } = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'clamp-2'),
+    parent,
+  );
+
+  assert.ok(
+    Date.parse(child.expires_at) < Date.parse(parent.expires_at),
+    'the issuer TTL is the earlier bound here and must still apply',
+  );
+});
+
+test('delegation works across a second boundary', async () => {
+  // The regression this policy exists for. Under a refuse-instead-of-clamp rule,
+  // ONE issuer with ONE TTL could only delegate inside the same whole second as the
+  // parent's mint: `expires = now + ttl` is re-evaluated at every mint, so a child
+  // minted a second later outlived its parent and was refused. Measured, not
+  // assumed — this test waits past a second boundary.
+  const { service } = fixture();
+  const { vaid: parent } = await service.mintRoot({
+    seed: {
+      agentClass: 'parent',
+      version: '1.0.0',
+      tenantId: 'acme',
+      parentVaid: null,
+      scopeBoundary: ['data.x'],
+      capabilitySet: ['read'],
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+
+  const { vaid: child } = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'boundary'),
+    parent,
+  );
+
+  assert.ok(Date.parse(child.expires_at) <= Date.parse(parent.expires_at));
+});
+
+test('delegating from an already expired parent is refused', async () => {
+  // The one case a clamp cannot answer: the ceiling is in the past, so the child
+  // would be issued dead. Refused before the PoP, with the expiry named.
+  const { service } = fixture();
+  const parent = parentExpiringIn(-60);
+
+  await assert.rejects(
+    service.mintChild(signedChild(parent, ['data.x'], ['read'], 'dead-parent'), parent),
+    (e: Error) =>
+      e instanceof UnauthorizedError &&
+      e.message.includes(parent.expires_at) &&
+      e.message.includes('expired'),
+    'the refusal must name the parent expiry — a caller that cannot see which bound it hit has to guess',
+  );
+});
+
+test('an unreadable parent expiry refuses the delegation', async () => {
+  // Fail closed: an expiry that cannot be read is expired, so it is refused by the
+  // same line rather than clamped to a ceiling nobody can evaluate.
+  const { service } = fixture();
+  const parent = {
+    ...parentDoc('acme', ['data.x'], ['read']),
+    expires_at: 'whenever' as Vaid['expires_at'],
+  };
+
+  await assert.rejects(
+    service.mintChild(signedChild(parent, ['data.x'], ['read'], 'unreadable'), parent),
+    UnauthorizedError,
+  );
+});
+
+test('refusing a dead parent does not consume the PoP nonce', async () => {
+  // The refusal sits with the other containment checks, BEFORE the PoP, so a caller
+  // that renews the parent and retries is not denied for the wrong reason.
+  const { service } = fixture();
+  const dead = parentExpiringIn(-60);
+  const live = parentExpiringIn(600);
+
+  await assert.rejects(
+    service.mintChild(signedChild(dead, ['data.x'], ['read'], 'shared-nonce'), dead),
+    UnauthorizedError,
+  );
+
+  const { vaid } = await service.mintChild(
+    signedChild(live, ['data.x'], ['read'], 'shared-nonce'),
+    live,
+  );
+  assert.ok(vaid.vaid_id);
+});
+
+test('an issuer that ignores the ceiling is caught and the child withheld', async () => {
+  // Step 7a. `notAfter` is an instruction to a seam a deployment supplies; the
+  // invariant is a property of the document. An issuer written before this rule — or
+  // one that simply gets it wrong — must not be able to put an over-long child into
+  // circulation through this mint.
+  const inner = ReferenceIssuer.ephemeral(1);
+  const ignoresTheCeiling = {
+    issueVaidWithKey: (attributes: Parameters<typeof inner.issueVaidWithKey>[0], key: Uint8Array) =>
+      inner.issueVaidWithKey(attributes, key),
+    issueVaidWithLineage: (attributes: Parameters<typeof inner.issueVaidWithLineage>[0]) =>
+      inner.issueVaidWithLineage(attributes),
+    verifyVaid: (v: Vaid) => inner.verifyVaid(v),
+    resolveParent: (id: string) => inner.resolveParent(id),
+  };
+  const service = new MintService(ignoresTheCeiling, new InMemoryAudit());
+  const parent = parentExpiringIn(600);
+
+  await assert.rejects(
+    service.mintChild(signedChild(parent, ['data.x'], ['read'], 'bad-issuer'), parent),
+    (e: Error) => e instanceof UnauthorizedError && e.message.includes('notAfter'),
+  );
+});
+
+test('the root path is unclamped', async () => {
+  // A root has no parent to be contained by, so nothing bounds its TTL. Stated as a
+  // test because a clamp applied indiscriminately would silently shorten every root
+  // mint in the estate.
+  const { service } = fixture();
+  const { vaid: root } = await service.mintRoot({
+    seed: {
+      agentClass: 'root',
+      version: '1.0.0',
+      tenantId: 'acme',
+      parentVaid: null,
+      scopeBoundary: ['data.x'],
+      capabilitySet: ['read'],
+    },
+  });
+
+  assert.equal(
+    Date.parse(root.expires_at) - Date.parse(root.issued_at),
+    3_600_000,
+    'the issuer full TTL applies',
+  );
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// the clamp is visible to the caller, not only in a shorter expires_at
+// ════════════════════════════════════════════════════════════════════════════
+
+test('a clamped child says so on the response', async () => {
+  // A silent shortening was the objection to clamping. `expires_at` alone looks
+  // like an ordinary expiry: a caller would have to know the issuer's TTL and
+  // subtract to notice its delegation had been cut short. The response says it.
+  const { service } = fixture(); // ReferenceIssuer.ephemeral(1) — a 1-hour TTL
+  const parent = parentExpiringIn(600); // ten minutes left
+
+  const response = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'visible-1'),
+    parent,
+  );
+
+  assert.equal(response.expiryBoundedByParent, true);
+  assert.equal(response.parentExpiresAt, parent.expires_at);
+  assert.equal(response.vaid.expires_at, parent.expires_at);
+});
+
+test('an unclamped child says that too', async () => {
+  // THE CONTROL. A flag that is always true carries no information, and would pass
+  // the test above while telling a caller nothing. Here the issuer's own TTL is the
+  // earlier bound, nothing was taken away, and the flag must be false.
+  const { service } = fixture();
+  const parent = parentExpiringIn(86_400); // a day out; the issuer TTL is an hour
+
+  const response = await service.mintChild(
+    signedChild(parent, ['data.x'], ['read'], 'visible-2'),
+    parent,
+  );
+
+  assert.equal(response.expiryBoundedByParent, false);
+  assert.equal(response.parentExpiresAt, parent.expires_at);
+  assert.ok(Date.parse(response.vaid.expires_at) < Date.parse(parent.expires_at));
+});
+
+test('a root mint is never bounded by a parent it does not have', async () => {
+  const { service } = fixture();
+  const response = await service.mintRoot({
+    seed: {
+      agentClass: 'root',
+      version: '1.0.0',
+      tenantId: 'acme',
+      parentVaid: null,
+      scopeBoundary: ['data.x'],
+      capabilitySet: ['read'],
+    },
+  });
+
+  assert.equal(response.expiryBoundedByParent, false);
+  assert.equal(response.parentExpiresAt, null);
+});
+
+test('the clamp is recorded in the audit trail', async () => {
+  // A caller that ignores the response still leaves a record. Without this, the
+  // only evidence that a credential was deliberately shortened would be the
+  // caller's own memory of a field it did not read.
+  const { service, audit } = fixture();
+  const parent = parentExpiringIn(600);
+
+  await service.mintChild(signedChild(parent, ['data.x'], ['read'], 'visible-3'), parent);
+
+  const recorded = audit.entries();
+  const entry = recorded[recorded.length - 1]!;
+  assert.equal(entry.details.expiry_bounded_by_parent, true);
+  assert.equal(entry.details.expires_at, parent.expires_at);
+  assert.equal(entry.details.parent_expires_at, parent.expires_at);
+});

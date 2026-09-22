@@ -58,6 +58,10 @@ export {
   computeLineageHash,
   hasCapability,
   isExpired,
+  // RFC 3339 with a MANDATORY offset — `Date.parse` accepts an offsetless
+  // string as local time, which is how this implementation disagreed with the
+  // other two and with itself across timezones (vaid#79, ADR-0007).
+  parseRfc3339,
   hasConformingTimestamps,
   isInScope,
   VAID_SIG_VERSION_V3,
@@ -91,6 +95,11 @@ export {
   // all: Python exported it, Rust kept it crate-private, and this package
   // defined it as `export` in the module but never re-exported it here.
   scopeAttenuatesWithin,
+  // Expiry containment (vaid#79), both forms: over a parent document, and over two
+  // bare timestamps — the form the mint needs before the child's document exists,
+  // and the form `chain_expiry_v1.json` pins as a predicate.
+  expiryAttenuates,
+  expiryAttenuatesWithin,
   tenantAttenuates,
 } from './mint.js';
 

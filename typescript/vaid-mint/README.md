@@ -7,7 +7,10 @@ The TypeScript mirror of the Rust `vaid-mint` crate: the open, self-hostable
 - **`mintRoot`** — mint a root/operator VAID (BYO-key with proof-of-possession,
   or generate-and-discard), gated by an explicit `AuthorizationGate`.
 - **`mintChild`** — **attenuated delegation**: an authenticated parent mints a
-  child whose authority is always a subset of its own (`child ⊆ parent`).
+  child whose authority is always a subset of its own (`child ⊆ parent`). Lifetime
+  is part of authority: the child is clamped to the parent's `expires_at` and
+  cannot outlive it (ADR-0007). The response's `expiryBoundedByParent` says whether
+  the parent's expiry cut the child short.
 - **`verifyVaidAuthenticity`** — confirm a document is real from the issuer's
   **public key alone**: no issuer instance, no private key.
 

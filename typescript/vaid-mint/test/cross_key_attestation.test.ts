@@ -76,7 +76,12 @@ class Org {
       version: '1.0.0',
       tenantId: tenant as Vaid['tenant_id'],
       issuedAt: '2026-06-04T12:00:00Z' as Vaid['issued_at'],
-      expiresAt: '2026-06-05T12:00:00Z' as Vaid['expires_at'],
+      // Far-future by convention (verdict_v1: "pinned by distance, not by a
+      // clock"). This fixture carried 2026-06-05, a date that was future when it
+      // was written and is past now — so every chain below was a chain of
+      // ALREADY-EXPIRED documents, which only verified because nothing consulted
+      // expiry (vaid#79).
+      expiresAt: '2999-01-01T00:00:00Z' as Vaid['expires_at'],
       publicKeyDer: Array.from({ length: 32 }, (_, i) => i),
       parentVaid,
       scopeBoundary: scope,
@@ -778,9 +783,22 @@ test('a forged and expired attestation reports Inauthentic', () => {
   );
 });
 
-test('an expired parent document does not affect the verdict', () => {
-  // Document expiry stays UNCONSULTED. An attestation may outlive the parent VAID it
-  // delegates from; this pass deliberately does not change that.
+test('an expired parent document is Expired, not Attenuated', () => {
+  // THIS TEST ASSERTED THE OPPOSITE UNTIL SESSION 240. It was called
+  // 'an expired parent document does not affect the verdict', it pinned Attenuated
+  // over an already-expired root, and its comment said document expiry stays
+  // unconsulted — a defect written down as a requirement, green, and load-bearing.
+  // vaid#79 is that defect; the assertion below is its inversion.
+  //
+  // Note which fault is reported. The child here ALSO outlives the expired root, so
+  // two rules are broken at once; the lapse is checked before hop containment, so
+  // the verdict is Expired rather than NotAttenuated. That order is fixed in all
+  // three implementations, because three verifiers that reject the same chain for
+  // three different reasons agree on every boolean and disagree about what happened.
+  //
+  // What is still NOT consulted: the LEAF's own expiry, and revocation anywhere on
+  // the chain (vaid#76, open). An attestation may still outlive the parent VAID it
+  // delegates from — that is the attestation's own window, checked separately.
   const a = orgA();
   const b = orgB();
   const now = new Date();
@@ -807,8 +825,8 @@ test('an expired parent document does not affect the verdict', () => {
       new AttestationBundle([consent]),
       now,
     ),
-    ChainVerification.Attenuated,
-    'document expiry is not consulted by chain verification, and did not become ' +
-      'consulted when attestation expiry landed',
+    ChainVerification.Expired,
+    'a chain whose root has already expired must not report attenuated — the ' +
+      'authority the child derives from no longer exists (vaid#79)',
   );
 });

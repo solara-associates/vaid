@@ -17,11 +17,18 @@ or ``mint_pop_v1.json``, and it introduces no new signed field. What it pins tha
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from importlib.resources import files
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain
+from vaid_mint.attestation import AttestationBundle
+from vaid_mint.chain import (
+    ChainVerification,
+    PresentedBundle,
+    SingleKernelKey,
+    verify_chain_at,
+)
 from vaid_mint.document import canonical_vaid_signing_bytes
 from vaid_mint.revocation import assemble_lineage
 
@@ -88,11 +95,24 @@ def test_reproduces_the_frozen_assembled_lineage() -> None:
 
 def test_reproduces_the_frozen_verification_verdict() -> None:
     """THE WALK, part 2: the verdict. This is the assertion the vector exists for —
-    two implementations could agree on every digest and still disagree here."""
+    two implementations could agree on every digest and still disagree here.
+
+    Asserted AT the vector's own ``verification_instant``. It used to be asserted
+    against the wall clock, and these three documents expired on 2026-06-05: from
+    that date the test was pinning ``attenuated`` over a chain whose every ancestor
+    was dead, and it passed, because nothing consulted expiry (vaid#79). A verdict
+    that depends on the calendar is not frozen.
+    """
     docs = _chain()
     leaf = docs[-1]
 
-    verdict = verify_chain(_kernel_public_key(), leaf, PresentedBundle(docs))
+    verdict = verify_chain_at(
+        SingleKernelKey(_kernel_public_key()),
+        leaf,
+        PresentedBundle(docs),
+        AttestationBundle(),
+        datetime.fromisoformat(VECTOR["expected"]["verification_instant"]),
+    )
 
     assert verdict.value == VECTOR["expected"]["verification"], (
         "chain verification verdict drift"
