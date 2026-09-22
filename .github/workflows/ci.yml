@@ -606,6 +606,17 @@ jobs:
       # node is preinstalled on ubuntu-latest; the checks use only built-ins + fetch.
       - name: Verify docs/capabilities.json matches reality (registries + blocker PR state)
         run: node scripts/verify-capabilities.mjs
+      # capabilities.json is SERVED on /capabilities and vendored by the site, so
+      # every version it names is published copy. Twice a release has left a
+      # sentence in it that the registries disprove, and both times a human caught
+      # it by reading carefully. This asserts it instead. The --self-check runs
+      # FIRST and exits 2 if the classifier's own fixtures come back wrong: a
+      # checker whose regexes stopped matching would report a clean manifest and
+      # read exactly like a correct one.
+      - name: Verify the served text names no version the registries contradict (self-check)
+        run: node scripts/verify-served-versions.mjs --self-check
+      - name: Verify the served text names no version the registries contradict
+        run: node scripts/verify-served-versions.mjs
       - name: Verify docs/claims-register.json freshness (age budget + backing)
         run: node scripts/verify-claims.mjs
       # The spec was the UNGUARDED half of this pair. capabilities.json could not
