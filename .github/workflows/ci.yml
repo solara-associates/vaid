@@ -602,6 +602,9 @@ jobs:
           # verify-vector-freeze.mjs compares each vector against the release TAG
           # for its current version, so tags and history must be present. The
           # default shallow, tagless checkout would make it fail closed.
+          # Since #84, verify-package-versions.mjs reads the same tags to tell a
+          # release in flight from one that half-happened, so they are load-bearing
+          # for its PASS/FAIL and not only for its tag-parity pass.
           fetch-depth: 0
       # node is preinstalled on ubuntu-latest; the checks use only built-ins + fetch.
       - name: Verify docs/capabilities.json matches reality (registries + blocker PR state)
