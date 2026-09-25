@@ -56,8 +56,8 @@
 //!   distinctly from a **vouching** store (`NotRevoked`). A store that has not been
 //!   populated cannot vouch for any VAID and says so.
 
-use std::collections::HashSet;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use crate::document::{Vaid, VaidId};
 
@@ -257,6 +257,173 @@ impl RevocationCheck for InMemoryRevocationList {
                 }
             }
         }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The durable seam (spec R.4.6). Two stores, injected as one.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Durability under R.4.6 is TWO stores, not one — the revoked set and the
+// lineage resolver — and getting exactly one of them durable is an outage, not a
+// hole. Persist the revoked set, leave the resolver in memory, restart:
+//
+//   - every ROOT VAID keeps verifying (trivially complete under R.4.2, no
+//     resolution needed, the durable set answers cleanly);
+//   - every CHILD VAID stops verifying (its `parent_vaid` is now unresolvable,
+//     so assembly is `Incomplete` → `Unavailable` → fails closed under R.4.5).
+//
+// Total for delegated credentials, invisible for root ones, arriving at restart
+// rather than at deploy, and first diagnosed as a signing or clock problem
+// because revocation is the last subsystem anyone suspects when nothing was
+// revoked. The system is choosing an outage over a security hole, correctly —
+// but it is the wrong outage to have to diagnose from scratch.
+//
+// Until 0.7.0 that half-state was not merely *reachable*, it was the ONLY
+// reachable state: the removed `with_revocation_check` injected the revoked set, and no
+// injection point for the resolver existed at all. A self-hoster following the
+// documented path built exactly the half that produces the outage.
+//
+// [`RevocationBackend`] closes that by construction. It cannot be built without
+// both halves, and it is the only way to replace either, so the half-state is no
+// longer reachable **by omission** — only by explicitly naming
+// [`InMemoryLineageStore`] as the durable resolver's replacement, which is a
+// legitimate single-process choice and is visible at the call site.
+//
+// The two halves stay separate objects. A single trait carrying both methods
+// would make the half-state unrepresentable too, and would violate R.4.1: "the
+// check does not perform lookups and is not given the means to." A pair of
+// `Arc`s requires both without handing either one the other's job.
+
+/// The write half of the lineage resolver (spec R.4.2).
+///
+/// [`LineageResolver`] is read-only, and a read-only durable resolver is inert:
+/// nothing would ever populate it, because the issuer records every mint into
+/// its own map. A durable resolver therefore needs [`record`](Self::record) —
+/// this is the method whose absence made durable lineage unimplementable from
+/// outside the crate.
+///
+/// Implementations MUST record roots as `None` rather than omitting them. An
+/// unrecorded root is [`ParentResolution::Unknown`], and a store that omits
+/// roots turns every root VAID into `Unavailable` at verification.
+pub trait LineageStore: LineageResolver + Send + Sync {
+    /// Record one mint: `parent` is `Some(id)` for a child and `None` for a
+    /// root. Called on every successful mint, before the document is returned.
+    fn record(&self, vaid_id: VaidId, parent: Option<VaidId>);
+}
+
+/// The reference lineage store: an in-process map, non-durable, empty after
+/// restart. Extracted from [`crate::issuer::ReferenceIssuer`] so that the thing
+/// a durable store replaces is a named, injectable object rather than a private
+/// field.
+///
+/// Records roots as `None` and children as `Some(parent)`, which is what lets
+/// [`LineageResolver::resolve_parent`] tell a **known root** from an **unknown**
+/// id — the distinction spec R.4.2 turns on.
+#[derive(Default)]
+pub struct InMemoryLineageStore {
+    entries: Mutex<HashMap<VaidId, Option<VaidId>>>,
+}
+
+impl InMemoryLineageStore {
+    /// An empty store. Empty is not "absent": every id is `Unknown`, so a child
+    /// verified against a fresh store is `Unavailable`, never rootless.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop every recorded mint, modelling the loss of resolver state across a
+    /// process restart. Afterwards any VAID carrying a `parent_vaid` resolves to
+    /// [`RevocationStatus::Unavailable`] while a genuinely rootless VAID still
+    /// verifies. An ops/test primitive.
+    pub fn clear(&self) {
+        self.entries
+            .lock()
+            .expect("lineage lock not poisoned")
+            .clear();
+    }
+
+    /// Number of mints recorded. Diagnostic only — a store that is empty when it
+    /// should not be is the whole failure this module exists to make visible.
+    pub fn len(&self) -> usize {
+        self.entries
+            .lock()
+            .expect("lineage lock not poisoned")
+            .len()
+    }
+
+    /// True when nothing has been recorded.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl LineageResolver for InMemoryLineageStore {
+    fn resolve_parent(&self, vaid_id: &VaidId) -> ParentResolution {
+        match self
+            .entries
+            .lock()
+            .expect("lineage lock not poisoned")
+            .get(vaid_id)
+        {
+            Some(Some(parent)) => ParentResolution::Parent(*parent),
+            Some(None) => ParentResolution::Root,
+            None => ParentResolution::Unknown,
+        }
+    }
+}
+
+impl LineageStore for InMemoryLineageStore {
+    fn record(&self, vaid_id: VaidId, parent: Option<VaidId>) {
+        self.entries
+            .lock()
+            .expect("lineage lock not poisoned")
+            .insert(vaid_id, parent);
+    }
+}
+
+/// Both halves of durable revocation, injected together (spec R.4.6).
+///
+/// There is no constructor that takes one half. That is the point: the failure
+/// this type exists to prevent is not a wrong value, it is a **missing second
+/// argument**, and a missing argument is the one class of mistake a type can
+/// refuse outright.
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use vaid_mint::{ReferenceIssuer, RevocationBackend, InMemoryLineageStore, InMemoryRevocationList};
+/// # fn build() -> Result<(), Box<dyn std::error::Error>> {
+/// # let (durable_revoked, durable_lineage) = (Arc::new(InMemoryRevocationList::new()), Arc::new(InMemoryLineageStore::new()));
+/// let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")?
+///     .with_revocation_backend(RevocationBackend::new(durable_revoked, durable_lineage));
+/// # Ok(()) }
+/// ```
+///
+/// Ordering note for anyone migrating a live deployment: make the **resolver**
+/// durable first, or both in the same change. Doing the revoked set first is the
+/// ordering that produces the delegated-credential outage described above.
+pub struct RevocationBackend {
+    check: Arc<dyn RevocationCheck>,
+    lineage: Arc<dyn LineageStore>,
+}
+
+impl RevocationBackend {
+    /// Both halves. `check` answers about an assembled lineage; `lineage`
+    /// records mints and resolves ancestry. They are separate objects and
+    /// neither is handed the other (R.4.1).
+    pub fn new(check: Arc<dyn RevocationCheck>, lineage: Arc<dyn LineageStore>) -> Self {
+        Self { check, lineage }
+    }
+
+    /// The revocation check half.
+    pub fn check(&self) -> Arc<dyn RevocationCheck> {
+        Arc::clone(&self.check)
+    }
+
+    /// The lineage store half.
+    pub fn lineage(&self) -> Arc<dyn LineageStore> {
+        Arc::clone(&self.lineage)
     }
 }
 

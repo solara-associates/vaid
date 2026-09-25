@@ -303,7 +303,7 @@ pub fn verify_vaid_authenticity_graded(kernel_public_key: &[u8], vaid: &Vaid) ->
 /// The caller assembles the lineage ([`crate::revocation::assemble_lineage`]) and
 /// consults its [`RevocationCheck`](crate::revocation::RevocationCheck); this
 /// function says what the answer means. An incomplete assembly is
-/// [`RevocationStatus::Unavailable`], which arrives here as
+/// [`crate::revocation::RevocationStatus::Unavailable`], which arrives here as
 /// [`Indeterminate`](VaidVerdict::Indeterminate).
 ///
 /// # Order, and why it is this one
