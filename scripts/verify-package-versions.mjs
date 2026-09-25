@@ -7,10 +7,40 @@
 // while PyPI served 0.1.0). Repo and registry disagreeing silently is precisely the
 // class of drift the manifest exists to prevent.
 //
-// It asserts the in-repo version EXISTS on the registry — NOT that it equals the
-// latest. A repo legitimately sits at a version that is about to be published; the
-// release gate (CONTRIBUTING) makes bump-and-publish near-atomic, so "bumped on main
-// but not yet published" SHOULD be red until you publish. That is the point.
+// WHAT "PARITY" MEANS HERE, and it changed in #84. It used to assert that the
+// in-repo version EXISTS on the registry, full stop — so a version bumped and not
+// yet published was red, deliberately. That reasoning holds on `main` AFTER a
+// release and breaks when the same check is a REQUIRED MERGE CHECK, because then
+// the check needs the publish, the publish needs a tag, the tag needs the merge,
+// and the merge needs the check. #82 sat blocked in exactly that loop, and was
+// merged only by removing this context from the required list for 50 seconds.
+//
+// The two states the old rule collapsed are distinguished by the RELEASE TAG, which
+// is already the signal `verify-vector-freeze.mjs` uses, in the same direction, for
+// the same reason. A version is "released" when a tag says so — not when someone
+// edited a manifest:
+//
+//   in-repo version HAS a release tag, and IS on the registry   -> pass
+//   in-repo version HAS a release tag, NOT on the registry      -> FAIL, half-released
+//   in-repo version has NO tag, NOT on the registry, and is
+//     NEWER than every published version                        -> note, in flight
+//   in-repo version has NO tag, NOT on the registry, and is NOT
+//     newer than everything published                           -> FAIL, stale bump
+//   in-repo version has NO tag but IS on the registry           -> FAIL (tag parity,
+//     the second pass below, which checks EVERY published version and not only this one)
+//
+// The last two rows are not in #84's table and are the reason this is not simply a
+// loosening. "No tag and not published" would otherwise be an unconditional pass,
+// which is a hole big enough to drive the original defect through: python vaid-pop
+// sat in-repo at 0.2.0 while PyPI served 0.1.0. That case HAD a tag, so row 2 still
+// catches it — but a typo'd or reverted manifest need not have one, and a version
+// that is not ahead of the registry is not a pending release by any reading. So
+// "in flight" must MEAN in flight: strictly ahead of everything published.
+//
+// What is genuinely given up: a bump that is never released is now a note rather
+// than a failure, until something else moves. That loss is real, bounded, and was
+// argued in #84 — the next release catches it, and verify-crosslang-parity.mjs
+// already reports skew between the three languages.
 //
 // Opt-out for a package not meant for a public registry:
 //   - Rust (Cargo.toml [package]):   publish = false            (Cargo-native)
@@ -179,6 +209,127 @@ function releaseTagFor(eco, name, version) {
   return null;
 }
 
+/* --------------------------- the parity verdict --------------------------- */
+//
+// PURE, and exported, so the four states above can be exercised against fixed
+// fixtures with no network and no git. The self-check below does exactly that, and
+// runs BEFORE any registry call: a classifier that is broken makes every verdict it
+// produces meaningless, however green they look.
+
+/**
+ * Compare two x.y.z versions. A prerelease suffix (`1.2.0-rc1`) is ordered just
+ * BELOW its release, which is the conservative direction here: it keeps a
+ * prerelease from counting as "newer than everything published" on its own.
+ */
+export function cmpSemver(a, b) {
+  const parse = (v) => {
+    const [core, pre] = String(v).split('-', 2);
+    const n = core.split('.').map((x) => Number(x));
+    return { n, pre: pre ?? null };
+  };
+  const pa = parse(a), pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const x = pa.n[i] ?? 0, y = pb.n[i] ?? 0;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return NaN; // unparseable: caller fails closed
+    if (x !== y) return x - y;
+  }
+  if (pa.pre === pb.pre) return 0;
+  if (pa.pre === null) return 1;   // release > its prerelease
+  if (pb.pre === null) return -1;
+  return pa.pre < pb.pre ? -1 : 1;
+}
+
+/**
+ * The verdict for ONE package, given only facts: the in-repo version, every version
+ * the registry serves, and whether a release tag exists for the in-repo version.
+ *
+ * Returns `{ verdict, detail }`. `verdict` is one of:
+ *   'published'    — released and present. Pass.
+ *   'half-released'— tagged as released, absent from the registry. FAIL.
+ *   'in-flight'    — untagged, unpublished, strictly ahead of everything published. Note.
+ *   'stale-bump'   — untagged, unpublished, NOT ahead of what is published. FAIL.
+ *   'unorderable'  — a version here could not be compared. FAIL, closed.
+ */
+export function classifyParity({ version, published, tagged }) {
+  const live = published.includes(version);
+  if (live) return { verdict: 'published', detail: null };
+  if (tagged) {
+    return {
+      verdict: 'half-released',
+      detail:
+        `is TAGGED as released but is NOT on the registry — the release half-happened.` +
+        ` Either the publish failed (re-run it) or the tag is wrong (delete it).` +
+        ` This is the state the check exists for: a tag asserts a release that is not there.`,
+    };
+  }
+  for (const v of published) {
+    const c = cmpSemver(version, v);
+    if (Number.isNaN(c)) {
+      return {
+        verdict: 'unorderable',
+        detail: `cannot be ordered against published version '${v}' (failing closed)`,
+      };
+    }
+    if (c <= 0) {
+      return {
+        verdict: 'stale-bump',
+        detail:
+          `is not published and has no release tag, but it is NOT ahead of ${v}, which IS` +
+          ` published — so this is not a release in flight. A pending release is strictly` +
+          ` newer than everything on the registry; this is a downgrade, a typo or a revert.`,
+      };
+    }
+  }
+  return { verdict: 'in-flight', detail: null };
+}
+
+/* ------------------------------- self-check ------------------------------- */
+//
+// Five fixtures with known verdicts. These are the POSITIVE CONTROL for the change
+// in #84: the loosening is only safe if the cases it must still catch are proven to
+// fail, so three of the five MUST be failures. Fixed inputs, no network, no git.
+function selfCheck() {
+  const problems = [];
+  const P = ['0.1.0', '0.2.0'];
+  const cases = [
+    // The #84 deadlock: the case that had to stop failing.
+    { name: 'untagged bump ahead of the registry', args: { version: '0.3.0', published: P, tagged: false }, want: 'in-flight' },
+    // The original defect this check was built for. vaid-pop sat at 0.2.0 in-repo
+    // while PyPI served 0.1.0, and it was TAGGED. It must still fail.
+    { name: 'tagged but absent from the registry', args: { version: '0.3.0', published: P, tagged: true }, want: 'half-released' },
+    // The hole the loosening would open if "no tag" alone were a pass. The version
+    // must be one the registry does NOT serve — a version it does serve is 'published'
+    // by definition, which is a different row and proves nothing about this one.
+    { name: 'untagged, unpublished, BEHIND the registry', args: { version: '0.1.5', published: P, tagged: false }, want: 'stale-bump' },
+    // A prerelease is ordered below its release, so it is not "ahead of everything".
+    { name: 'untagged prerelease of an already-published version', args: { version: '0.2.0-rc1', published: P, tagged: false }, want: 'stale-bump' },
+    // The mirror of the case above, and NOT symmetric with it: here the in-repo
+    // version is the RELEASE and the registry has only its prerelease, so the repo
+    // IS strictly ahead. Without this fixture the `pa.pre === null` branch of
+    // cmpSemver is never exercised and a mutant that collapses it to 0 survives —
+    // which would turn a legitimate rc-to-release promotion into a 'stale-bump' red.
+    { name: 'untagged release ahead of its own published prerelease', args: { version: '0.2.0', published: ['0.1.0', '0.2.0-rc1'], tagged: false }, want: 'in-flight' },
+    // The ordinary green state.
+    { name: 'released and present', args: { version: '0.2.0', published: P, tagged: true }, want: 'published' },
+  ];
+  for (const c of cases) {
+    const got = classifyParity(c.args).verdict;
+    if (got !== c.want) problems.push(`fixture '${c.name}' expected '${c.want}', classifier said '${got}'`);
+  }
+  // A never-published package's first release is in flight, not a stale bump.
+  if (classifyParity({ version: '0.1.0', published: [], tagged: false }).verdict !== 'in-flight')
+    problems.push("fixture 'first release, nothing published yet' did not classify as in-flight");
+  return problems;
+}
+
+const selfCheckProblems = selfCheck();
+if (selfCheckProblems.length) {
+  console.error('✗ SELF-CHECK FAILED — the parity classifier is broken, so its verdict on this tree means nothing:');
+  for (const p of selfCheckProblems) console.error(`  · ${p}`);
+  process.exit(2);
+}
+console.log('✓ self-check — parity classifier agrees with all seven fixed fixtures (three must-fail, four must-pass).');
+
 /** Every version published on a registry, newest-first order not guaranteed. */
 async function publishedVersions(registry, name) {
   const url =
@@ -229,21 +380,6 @@ const boolField = (sec, key) => {
   const m = sec.match(new RegExp(`^\\s*${key}\\s*=\\s*(true|false)\\b`, 'm'));
   return m ? m[1] === 'true' : null;
 };
-
-async function isPublished(registry, name, version) {
-  const url =
-    registry === 'crates.io' ? `https://crates.io/api/v1/crates/${name}/${version}`
-    : registry === 'pypi'    ? `https://pypi.org/pypi/${name}/${version}/json`
-    : registry === 'npm'     ? `https://registry.npmjs.org/${name}/${version}`
-    : null;
-  if (!url) throw new Error(`unknown registry '${registry}'`);
-  let res;
-  try { res = await fetch(url, { headers: UA }); }
-  catch (e) { throw new Error(`network error fetching ${url}: ${e.message}`); }
-  if (res.status === 200) return true;
-  if (res.status === 404) return false;
-  throw new Error(`unexpected HTTP ${res.status} from ${registry} for ${name}@${version}`);
-}
 
 // Resolve a crate version, including [package] version.workspace = true.
 function crateVersion(sec, toml) {
@@ -349,29 +485,49 @@ for (const s of REGISTRY_SCOPE) {
   }
 }
 
+// The registry is asked ONCE per package and the answer is reused by both passes
+// below. Two calls asking the same registry the same question is two chances to be
+// rate-limited into a failing-closed red for no added assurance.
+for (const p of pkgs) {
+  if (p.skip) continue;
+  try {
+    p.published = await publishedVersions(p.registry, p.name);
+  } catch (e) {
+    p.fetchError = e.message;
+  }
+}
+
+const inFlight = [];
+
 for (const p of pkgs) {
   if (p.skip) { notes.push(`  · [${p.dir}] ${p.name} — opt-out marker present, not checked`); continue; }
   if (!p.version) { failures.push(`  ✗ [${p.dir}] ${p.name}: could not read a literal version (dynamic/unresolved) — cannot verify parity (failing closed)`); continue; }
+  if (p.fetchError) { failures.push(`  ✗ [${p.dir}] could not verify (failing closed): ${p.fetchError}`); continue; }
   const waiver = WAIVED.get(`${p.registry}:${p.name}`);
-  try {
-    const live = await isPublished(p.registry, p.name, p.version);
-    if (waiver) {
-      waiversHit.add(waiver);
-      // A waiver that has come true is a waiver that must go.
-      if (live) {
-        failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} IS published on ${p.registry}, but is still waived — the waiver is stale, DELETE it from WAIVERS (this is the success path)`);
-      } else if (TODAY > waiver.expires) {
-        failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} is waived, but the waiver EXPIRED on ${waiver.expires} — re-decide and renew or resolve, do not drift`);
-      } else {
-        waived.push({ ...p, waiver });
-      }
-      continue;
+  const live = p.published.includes(p.version);
+  if (waiver) {
+    waiversHit.add(waiver);
+    // A waiver that has come true is a waiver that must go.
+    if (live) {
+      failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} IS published on ${p.registry}, but is still waived — the waiver is stale, DELETE it from WAIVERS (this is the success path)`);
+    } else if (TODAY > waiver.expires) {
+      failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} is waived, but the waiver EXPIRED on ${waiver.expires} — re-decide and renew or resolve, do not drift`);
+    } else {
+      waived.push({ ...p, waiver });
     }
-    if (!live)
-      failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} is NOT published on ${p.registry} — repo bumped but not released`);
-  } catch (e) {
-    failures.push(`  ✗ [${p.dir}] could not verify (failing closed): ${e.message}`);
+    continue;
   }
+
+  const tag = releaseTagFor(ECO[p.registry], p.name, p.version);
+  const { verdict, detail } = classifyParity({ version: p.version, published: p.published, tagged: tag !== null });
+
+  if (verdict === 'published') continue;
+  if (verdict === 'in-flight') {
+    // NOT a pass in disguise: it is stated, every run, with what would clear it.
+    inFlight.push({ ...p });
+    continue;
+  }
+  failures.push(`  ✗ [${p.dir}] ${p.name} ${p.version} (${p.registry}) ${detail}${tag ? ` Tag: ${tag}.` : ''}`);
 }
 
 // ── release tag parity ──────────────────────────────────────────────────────
@@ -379,7 +535,8 @@ for (const p of pkgs) {
   if (p.skip) continue;
   const eco = ECO[p.registry];
   try {
-    const versions = await publishedVersions(p.registry, p.name);
+    if (p.fetchError) throw new Error(p.fetchError);
+    const versions = p.published;
     const untagged = versions.filter((v) => releaseTagFor(eco, p.name, v) === null).sort();
     if (untagged.length) {
       failures.push(
@@ -416,6 +573,19 @@ for (const s of notApplicable.sort((a, b) => a.dir.localeCompare(b.dir))) {
   console.log(`      ${s.reason.replace(/(.{1,86})(\s|$)/g, '$1\n      ').trimEnd()}`);
 }
 
+// IN FLIGHT prints in full, every run. This is the state #84 moved from red to
+// green, and the whole argument for that move is that it stays VISIBLE: a release
+// that is prepared and never shipped must be readable off a green run, or the
+// loosening becomes the silence it replaced. Each line says what would clear it.
+console.log(`\nIN FLIGHT — ${inFlight.length} package(s) bumped, not yet released (no tag, ahead of the registry):`);
+if (inFlight.length === 0) console.log('  (none)');
+for (const p of inFlight.sort((a, b) => a.dir.localeCompare(b.dir))) {
+  const max = p.published.length ? p.published.slice().sort(cmpSemver).pop() : '(nothing published)';
+  console.log(`  → [${p.dir}] ${p.name} ${p.version} — ${p.registry} serves up to ${max}`);
+  console.log(`      Clears when ${p.name} ${p.version} is published AND tagged ${ECO[p.registry]}-${p.name}-v${p.version}.`);
+  console.log(`      Until then this is NOT evidence of a release; it is evidence of an intention.`);
+}
+
 // Waivers print in full, every run, with reason and expiry. A waiver nobody
 // reads is a waiver nobody re-decides.
 console.log(`\nWAIVED — ${waived.length} package(s) red for a stated reason no PR can clear:`);
@@ -431,5 +601,6 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`\n✓ scope declaration — ${REGISTRY_SCOPE.length} declared pair(s): ${REGISTRY_SCOPE.length - notApplicable.length} present in the tree, ${notApplicable.length} declared not-applicable. No undeclared packages.`);
-console.log(`✓ registry parity — ${pkgs.filter((p) => !p.skip).length} package(s) checked: ${pkgs.filter((p) => !p.skip).length - waived.length} published, ${waived.length} waived.`);
+const checkedCount = pkgs.filter((p) => !p.skip).length;
+console.log(`✓ registry parity — ${checkedCount} package(s) checked: ${checkedCount - waived.length - inFlight.length} released and present, ${inFlight.length} in flight, ${waived.length} waived.`);
 console.log('✓ release tag parity — every published version has a release tag.');
