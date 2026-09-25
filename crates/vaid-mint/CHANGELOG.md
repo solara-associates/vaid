@@ -54,7 +54,7 @@ half — the same behaviour, named at the call site.
 
 ### Added — `assuming_nothing_revoked()`
 
-The pre-0.8.0 posture, asked for by name:
+The pre-0.9.0 posture, asked for by name:
 
 ```rust
 let issuer = ReferenceIssuer::ephemeral(24, "vaid.example")?.assuming_nothing_revoked();

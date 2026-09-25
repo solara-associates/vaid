@@ -23,16 +23,16 @@ duplicate-member refusal that landed in 0.7.0; bump it."*
 **The exposure is real. The remedy is wrong, and stating it wrongly is worse than not
 raising it**, because it converts a live defect into a version number somebody ticks
 off. **Bumping the pin does not fix this.** `vaid-skill` accepts a duplicate-member
-document at 0.6.0, at 0.7.0 and at 0.8.0, and will keep accepting it at every future
+document at 0.6.0, at 0.7.0, at 0.8.0 and at 0.9.0, and will keep accepting it at every future
 version, because the refusal is not on the function it calls.
 
 ## Measured, not reasoned
 
 Minted a real VAID with the in-tree implementation, then presented the same document
 with `scope_boundary` repeated, to `verifyVaidAuthenticity` from **0.6.0** (what the
-skill installs) and from **0.8.0** side by side:
+skill installs) and from **0.9.0** side by side:
 
-| presented document | 0.6.0 | 0.8.0 |
+| presented document | 0.6.0 | 0.9.0 |
 |---|---|---|
 | clean (control) | `authentic=true` | `authentic=true` |
 | duplicate, second occurrence **wider** | `authentic=false` | `authentic=false` |

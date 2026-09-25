@@ -9,7 +9,7 @@ lineage resolution are host-application responsibilities"*), and a code change t
 finding did not propose followed from it: the crate offered an injection point for
 the revoked set and **none at all** for the resolver, so the half-configuration
 described below was the only one a self-hoster could build. `RevocationBackend` now
-requires both halves — see ADR-0007 and `docs/spec/revocation.md` R.4.6. Unreleased.
+requires both halves — see ADR-0008 and `docs/spec/revocation.md` R.4.6. Unreleased.
 Original status: OPEN — a documentation gap between the specification and the
 summary of it in circulation. **No code change proposed.**
 **Audience:** anyone implementing a durable `RevocationCheck` — internally or as a self-hoster.

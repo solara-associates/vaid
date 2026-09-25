@@ -1004,7 +1004,7 @@ mod tests {
     async fn minted_child_verifies_and_is_contained_by_parent() {
         let audit = Arc::new(InMemoryAudit::new());
         // `assuming_nothing_revoked()` because this test is about attenuation and
-        // scope containment. Since 0.8.0 a bare issuer's revocation store is absent,
+        // scope containment. Since 0.9.0 a bare issuer's revocation store is absent,
         // so `verify_vaid` would fail closed on `Unavailable` regardless of what the
         // child's scope says — a rejection for the wrong reason.
         let issuer = Arc::new(

@@ -238,7 +238,7 @@ waiting.
 Stated plainly because it is the current state and an evaluator will determine it from
 the source within minutes.
 
-| | 0.1.2 (superseded) | 0.2 onward (current: 0.8.0) |
+| | 0.1.2 (superseded) | 0.2 onward (current: 0.9.0) |
 |---|---|---|
 | Seam present | Yes, Rust and Python | Yes, Rust, Python and TypeScript |
 | Return type | Boolean | Three-state per R.4.3 |
@@ -247,8 +247,8 @@ the source within minutes.
 | Behaviour on store failure | Not representable | Fail closed per R.4.5 |
 | Revocation store durability | In-memory only | In-memory only — unchanged, see note |
 | Lineage store durability | In-memory only, issuer-local | In-memory only, issuer-local — unchanged, see note |
-| Both stores replaceable together | No | Yes, since 0.8.0 (`RevocationBackend`) |
-| Reference default posture | Vouching | Vouching until 0.7.0; **absent, fails closed**, since 0.8.0 |
+| Both stores replaceable together | No | Yes, since 0.9.0 (`RevocationBackend`) |
+| Reference default posture | Vouching | Vouching until 0.7.0; **absent, fails closed**, since 0.9.0 |
 
 **The shipped seam satisfies R.4.** The three-state, lineage-aware seam landed in
 `vaid-mint` 0.2.0 on 2026-07-27 as a deliberate breaking change with no compatibility
@@ -264,18 +264,18 @@ implying a single flip:
 - **Seam present in all three languages** completed at 0.3.0 on npm (2026-07-30), when
   TypeScript became the third reference implementation. Before that date the
   right-hand column was accurate for Rust and Python only.
-- **Both stores replaceable together, and the default posture** changed at 0.8.0
+- **Both stores replaceable together, and the default posture** changed at 0.9.0
   (2026-08-23), in one release and in all three languages at once. Two breaking
   changes: the single-half injection point (`with_revocation_check`) was removed in
   favour of `RevocationBackend`, which has no single-half constructor; and the
-  reference default flipped from vouching to absent. See ADR-0007.
+  reference default flipped from vouching to absent. See ADR-0008.
 
 **The two durability rows did not change, and are not scheduled to.** Both stores are
 still in-memory in every published version. This is the one place where the earlier
 edition of this table was right and remains right, and it is called out because the
 rest of the row set moving could otherwise be read as durability having moved with it.
 
-What changed at 0.8.0 is **not** durability but *replaceability* and *posture*: the
+What changed at 0.9.0 is **not** durability but *replaceability* and *posture*: the
 reference stores are as non-durable as they ever were, and the two new rows record
 that a host can now replace both together, and that the non-durable revocation store
 no longer vouches. Read the durability rows and the posture row as separate claims;
@@ -295,7 +295,7 @@ reference implementation ships in-memory stores for development. R.4.6 governs h
 those stores must behave when their state is absent, not whether the reference
 implementation must become durable.
 
-**Note on the reference default (0.8 onward).** The reference issuer's revocation
+**Note on the reference default (0.9 onward).** The reference issuer's revocation
 store starts **absent**: it has not been populated, cannot vouch for anything, and
 reports `Unavailable`, so verification fails closed (R.4.5) until revocation state is
 loaded into it. This is the posture R.4.6 already blessed as the safe way to run a
@@ -307,7 +307,7 @@ TypeScript — which installs the vouching store described below. That is fail-o
 and R.4.5 permits it precisely in this form: as an explicit configuration, named to
 state what it does, never as a default.
 
-**Note on the reference default, 0.2 through 0.7 (historical).** Until 0.8.0 the
+**Note on the reference default, 0.2 through 0.7 (historical).** Until 0.9.0 the
 reference issuer defaulted its revocation store to a *vouching* posture (the
 constructor is named `assume_nothing_revoked`, not for its empty state but for what
 it does): it answered `NotRevoked` over an empty set so a fresh issuer verified out

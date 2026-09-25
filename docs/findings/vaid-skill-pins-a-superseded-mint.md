@@ -2,9 +2,10 @@
 
 **Date:** 2026-08-23
 **Repo:** `vaid`
-**Status:** OPEN — **its own decision, not a footnote to the 0.8.0 release.** No code
+**Status:** OPEN — **its own decision, not a footnote to the 0.9.0 release.** No code
 changed. Raised at the repository owner's instruction while preparing `vaid-mint`
-0.8.0.
+0.9.0 (prepared under the number 0.8.0; that number was taken by the expiry-containment
+release, which shipped first).
 **Audience:** whoever decides what `vaid-skill` ships against.
 
 ---
@@ -15,10 +16,10 @@ changed. Raised at the repository owner's instruction while preparing `vaid-mint
 `>=0.6.0 <0.7.0`, so the skill installs **0.6.0** — confirmed by reading the resolved
 `skill/node_modules/vaid-mint/package.json`, not by reading the range. **VERIFIED.**
 
-`vaid-mint` has been 0.7.0 on npm since 2026-08-11 and 0.8.0 is prepared. After 0.8.0
-the skill is **two compatibility steps behind** — under both npm and Cargo 0.x rules
-the minor is the compatibility unit, so 0.6 → 0.8 is the pre-1.0 equivalent of two
-major versions.
+`vaid-mint` has been 0.7.0 on npm since 2026-08-11, **0.8.0 is published**, and 0.9.0
+is prepared. The skill is already **two compatibility steps behind** today, and after
+0.9.0 it is three — under both npm and Cargo 0.x rules the minor is the compatibility
+unit, so 0.6 → 0.9 is the pre-1.0 equivalent of three major versions.
 
 The skill is ours, it is published on npm, and it is the surface an evaluator reaches
 first — `vaid-skill` is the Agent Skill, installed from a public registry into Claude
@@ -40,8 +41,8 @@ The natural conclusion — *"it will be two versions behind on a security defaul
   visibly, with a local-only revocation list the CLI itself describes as *"a file on
   one machine … not a published revocation list"*.
 
-So the fail-open default that 0.8.0 removes was **never on the skill's path**. It did
-not have the exposure and it does not gain a fix. Shipping 0.8.0 changes nothing about
+So the fail-open default that 0.9.0 removes was **never on the skill's path**. It did
+not have the exposure and it does not gain a fix. Shipping 0.9.0 changes nothing about
 the skill's revocation posture, which was already the honest one: it says it does not
 check.
 
@@ -60,7 +61,7 @@ error was worth catching before it reached a release note.** The E.7a check live
 duplicate before returning, so the evidence is gone by the time a caller holds an
 object. `vaid-skill` parses the envelope itself with plain `JSON.parse` and hands
 `verifyVaidAuthenticity` an object, so **no version of `vaid-mint` protects it**.
-Measured at 0.6.0 and 0.8.0 side by side: both report a duplicate-member document
+Measured at 0.6.0 and 0.9.0 side by side: both report a duplicate-member document
 authentic.
 
 That exposure is filed on its own, with the measurements and a severity line, in
@@ -100,20 +101,20 @@ Real, and worth having on its own:
 
 Three options, and they are genuinely different:
 
-1. **Bump the skill to `^0.8.0` and release `vaid-skill` 0.1.4.** Closes E.7a on the
+1. **Bump the skill to `^0.9.0` and release `vaid-skill` 0.1.4.** Closes E.7a on the
    skill's path. Requires its own release — the skill has its own version, its own
    changelog and its own trusted publisher. It is a *separate* publish from
-   `vaid-mint` 0.8.0 and must not be bundled into it.
-2. **Bump to `^0.7.0`.** Closes E.7a without adopting anything from 0.8.0. Defensible
-   if the 0.8.0 default flip is judged to need soak time on the library before the
-   skill follows — but note the skill is unaffected by that flip, so this option buys
-   caution against a change that cannot reach it.
+   `vaid-mint` 0.9.0 and must not be bundled into it.
+2. **Bump to `^0.7.0` or `^0.8.0`.** Closes E.7a without adopting the fail-closed
+   default, which lands in 0.9.0. Defensible if that flip is judged to need soak time
+   on the library before the skill follows — but note the skill is unaffected by the
+   flip, so this option buys caution against a change that cannot reach it.
 3. **Leave it, and record why.** Legitimate only with a stated reason and a date to
    revisit. "Nobody looked" is not that reason, and is the current state.
 
-**Recommendation: option 1, as its own release, after `vaid-mint` 0.8.0 is published
+**Recommendation: option 1, as its own release, after `vaid-mint` 0.9.0 is published
 and verified** — and then, as a second and separate decision, the E.7a parse-path
-change on top of it. The ordering matters twice: `^0.8.0` cannot resolve until 0.8.0
+change on top of it. The ordering matters twice: `^0.9.0` cannot resolve until 0.9.0
 exists on npm, so bumping the skill first turns its install red; and the E.7a fix
 cannot be written until the pin has moved.
 
@@ -128,4 +129,4 @@ because that framing points at the wrong defect.
 Related: `docs/findings/vaid-skill-accepts-duplicate-member-names.md` (the live
 defect this pin blocks the fix for),
 `docs/findings/the-fail-open-default-priced.md` (the estate sweep that found this
-pin), ADR-0007, BACKLOG B1.
+pin), ADR-0008, BACKLOG B1.

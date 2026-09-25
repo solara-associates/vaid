@@ -1,6 +1,6 @@
-# ADR-0007: Durable revocation is two stores, and they are injected as one
+# ADR-0008: Durable revocation is two stores, and they are injected as one
 
-**Status:** Accepted. Shipped in `vaid-mint` **0.8.0** (Rust, Python, TypeScript), **prepared not published** — see "Release", below.
+**Status:** Accepted. Shipped in `vaid-mint` **0.9.0** (Rust, Python, TypeScript), **prepared not published** — see "Release", below.
 **Date:** 23 August 2026
 **Repo:** solara-associates/vaid
 **Decision owner:** A. Smeyatsky
@@ -78,8 +78,8 @@ Concretely:
 
 4. **`ReferenceIssuer::with_revocation_backend`** — the only way to replace either
    half. `with_revocation_check` was deprecated when this landed and **removed in the
-   same 0.8.0 release**: a deprecation window is a period during which the
-   reachable failure stays reachable, and the two breaking changes in 0.8.0 are
+   same 0.9.0 release**: a deprecation window is a period during which the
+   reachable failure stays reachable, and the two breaking changes in 0.9.0 are
    the same argument made twice.
 
 ### Two objects, not one trait
@@ -98,7 +98,7 @@ restarted, and after this change making it requires naming the non-durable store
 the call site. "Cannot happen by accident" is the property available here; "cannot
 happen at all" would forbid a legitimate deployment.
 
-`with_revocation_check` was removed in 0.8.0 rather than carried through a
+`with_revocation_check` was removed in 0.9.0 rather than carried through a
 deprecation window (decision owner, 2026-08-23). It replaced one store and left the
 other in memory; that is not a degraded mode but an outage, and a window is a period
 during which the reachable failure stays reachable.
@@ -155,7 +155,7 @@ vectors unchanged.
 
 ## Release
 
-Shipped in **0.8.0**, alongside the reference-default flip
+Shipped in **0.9.0**, alongside the reference-default flip
 (`docs/findings/the-fail-open-default-priced.md`) — two breaking changes in one
 release, in all three languages simultaneously. **Prepared, not published:** the
 version numbers are moved, the changelogs are promoted, and the release is gated on

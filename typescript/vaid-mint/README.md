@@ -28,8 +28,8 @@ ESM only, and typed. Node ≥ 20.19; CommonJS consumers on that version can
 ```ts
 import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
 
-// `assumingNothingRevoked()` is the pre-0.8.0 default, asked for BY NAME. Since
-// 0.8.0 a bare issuer's revocation store is ABSENT: it reports Unavailable and
+// `assumingNothingRevoked()` is the pre-0.9.0 default, asked for BY NAME. Since
+// 0.9.0 a bare issuer's revocation store is ABSENT: it reports Unavailable and
 // `verifyVaid` fails closed until revocation state is loaded (R.4.5). This is a
 // fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
 // survive a restart. For anything that must, use `withRevocationBackend`.
@@ -89,11 +89,11 @@ state cannot be reached by omitting an argument; pass `InMemoryLineageStore` as 
 second half to say "in-memory lineage, deliberately". Make the resolver durable
 first, or both in the same change — the revoked set first is the ordering that
 produces the outage. `ReferenceIssuer.withRevocationCheck` replaced only one half
-and was **removed in 0.8.0** for this reason.
+and was **removed in 0.9.0** for this reason.
 
-**Since 0.8.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
+**Since 0.9.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
 is *absent* — never populated, so it reports `Unavailable` and `verifyVaid` returns
-`false` until state is loaded. Until 0.8.0 the default vouched `NotRevoked` over an
+`false` until state is loaded. Until 0.9.0 the default vouched `NotRevoked` over an
 empty set, which is a fail-open posture and, being non-durable, could not detect its
 own restart. R.4.5 requires that fail-open never be the default and always be named;
 `ReferenceIssuer.assumingNothingRevoked()` is that name. Minting, attenuation and
@@ -141,7 +141,7 @@ const dev = ReferenceIssuer.ephemeral(1).withRevocationBackend(
   new RevocationBackend(revocations, new InMemoryLineageStore()),
 );
 
-// Shorthand for exactly the pre-0.8.0 posture — a vouching in-memory revoked set and
+// Shorthand for exactly the pre-0.9.0 posture — a vouching in-memory revoked set and
 // an in-memory lineage store. Same fail-open behaviour; the difference is the name.
 const quickstart = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
 revocations.revoke(vaid.vaid_id);

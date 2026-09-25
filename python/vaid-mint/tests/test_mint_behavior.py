@@ -38,7 +38,7 @@ from vaid_mint.mint_types import MintPop
 def fixture():
     audit = InMemoryAudit()
     # `assuming_nothing_revoked()` because these tests are about minting, attenuation
-    # and scope containment. Since 0.8.0 a bare issuer's revocation store is absent,
+    # and scope containment. Since 0.9.0 a bare issuer's revocation store is absent,
     # so `verify_vaid` would fail closed on UNAVAILABLE regardless of what the child's
     # scope says — a rejection for the wrong reason.
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
@@ -299,7 +299,7 @@ def test_rejected_attenuation_does_not_consume_the_pop_nonce():
 
 def test_minted_child_verifies_and_is_contained_by_parent():
     audit = InMemoryAudit()
-    # Vouching: the subject is attenuation and scope containment, not the 0.8.0
+    # Vouching: the subject is attenuation and scope containment, not the 0.9.0
     # fail-closed default (see test_revocation.py::test_cross_language_scenarios).
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
     svc = MintService(issuer, audit)

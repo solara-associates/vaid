@@ -17,7 +17,7 @@
 //!   injects a durable backend — **both halves together**, via
 //!   [`ReferenceIssuer::with_revocation_backend`] and
 //!   [`crate::revocation::RevocationBackend`] — without patching the crate. A
-//!   caller who wants the pre-0.8.0 vouching posture asks for it by name with
+//!   caller who wants the pre-0.9.0 vouching posture asks for it by name with
 //!   [`ReferenceIssuer::assuming_nothing_revoked`]. See `docs/spec/revocation.md`
 //!   R.4 and the crate README's "Trust model" section.
 //! - **The issuer is the lineage resolver.** It records **every** mint in an
@@ -161,7 +161,7 @@ pub struct ReferenceIssuer {
     /// The revocation store consulted in `verify_vaid`. Defaults to `default_store`
     /// (in-memory, **absent** — [`InMemoryRevocationList::new`] — so verification
     /// fails closed out of the box); replaced by
-    /// [`ReferenceIssuer::with_revocation_backend`], or flipped to the pre-0.8.0
+    /// [`ReferenceIssuer::with_revocation_backend`], or flipped to the pre-0.9.0
     /// vouching posture by [`ReferenceIssuer::assuming_nothing_revoked`].
     revocation: Arc<dyn RevocationCheck>,
     /// The built-in in-memory store that [`ReferenceIssuer::revoke`] mutates. It is
@@ -242,11 +242,11 @@ impl ReferenceIssuer {
         vaid_ttl_hours: i64,
         trust_domain: String,
     ) -> Self {
-        // Default revocation posture (0.8.0 onward): ABSENT. The store has not been
+        // Default revocation posture (0.9.0 onward): ABSENT. The store has not been
         // populated, cannot vouch for anything, and reports `Unavailable`, so
         // verification FAILS CLOSED out of the box (R.4.5).
         //
-        // Until 0.8.0 this was `assume_nothing_revoked()` — a store that vouched
+        // Until 0.9.0 this was `assume_nothing_revoked()` — a store that vouched
         // `NotRevoked` over an empty set so a fresh issuer verified immediately.
         // Being non-durable it could not detect its own restart, so a VAID revoked
         // before a restart verified clean afterwards: a fail-open posture, reached by
@@ -299,7 +299,7 @@ impl ReferenceIssuer {
         self
     }
 
-    /// Ask for the pre-0.8.0 default **by name**: an in-memory revocation store that
+    /// Ask for the pre-0.9.0 default **by name**: an in-memory revocation store that
     /// vouches "nothing is revoked" over an empty set, so a fresh issuer verifies
     /// immediately.
     ///
@@ -311,7 +311,7 @@ impl ReferenceIssuer {
     ///
     /// It exists because R.4.5 permits fail-open as an explicit configuration and
     /// forbids it as a default — *"it MUST NOT be the default; it MUST be named to
-    /// state what it does rather than obscure it."* Until 0.8.0 this posture was the
+    /// state what it does rather than obscure it."* Until 0.9.0 this posture was the
     /// default and the name appeared nowhere at a call site. It is the same
     /// behaviour; the difference is that asking for it is now visible in the code
     /// that asks.
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn issued_root_vaid_verifies_against_its_issuer() {
         // `assuming_nothing_revoked()` because this test is about the SIGNATURE, not
-        // the revocation posture. Since 0.8.0 a bare issuer's revocation store is
+        // the revocation posture. Since 0.9.0 a bare issuer's revocation store is
         // absent, so `verify_vaid` fails closed on `Unavailable` before the signature
         // is ever in question — see `default_revocation_store_is_absent_and_fails_closed`.
         let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
@@ -739,9 +739,9 @@ mod tests {
         );
     }
 
-    /// THE 0.8.0 DEFAULT. A bare issuer's revocation store is **absent**, not
+    /// THE 0.9.0 DEFAULT. A bare issuer's revocation store is **absent**, not
     /// vouching: it reports `Unavailable` and verification fails closed (R.4.5).
-    /// Until 0.8.0 this returned `NotRevoked` and `true`.
+    /// Until 0.9.0 this returned `NotRevoked` and `true`.
     ///
     /// The paired assertion matters as much as the first: the VAID is still
     /// **authentic**. What changed is standing, not the document — an evaluator who
@@ -774,11 +774,11 @@ mod tests {
         );
     }
 
-    /// The named opt-in restores the pre-0.8.0 posture exactly, and says so at the
+    /// The named opt-in restores the pre-0.9.0 posture exactly, and says so at the
     /// call site. R.4.5 permits fail-open as a configuration and forbids it as a
     /// default; this is the configuration.
     #[test]
-    fn assuming_nothing_revoked_restores_the_pre_0_8_posture() {
+    fn assuming_nothing_revoked_restores_the_pre_0_9_posture() {
         let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
             .unwrap()
             .assuming_nothing_revoked();

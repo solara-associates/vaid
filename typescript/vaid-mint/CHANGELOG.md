@@ -62,7 +62,7 @@ half — the same behaviour, named at the call site.
 
 ### Added — `assumingNothingRevoked()`
 
-The pre-0.8.0 posture, asked for by name:
+The pre-0.9.0 posture, asked for by name:
 
 ```ts
 const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();

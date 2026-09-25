@@ -3,7 +3,7 @@
 **Date:** 2026-08-23
 **Repo:** `vaid`
 **Status:** CLOSED 2026-08-23. **Decision taken by A. Smeyatsky: flip it.** Shipped
-in `vaid-mint` 0.8.0 in all three languages, with `assuming_nothing_revoked()` landing
+in `vaid-mint` 0.9.0 in all three languages, with `assuming_nothing_revoked()` landing
 simultaneously and `with_revocation_check` removed in the same release. **Prepared,
 not published** — the publish is gated on the decision owner. The measurement below
 is what the decision was taken against and is left as written.
@@ -150,21 +150,33 @@ vectors exist to prevent and cannot see.
 
 ## Semver
 
-`vaid-mint` is at **0.7.0** on all three registries, so "major" is not on the table
-short of declaring 1.0. The real choice is 0.8.0-with-a-BREAKING-heading, or holding
+**The premise of this section changed after it was written, and the change is worth
+stating rather than editing away.** It originally reasoned from `vaid-mint` being at
+**0.7.0** on all three registries and recommended 0.8.0. That release number was then
+taken by a different changeset — the expiry-containment break (vaid#79, ADR-0007) —
+which shipped first and is published. The digits below are therefore updated, but so
+is the reasoning: the argument is not "0.7 → 0.8 because 0.7 is current", it is that a
+default flip needs *its own* minor bump, and it needs the next one available.
+
+`vaid-mint` is at **0.8.0** on all three registries, so "major" is not on the table
+short of declaring 1.0. The real choice is 0.9.0-with-a-BREAKING-heading, or holding
 it for 1.0.
 
-**Recommendation: 0.8.0, marked BREAKING in all three changelogs.**
+**Recommendation: 0.9.0, marked BREAKING in all three changelogs.**
 
 - **A default change is a breaking change**, whatever the version arithmetic says:
   `verify_vaid` returns `false` where it returned `true`, for the same inputs, with
   no signature change to signal it. It compiles clean and fails at runtime, which is
   the worse of the two failure shapes.
+- **It must not ride along with another break.** 0.8.0 already carries the expiry
+  containment break. Two independent breaking changes under one version number leave
+  a downstream that hits a `false` from `verify_vaid` unable to tell which change
+  caused it from the version alone — which is the whole purpose of the bump.
 - **Pre-1.0, a minor bump is the conventional breaking vehicle in two of the three
-  ecosystems.** Cargo treats `0.7 → 0.8` as incompatible; npm's `^0.7.0` resolves to
-  `>=0.7.0 <0.8.0`. Neither picks it up automatically.
-- **The third is ambiguous.** A Python pin of `~=0.7` admits `>=0.7,<1.0` and *would*
-  pick up 0.8.0 silently; `~=0.7.0` would not. How downstreams actually pin is not
+  ecosystems.** Cargo treats `0.8 → 0.9` as incompatible; npm's `^0.8.0` resolves to
+  `>=0.8.0 <0.9.0`. Neither picks it up automatically.
+- **The third is ambiguous.** A Python pin of `~=0.8` admits `>=0.8,<1.0` and *would*
+  pick up 0.9.0 silently; `~=0.8.0` would not. How downstreams actually pin is not
   observable from this repository — **OPEN** — so the release note must say this
   explicitly rather than relying on the convention holding.
 - **Holding it for 1.0 is the worse trade.** It keeps a fail-open default in a
@@ -218,7 +230,7 @@ Recorded for the next reader: the estate sweep found **zero** consumers of
 `ReferenceIssuer::verify_vaid`, and the one in-repo consumer, `vaid-skill`, pins
 `vaid-mint` at `^0.6.0` — which npm resolves to `>=0.6.0 <0.7.0`, so it currently
 installs 0.6.0 and will not follow this release at all. **VERIFIED** by reading the
-resolved `skill/node_modules/vaid-mint/package.json`. Moving the skill onto 0.8.0 is a
+resolved `skill/node_modules/vaid-mint/package.json`. Moving the skill onto 0.9.0 is a
 separate decision and a separate release.
 
 ## Marking

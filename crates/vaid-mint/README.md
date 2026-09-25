@@ -53,12 +53,12 @@ omitting an argument; pass `InMemoryLineageStore` as the second half to
 say "in-memory lineage, deliberately". Make the resolver durable first,
 or both in the same change — the revoked set first is the ordering that
 produces the outage. `ReferenceIssuer::with_revocation_check` replaced
-only one half and was **removed in 0.8.0** for this reason.
+only one half and was **removed in 0.9.0** for this reason.
 
-**Since 0.8.0 the default fails closed.** A bare `ReferenceIssuer`'s
+**Since 0.9.0 the default fails closed.** A bare `ReferenceIssuer`'s
 revocation store is *absent* — never populated, so it reports
 `Unavailable` and `verify_vaid` returns `false` until state is loaded.
-Until 0.8.0 the default vouched `NotRevoked` over an empty set, which is
+Until 0.9.0 the default vouched `NotRevoked` over an empty set, which is
 a fail-open posture and, being non-durable, could not detect its own
 restart. R.4.5 requires that fail-open never be the default and always
 be named; `ReferenceIssuer::assuming_nothing_revoked()` is that name. It

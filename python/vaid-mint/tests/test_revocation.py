@@ -24,7 +24,7 @@ from vaid_mint import (
 
 
 def vouching_issuer() -> ReferenceIssuer:
-    """An issuer whose revocation store **vouches** over an empty set — the pre-0.8.0
+    """An issuer whose revocation store **vouches** over an empty set — the pre-0.9.0
     default, now asked for by name (R.4.5: fail-open may be configured, never
     defaulted). Used by every scenario whose subject is something OTHER than the
     default posture; a bare issuer is absent and would answer UNAVAILABLE before the
@@ -174,10 +174,10 @@ def test_cross_language_scenarios():
 
     # default_bare_issuer: NOTHING configured       -> UNAVAILABLE (R.4.5)
     #
-    # The 0.8.0 flip, pinned as a cross-language agreement rather than left to each
+    # The 0.9.0 flip, pinned as a cross-language agreement rather than left to each
     # implementation's constructor. A bare issuer's revocation store is ABSENT: it
     # has not been populated, cannot vouch, and says so. Verification fails closed.
-    # Before 0.8.0 this row read NOT_REVOKED, because the default vouched over an
+    # Before 0.9.0 this row read NOT_REVOKED, because the default vouched over an
     # empty set and could not detect its own restart.
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     root = issue_root(issuer)
@@ -218,13 +218,13 @@ def test_default_vaid_ttl_hours_matches_the_rust_constant():
     assert DEFAULT_VAID_TTL_HOURS == 1
 
 
-# ── the 0.8.0 default and its named opt-in ──
+# ── the 0.9.0 default and its named opt-in ──
 
 
 def test_default_revocation_store_is_absent_and_fails_closed():
-    """THE 0.8.0 DEFAULT. A bare issuer's revocation store is **absent**, not
+    """THE 0.9.0 DEFAULT. A bare issuer's revocation store is **absent**, not
     vouching: it reports UNAVAILABLE and verification fails closed (R.4.5). Until
-    0.8.0 this returned NOT_REVOKED and True.
+    0.9.0 this returned NOT_REVOKED and True.
 
     The paired assertion matters as much as the first: the VAID is still
     **authentic**. What changed is standing, not the document — an evaluator who sees
@@ -243,8 +243,8 @@ def test_default_revocation_store_is_absent_and_fails_closed():
     )
 
 
-def test_assuming_nothing_revoked_restores_the_pre_0_8_posture():
-    """The named opt-in restores the pre-0.8.0 posture exactly, and says so at the
+def test_assuming_nothing_revoked_restores_the_pre_0_9_posture():
+    """The named opt-in restores the pre-0.9.0 posture exactly, and says so at the
     call site. R.4.5 permits fail-open as a configuration and forbids it as a
     default; this is the configuration."""
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()

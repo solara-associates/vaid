@@ -57,11 +57,11 @@ state cannot be reached by omitting an argument; pass `InMemoryLineageStore` as 
 second half to say "in-memory lineage, deliberately". Make the resolver durable
 first, or both in the same change — the revoked set first is the ordering that
 produces the outage. `ReferenceIssuer.with_revocation_check` replaced only one half
-and was **removed in 0.8.0** for this reason.
+and was **removed in 0.9.0** for this reason.
 
-**Since 0.8.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
+**Since 0.9.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
 is *absent* — never populated, so it reports `UNAVAILABLE` and `verify_vaid` returns
-`False` until state is loaded. Until 0.8.0 the default vouched `NOT_REVOKED` over an
+`False` until state is loaded. Until 0.9.0 the default vouched `NOT_REVOKED` over an
 empty set, which is a fail-open posture and, being non-durable, could not detect its
 own restart. R.4.5 requires that fail-open never be the default and always be named;
 `ReferenceIssuer.assuming_nothing_revoked()` is that name. Minting, attenuation and
@@ -106,7 +106,7 @@ issuer = ReferenceIssuer.ephemeral(1).with_revocation_backend(
     RevocationBackend(check=revocations, lineage=InMemoryLineageStore())
 )
 
-# Shorthand for exactly the pre-0.8.0 posture — a vouching in-memory revoked set and
+# Shorthand for exactly the pre-0.9.0 posture — a vouching in-memory revoked set and
 # an in-memory lineage store. Same fail-open behaviour; the difference is the name.
 dev = ReferenceIssuer.ephemeral(1).assuming_nothing_revoked()
 revocations.revoke(vaid["vaid_id"])
@@ -164,8 +164,8 @@ where each is enforced in code.
 ```python
 from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
 
-# `assuming_nothing_revoked()` is the pre-0.8.0 default, asked for BY NAME. Since
-# 0.8.0 a bare issuer's revocation store is ABSENT: it reports UNAVAILABLE and
+# `assuming_nothing_revoked()` is the pre-0.9.0 default, asked for BY NAME. Since
+# 0.9.0 a bare issuer's revocation store is ABSENT: it reports UNAVAILABLE and
 # `verify_vaid` fails closed until revocation state is loaded (R.4.5). This is a
 # fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
 # survive a restart. For anything that must, use `with_revocation_backend`.

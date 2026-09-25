@@ -66,8 +66,8 @@
 //! use vaid_mint::mint_types::{MintVaidRequest, VaidSeed};
 //!
 //! # tokio_test_block(async {
-//! // `assuming_nothing_revoked()` is the pre-0.8.0 default, asked for BY NAME.
-//! // Since 0.8.0 a bare issuer's revocation store is ABSENT: it reports
+//! // `assuming_nothing_revoked()` is the pre-0.9.0 default, asked for BY NAME.
+//! // Since 0.9.0 a bare issuer's revocation store is ABSENT: it reports
 //! // `Unavailable` and `verify_vaid` fails closed until revocation state is loaded
 //! // (R.4.5). This is a fail-OPEN posture and it is fine here — a quickstart with
 //! // no revocation store — but it does not survive a restart. For anything that

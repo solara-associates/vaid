@@ -17,7 +17,7 @@ use vaid_mint::revocation::{
     InMemoryLineageStore, InMemoryRevocationList, RevocationBackend, RevocationStatus,
 };
 
-/// An issuer whose revocation store **vouches** over an empty set — the pre-0.8.0
+/// An issuer whose revocation store **vouches** over an empty set — the pre-0.9.0
 /// default, now asked for by name (R.4.5: fail-open may be configured, never
 /// defaulted). Used by every scenario whose subject is something OTHER than the
 /// default posture; a bare issuer is absent and would answer `Unavailable` before
@@ -214,10 +214,10 @@ fn cross_language_scenarios() {
     }
     // default_bare_issuer: NOTHING configured       -> Unavailable (R.4.5)
     //
-    // The 0.8.0 flip, pinned as a cross-language agreement rather than left to each
+    // The 0.9.0 flip, pinned as a cross-language agreement rather than left to each
     // implementation's constructor. A bare issuer's revocation store is ABSENT: it
     // has not been populated, cannot vouch, and says so. Verification fails closed.
-    // Before 0.8.0 this row read NotRevoked, because the default vouched over an
+    // Before 0.9.0 this row read NotRevoked, because the default vouched over an
     // empty set and could not detect its own restart.
     {
         let issuer = ReferenceIssuer::ephemeral(1, "vaid.example").unwrap();

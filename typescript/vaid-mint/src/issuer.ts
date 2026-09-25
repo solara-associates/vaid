@@ -17,7 +17,7 @@
  *   ({@link ReferenceIssuer.withRevocationBackend}, which requires BOTH durable
  *   halves) without patching the package. The default store is **absent**, so
  *   verification fails closed out of the box;
- *   {@link ReferenceIssuer.assumingNothingRevoked} asks for the pre-0.8.0 vouching
+ *   {@link ReferenceIssuer.assumingNothingRevoked} asks for the pre-0.9.0 vouching
  *   posture by name.
  *   See `docs/spec/revocation.md` R.4 and the README's "Trust model" section.
  * - **The issuer is the lineage resolver.** It records **every** mint in an
@@ -188,11 +188,11 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
     this.#kernelPublicKey = ed25519PublicKey(kernelSeed);
     this.#vaidTtlHours = vaidTtlHours;
     this.#trustDomain = trustDomain;
-    // Default revocation posture (0.8.0 onward): ABSENT. The store has not been
+    // Default revocation posture (0.9.0 onward): ABSENT. The store has not been
     // populated, cannot vouch for anything, and reports Unavailable, so
     // verification FAILS CLOSED out of the box (R.4.5).
     //
-    // Until 0.8.0 this was `assumeNothingRevoked()` — a store that vouched
+    // Until 0.9.0 this was `assumeNothingRevoked()` — a store that vouched
     // NotRevoked over an empty set so a fresh issuer verified immediately. Being
     // non-durable it could not detect its own restart, so a VAID revoked before a
     // restart verified clean afterwards: a fail-open posture, reached by
@@ -270,7 +270,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   }
 
   /**
-   * Ask for the pre-0.8.0 default **by name**: an in-memory revocation store that
+   * Ask for the pre-0.9.0 default **by name**: an in-memory revocation store that
    * vouches "nothing is revoked" over an empty set, so a fresh issuer verifies
    * immediately.
    *
@@ -282,7 +282,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    *
    * It exists because R.4.5 permits fail-open as an explicit configuration and
    * forbids it as a default — *"it MUST NOT be the default; it MUST be named to
-   * state what it does rather than obscure it."* Until 0.8.0 this posture was the
+   * state what it does rather than obscure it."* Until 0.9.0 this posture was the
    * default and the name appeared nowhere at a call site. It is the same behaviour;
    * the difference is that asking for it is now visible in the code that asks.
    *

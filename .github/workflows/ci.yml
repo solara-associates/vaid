@@ -630,6 +630,15 @@ jobs:
       # contradicts itself makes the registry answer meaningless.
       - name: Verify each package agrees with itself (internal version agreement)
         run: node scripts/verify-internal-versions.mjs
+      # The POSITIVE CONTROL for a release bump. The two checks either side of this
+      # one are agreement checks: internal-versions compares the version sites to
+      # EACH OTHER, registry-parity compares them to what is PUBLISHED. Neither can
+      # fail when a rebase leaves every site uniformly at the PREVIOUS version —
+      # which is exactly what happens when both sides of a merge set the same
+      # literal, producing no conflict. This check holds the one hand-written
+      # statement of the intended version and measures the sites against it.
+      - name: Verify every version site reads the release this branch claims
+        run: node scripts/verify-release-version.mjs
       - name: Verify in-repo package versions are published (registry parity)
         run: node scripts/verify-package-versions.mjs
       # The only check here that compares the frozen WIRE CONTRACT to the version

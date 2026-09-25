@@ -59,7 +59,7 @@ function issueChild(issuer: ReferenceIssuer, parent: Vaid, agentClass: string): 
 }
 
 /**
- * An issuer whose revocation store **vouches** over an empty set — the pre-0.8.0
+ * An issuer whose revocation store **vouches** over an empty set — the pre-0.9.0
  * default, now asked for by name (R.4.5: fail-open may be configured, never
  * defaulted). Used by every scenario whose subject is something OTHER than the
  * default posture; a bare issuer is absent and would answer `Unavailable` before the
@@ -194,10 +194,10 @@ test('cross-language scenarios — the (scenario → status) table all three lan
   }
   // default_bare_issuer: NOTHING configured        -> Unavailable (R.4.5)
   //
-  // The 0.8.0 flip, pinned as a cross-language agreement rather than left to each
+  // The 0.9.0 flip, pinned as a cross-language agreement rather than left to each
   // implementation's constructor. A bare issuer's revocation store is ABSENT: it has
   // not been populated, cannot vouch, and says so. Verification fails closed. Before
-  // 0.8.0 this row read NotRevoked, because the default vouched over an empty set and
+  // 0.9.0 this row read NotRevoked, because the default vouched over an empty set and
   // could not detect its own restart.
   {
     const issuer = ReferenceIssuer.ephemeral(1);
@@ -325,11 +325,11 @@ test('an injected durable-style backend is the one consulted at verification', (
   );
 });
 
-// ── the 0.8.0 default and its named opt-in ───────────────────────────────────
+// ── the 0.9.0 default and its named opt-in ───────────────────────────────────
 
-test('THE 0.8.0 DEFAULT: a bare issuer is absent and fails closed', () => {
+test('THE 0.9.0 DEFAULT: a bare issuer is absent and fails closed', () => {
   // The revocation store is ABSENT, not vouching: it reports Unavailable and
-  // verification fails closed (R.4.5). Until 0.8.0 this returned NotRevoked and true.
+  // verification fails closed (R.4.5). Until 0.9.0 this returned NotRevoked and true.
   const issuer = ReferenceIssuer.ephemeral(1);
   const vaid = issueRoot(issuer, 'root');
 
@@ -349,7 +349,7 @@ test('THE 0.8.0 DEFAULT: a bare issuer is absent and fails closed', () => {
   );
 });
 
-test('assumingNothingRevoked restores the pre-0.8.0 posture, by name', () => {
+test('assumingNothingRevoked restores the pre-0.9.0 posture, by name', () => {
   // R.4.5 permits fail-open as a configuration and forbids it as a default; this is
   // the configuration.
   const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
