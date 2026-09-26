@@ -6,7 +6,7 @@
 // WHY IT IS HASHED, AND NOT A GREP
 // --------------------------------
 // The estate holds a name-to-euphemism mapping at
-// `_meta-solara docs/archive/purge-2026-08-23/syn-replacements.txt`. Nothing has
+// the 2026-08-23 estate purge (its maps were deleted in session 260). Nothing has
 // ever consulted it, which is how `synthera-site-redesign` had a term reintroduced
 // 48 hours after being purged. The obvious fix — commit that list and grep added
 // lines against it — is unusable HERE, because this repository is PUBLIC: the list
@@ -192,11 +192,18 @@ for (const f of findings) {
 }
 console.error('');
 console.error('To resolve: open each line above and replace the client, prospect, partner');
-console.error('or employer name on it with the role. The mapping is the RHS of');
-console.error('`docs/archive/purge-2026-08-23/syn-replacements.txt` in the private');
-console.error('`solara` (_meta-solara) repository. Do not add the term to any allowlist,');
-console.error('and do not paste the term into the pull request while asking about it.');
+console.error('or employer name on it with the role. Ask the repository owner for the');
+console.error('current mapping - it is deliberately not written down in any repository,');
+console.error('because a mapping file lists verbatim every name it exists to remove.');
+console.error('Do not add the term to any allowlist, and do not paste the term into the');
+console.error('pull request while asking about it.');
 console.error('');
-console.error('Background: docs/findings/the-refs-a-rewrite-cannot-reach-and-the-two-');
-console.error('attestations-that-bind-it.md, same repository.');
+console.error('NOTE: the EMPLOYER name is guarded but is deliberately NOT redacted in');
+console.error('the estate (owner decision, session 260: a live dispute may need the');
+console.error('records). If this fired on that term in a private repository, say so on');
+console.error('the pull request and the owner will clear it.');
+console.error('');
+console.error('Background: docs/findings/');
+console.error('what-a-name-purge-buys-and-the-three-ways-its-checks-passed-wrongly.md');
+console.error('in the private `solara` repository.');
 process.exit(1);
