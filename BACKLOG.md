@@ -149,7 +149,7 @@ registry is what was tagged.
 
 For 0.1.0 those were run by hand and recorded — the published tarball's
 `dist.shasum` `7c80c898…` was confirmed to reproduce exactly from `npm pack` at
-`b5e4f10`, and a clean install from the registry was exercised end to end. That is
+`71eb2ea`, and a clean install from the registry was exercised end to end. That is
 evidence for one release, not a property of the next one.
 
 ### Fix shape
@@ -197,7 +197,7 @@ a bump and a changelog. Control-tested against all three failure shapes.
 through the workflow with no npm credential anywhere; the registry records
 `_npmUser: "GitHub Actions"` and a SLSA provenance attestation whose subject digest
 equals the published tarball's, bound to this repository, `release.yml`,
-`refs/tags/npm-vaid-skill-v0.1.3` and commit `5f717a1`. Resolved by **npm Trusted
+`refs/tags/npm-vaid-skill-v0.1.3` and commit `c4db2b2`. Resolved by **npm Trusted
 Publishing (OIDC)** rather than by adding a token — the workflow carries no npm
 credential at all. Kept because the way it
 hid is worth recognising, and because the npm-version trap below will catch the next
@@ -615,7 +615,7 @@ recognised field in a non-canonical form, so reject would have extended the ADR
 rather than applied it. B8 settled it empirically: under reject, every document
 the Rust mint has ever produced stops verifying everywhere, including in Rust.
 **Observed:** 2026-08-11, by differential probe while building `verdict_v1.json`.
-Reproduced against untouched `main` (`9f47657`) through the pre-existing public
+Reproduced against untouched `main` (`b5cbd4f`) through the pre-existing public
 API only — `serde_json::from_str::<Vaid>` followed by `verify_vaid_authenticity`.
 Nothing here depends on the graded verdict added alongside it.
 **Affects:** `crates/vaid-mint`, `python/vaid-mint`, `typescript/vaid-mint`.
@@ -1061,12 +1061,12 @@ occurred; a wrong `--prefix` is a different check.
 ## B14 — the Rust and Python publish legs depend on secrets that do not exist, and had never been run
 
 **Status:** **CLOSED** 2026-08-11. Trusted publishers configured on crates.io and
-PyPI; both tags re-cut at `95aebba` and both legs published green through OIDC with
+PyPI; both tags re-cut at `1b9b7f2` and both legs published green through OIDC with
 no stored secret anywhere. **0.7.0 is live on all three registries** and registry
 parity is green on `main`. The three legs are now all *proven*, not assumed — which
 is the condition B14 said had never held.
 
-Re-cut at `95aebba` rather than at `b8b29c8`, because Actions runs the workflow
+Re-cut at `1b9b7f2` rather than at `160caad`, because Actions runs the workflow
 from the ref the tag points at: tagging the older commit would have run the old
 token-based workflow and failed identically. Package bytes are unchanged between
 the two commits (verified: `git diff` over `crates/ python/ typescript/ skill/` is
@@ -1141,7 +1141,7 @@ Both legs stopped at `publish` with `verify-artifact: skipped`, and both reporte
    silently between releases.
 2. Re-run the two failed `publish` jobs, or delete and re-cut
    `rust-vaid-mint-v0.7.0` and `python-vaid-mint-v0.7.0`. The commit is correct
-   (`b8b29c8`) and the version is not burned, so nothing else changes.
+   (`160caad`) and the version is not burned, so nothing else changes.
 
 The durable half is harder than B12's and worth stating rather than pretending
 otherwise: a check cannot prove a token is *valid* without spending it. What it
