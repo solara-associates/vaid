@@ -155,7 +155,7 @@
           "version": "0.3.0"
         }
       ],
-      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, and a status that cannot be determined (Unavailable) fails closed. THE DEFAULT IS FAIL-CLOSED FROM vaid-mint 0.9.0 ONWARD, ON crates.io AND PyPI ONLY. Every vaid-mint published before 0.9.0 constructs the issuer with an assume-nothing-revoked in-memory store, which vouches NotRevoked for every VAID it was never told about and cannot detect its own restart — a fail-open posture reached by assumption, so a VAID revoked before a restart verifies clean. The fail-closed default is not published on npm at all yet, so every npm version currently installable still has the old behaviour. See GHSA-p336-fc9m-vcq4. On an affected version an integrator gets fail-closed behaviour only by holding the store absent or injecting a durable RevocationCheck. See revocation-fail-closed-default.",
+      "status_text": "Revocation checked over a VAID's full lineage — three-state, revoking a parent revokes its children, and a status that cannot be determined (Unavailable) fails closed. THE DEFAULT IS FAIL-CLOSED FROM vaid-mint 0.9.0 ONWARD, ON ALL THREE REGISTRIES. Every vaid-mint published before 0.9.0 constructs the issuer with an assume-nothing-revoked in-memory store, which vouches NotRevoked for every VAID it was never told about and cannot detect its own restart — a fail-open posture reached by assumption, so a VAID revoked before a restart verifies clean. See GHSA-p336-fc9m-vcq4. On an affected version an integrator gets fail-closed behaviour only by holding the store absent or injecting a durable RevocationCheck. See revocation-fail-closed-default.",
       "blocked_on": null
     },
     {
@@ -175,9 +175,15 @@
           "registry": "pypi",
           "package": "vaid-mint",
           "version": "0.9.0"
+        },
+        {
+          "language": "typescript",
+          "registry": "npm",
+          "package": "vaid-mint",
+          "version": "0.9.0"
         }
       ],
-      "status_text": "ReferenceIssuer's revocation store starts ABSENT, so verification fails closed until revocation state is loaded (spec R.4.5), and durable revocation becomes two stores (R.4.6: revoked set AND lineage). Breaking in all three languages. PARTIALLY RELEASED: published as vaid-mint 0.9.0 on crates.io and PyPI. THE NPM LEG IS NOT PUBLISHED YET, so a TypeScript consumer installing vaid-mint today still gets the assume-nothing-revoked default described in revocation-lineage-aware. Only the two packages listed here are claimed; npm is deliberately absent from that list rather than listed at a version that does not exist. Add the npm entry when the npm leg publishes, and not before. Security advisory for the old default: GHSA-p336-fc9m-vcq4.",
+      "status_text": "ReferenceIssuer's revocation store starts ABSENT, so verification fails closed until revocation state is loaded (spec R.4.5), and durable revocation becomes two stores (R.4.6: revoked set AND lineage). Breaking in all three languages. FULLY RELEASED: 0.9.0 is published and installable on crates.io, PyPI and npm, and each was verified by a clean install from the registry running the packaged conformance firewall. Fixes GHSA-p336-fc9m-vcq4. Every vaid-mint before 0.9.0 defaults to assume-nothing-revoked and is fail-open across a restart; upgrade, and pin on PyPI with '~=' or '==' because pip has no 0.x caret convention.",
       "blocked_on": null
     },
     {
