@@ -3,6 +3,59 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0]
+
+> **Read this before upgrading. A delegation chain deeper than 64 hops no longer
+> verifies.** `MAX_LINEAGE_DEPTH` drops from 1024 to 64, to bound the work a
+> verifier can be made to perform on a long delegation chain. Nothing that was
+> rejected becomes accepted — the bound fails closed — but a legitimate chain of
+> depth 65–1024 that verified under 0.9.0 stops verifying here.
+>
+> **PyPI users, pin this.** `pip install vaid-mint` and `vaid-mint>=0.9.0` both
+> resolve straight onto this release. Cargo's `"0.9"` and npm's `^0.9.0` do not,
+> because both read a `0.x` caret as pinning the minor; pip has no equivalent
+> convention. Use `~=0.10.0` or `==0.10.0`.
+
+### BREAKING — lineage-depth bound lowered 1024 → 64
+
+`MAX_LINEAGE_DEPTH` is now **64**. A delegation chain **deeper than 64** no
+longer verifies where it previously did. The reason is cost: the bound exists to
+cap the verifier work a third party can induce by presenting a long delegation
+chain, and at 1024 it was not capping much.
+
+Concretely: `assemble_lineage` returns an incomplete assembly past the bound,
+which a verifier maps to `Unavailable` revocation status, and `verify_chain`
+maps to `Unverifiable`. Both **fail closed** — this change cannot cause anything
+to be accepted that was previously rejected. The only regression available is a
+legitimate chain of depth 65–1024 that stops verifying.
+
+Why lower it:
+
+1. **Exposure.** `assemble_lineage` is reachable over attacker-supplied input —
+   `verify_chain` runs it against a `PresentedBundle` the *presenter* assembled.
+   The bound caps work a third party can make a verifier perform, and 1024 was
+   the loosest bound sitting on the most exposed path.
+2. **Cost is quadratic.** The walk performs a membership test against what it
+   has already collected on every hop, so a depth-`d` walk is O(d²). 1024 admits
+   roughly 500,000 comparisons per verification; 64 admits roughly 2,000.
+3. **Nothing legitimate is near it.** Observed delegation chains are single-digit
+   deep. 64 leaves about sixty times that headroom.
+
+**If you delegate deeper than 64 hops, do not take this release** until you have
+either flattened those chains or pinned 0.9.x. There is no configuration knob;
+the bound is a compile-time constant in all three languages, deliberately, so
+the three implementations cannot drift into different verification verdicts.
+
+Changed identically in Rust, Python and TypeScript. 64 is not a new number — it
+is the bound the substrate's own lineage walk has always used; the 1024/64 split
+was an accident of independent authorship rather than a decision.
+
+**No conformance vector is affected**, and this was measured rather than
+asserted: revocation and lineage assembly sit outside the conformance surface
+(ADR-0001), no vector contains the literal `1024`, and the deepest
+lineage/chain array in any vector in the repository is **6** hops
+(`chain_expiry_v1.json`) — an order of magnitude below the new bound.
+
 ## [0.9.0]
 
 > **Read this before upgrading. A bare `ReferenceIssuer` no longer verifies what
