@@ -183,15 +183,21 @@ invisible unless the reason is named.
    the specific error returned.
 2. **Expiry / TTL.** The leaf VAID has not passed its own `expires_at` at the
    verification instant (`vaid_mint.document.is_expired`).
-3. **Chain integrity back to a trusted root.** If `/vaidChain` is present, or the
-   agent's policy requires chain verification regardless, every ancestor named by
-   a signed `parent_vaid` is present in `/vaidChain`, every document in the chain
-   is itself authentic under a trusted key, and no ancestor has passed its own
-   `expires_at` at the verification instant. Equivalent to
-   `vaid_mint.chain.verify_chain_at` through the point where it would return
-   `INAUTHENTIC`, `UNVERIFIABLE` or `EXPIRED`. An agent that does not require chain
-   verification for this request MAY check only the leaf (steps 1-2 and
-   step 6 against the leaf's own authority) and skip to step 7.
+3. **Chain integrity back to a trusted root.** Every ancestor named by a signed
+   `parent_vaid` is present in `/vaidChain`, every document in the chain is itself
+   authentic under a trusted key, and no ancestor has passed its own `expires_at`
+   at the verification instant. Equivalent to `vaid_mint.chain.verify_chain_at`
+   through the point where it would return `INAUTHENTIC`, `UNVERIFIABLE` or
+   `EXPIRED`.
+
+   **Every step above applies to every request.** There is no leaf-only mode: a
+   leaf's own authority cannot be assessed without its lineage, because ancestor
+   revocation (a parent whose standing was withdrawn after it delegated) can
+   only be established by walking the chain, never by looking at the leaf alone.
+   An agent that requires chain verification for a request but receives no
+   `/vaidChain` (or an incomplete one) MUST deny it: a missing chain where one is
+   required is `UNVERIFIABLE`, never a reason to fall back to checking the leaf in
+   isolation.
 4. **Scope at each hop is a subset of its parent's.** Every hop in the assembled
    chain holds `scope_boundary` and `capability_set` contained in its parent's,
    and `expires_at` no later than its parent's. Equivalent to the per-hop

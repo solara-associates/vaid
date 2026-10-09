@@ -52,7 +52,13 @@ message = {
 result = verify_a2a_message(
     message,
     trust_config=trust_config,
-    revocation=InMemoryRevocationList(),  # or your own RevocationCheck
+    # `InMemoryRevocationList()` with nothing revoked into it is
+    # UNAVAILABLE by design (R.4.5/R.4.6) and fails every request closed —
+    # correct for an empty store, useless as a real check. A real deployment
+    # implements `vaid_mint.revocation.RevocationCheck` against its own
+    # revocation source (a database, a feed) and passes that instead. This
+    # example has no revocation source, so it says so explicitly:
+    revocation=InMemoryRevocationList.assume_nothing_revoked(),
     requested_action="data.acme.orders",
     now=datetime.now(timezone.utc),
 )
