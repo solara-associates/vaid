@@ -306,6 +306,67 @@ def main() -> None:
         ),
     })
 
+    # 7 to 11: attenuation negatives. Each is a two-hop chain under the
+    # trusted kernel key where only the child differs from a valid chain, so
+    # step 4 is the only check that can refuse it.
+    attenuation_cases = [
+        (
+            "07-sibling-scope-child",
+            "The child's scope ('data.acme-secret') shares a text prefix with "
+            "the parent's ('data.acme') but is a sibling, not a descendant "
+            "(scope.md S.3: bare prefix matching is not containment).",
+            {"scope": ["data.acme"], "caps": ["read"]},
+            {"scope": ["data.acme-secret"], "caps": ["read"]},
+            "data.acme-secret",
+        ),
+        (
+            "08-capability-not-in-parent",
+            "The child holds capability 'write' that its parent does not hold.",
+            {"scope": ["data.acme"], "caps": ["read"]},
+            {"scope": ["data.acme.orders"], "caps": ["read", "write"]},
+            "data.acme.orders",
+        ),
+        (
+            "09-tenant-changed",
+            "The child's tenant_id ('globex') differs from its parent's "
+            "('acme').",
+            {"scope": ["data.acme"], "caps": ["read"]},
+            {"scope": ["data.acme.orders"], "caps": ["read"], "tenant": "globex"},
+            "data.acme.orders",
+        ),
+        (
+            "10-child-outlives-parent",
+            "The child's expires_at (2999-01-01) is later than its parent's "
+            "(2998-01-01). Both are in the future, so only expiry containment "
+            "(ADR-0007) refuses it.",
+            {"scope": ["data.acme"], "caps": ["read"], "expires_at": "2998-01-01T00:00:00Z"},
+            {"scope": ["data.acme.orders"], "caps": ["read"]},
+            "data.acme.orders",
+        ),
+        (
+            "11-unrestricted-child",
+            "The child's scope_boundary is [] (unrestricted, encoding.md E.7) "
+            "under a parent restricted to 'data.acme'.",
+            {"scope": ["data.acme"], "caps": ["read"]},
+            {"scope": [], "caps": ["read"]},
+            "data.acme.orders",
+        ),
+    ]
+    for i, (name, description, parent_kw, child_kw, action) in enumerate(attenuation_cases):
+        parent_id, child_id = vid(14 + 2 * i), vid(15 + 2 * i)
+        parent = kernel_sign(agent_id=parent_id, parent_vaid=None, **parent_kw)
+        child = kernel_sign(agent_id=child_id, parent_vaid=parent_id, **child_kw)
+        write_vector(name, {
+            "description": description,
+            "trust_config": trust_config,
+            "verification_time": VERIFICATION_TIME,
+            "requested_action": action,
+            "inputs": {"leaf": child, "chain": [parent]},
+            "revoked_vaid_ids": [],
+            "expected_result": "fail",
+            "expected_error_code": "not_attenuated",
+        })
+
     print(f"\nkernel public key (vectors 01-05): base64url {b64url(KERNEL_PUBLIC_KEY)}")
     print(f"  derived thumbprint: {KERNEL_KEY_THUMBPRINT}")
     print(f"untrusted public key (vector 06):  base64url {b64url(UNTRUSTED_PUBLIC_KEY)}")

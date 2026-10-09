@@ -43,8 +43,8 @@ use, not a new taxonomy:
 
 ## The test key
 
-Vectors `01` through `05` are signed by a single fixed, **test-only** Ed25519
-kernel key, generated from the 32-byte seed `bytes([0x42]) * 32` — see
+Vectors `01` through `05` and `07` through `11` are signed by a single fixed,
+**test-only** Ed25519 kernel key, generated from the 32-byte seed `bytes([0x42]) * 32` — see
 `generate_vectors.py`. Its raw public key, base64url-encoded (the value each
 vector's own `trust_config.trustedIssuers[0].kernelPublicKey` already
 carries, per spec §2 — a verifier derives the thumbprint from this, never
