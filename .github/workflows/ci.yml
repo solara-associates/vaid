@@ -48,14 +48,15 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      - name: Install vaid-pop + vaid-mint + vaid-langchain + test deps
+      - name: Install vaid-pop + vaid-mint + vaid-langchain + vaid-jwt-bridge + test deps
         run: |
           python -m pip install --upgrade pip
           python -m pip install "./python/vaid-pop[test]"
           python -m pip install "./python/vaid-mint[test]"
           python -m pip install "./python/vaid-langchain[test]"
-      - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain)
-        run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain
+          python -m pip install "./python/vaid-jwt-bridge[test,service]"
+      - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain + vaid-jwt-bridge)
+        run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain python/vaid-jwt-bridge
 
   typescript:
     name: TypeScript conformance (node --test)

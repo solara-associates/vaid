@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaid-jwt-bridge"
+version = "0.1.0"
+description = "Token bridge for the VAID standard: verify a full VAID delegation chain and, only on a full pass, exchange it for a short-lived standard JWT (EdDSA or ES256) a gateway can verify against a published JWKS, per docs/jwt/v1/profile.md."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    # Two entries by design: PEP 621 routes any entry that has an email
+    # entirely into Author-email, leaving the core Author field empty (PyPI
+    # then renders "Author: None"). The name-only entry populates Author;
+    # the second preserves the existing Author-email verbatim.
+    { name = "solara.associates" },
+    { name = "solara.associates", email = "info@solara.associates" },
+]
+keywords = ["vaid", "jwt", "oauth", "token-exchange", "rfc8693", "jwks", "agent-identity"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# vaid-mint = the chain/signature/revocation primitives `exchange()` verifies
+# against; this package reimplements none of them (docs/jwt/v1/profile.md S2).
+# jwcrypto = JWK/JWS/JWT construction for the issued side (signing + the served
+# JWKS) — see README for why, over PyJWT, for the PRODUCER role specifically.
+# rfc8785 = JCS canonicalization for `chain_sha256` (matches how vaid_mint
+# itself canonicalizes a VAID document, so the digest is reproducible by a
+# third party using the same library).
+dependencies = [
+    "vaid-mint>=0.9.0",
+    "jwcrypto>=1.5",
+    "rfc8785>=0.1.2",
+]
+
+[project.optional-dependencies]
+# The minimal HTTP service (vaid_jwt_bridge.service) is optional: the library
+# (vaid_jwt_bridge.exchange) has no web-framework dependency at all, so a
+# caller embedding exchange() in their own service pulls in nothing extra.
+service = [
+    "starlette>=0.37",
+    "uvicorn>=0.29",
+]
+test = [
+    "pytest>=8.0",
+    "pyjwt[crypto]>=2.8",
+    "starlette>=0.37",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/solara-associates/vaid"
+Repository = "https://github.com/solara-associates/vaid"
+Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-jwt-bridge"
+Issues = "https://github.com/solara-associates/vaid/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vaid_jwt_bridge"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vaid_jwt_bridge", "tests", "examples", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
