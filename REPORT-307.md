@@ -182,3 +182,221 @@ exists for this package to run locally beyond the pytest suite above.
 - No push, branch, issue, or PR anywhere other than this private fork.
 - No em-dashes introduced in `docs/a2a/v1/extension.md`'s new text,
   `python/vaid-a2a/CHANGELOG.md`, or this report.
+
+## Follow-up 2
+
+Four items of reviewer feedback from Tymofii Pidlisnyi on PR #1, all
+addressed on `fix/trust-domain-binding`. None of A, B, C or D was already
+in place on the branch before this follow-up: checked each against the
+branch at `adb434d` (the commit "docs: add session 307 report") before
+writing anything, and none raised a config error for a duplicate key or a
+missing `trustDomain`, section 5 step 3 did not mention `ISSUER_MISMATCH`,
+the check order was not documented, and the README's main example still
+used `assume_nothing_revoked()`. All four required new work; none skipped.
+
+### A. Duplicate key / missing trustDomain configuration errors
+
+`_build_key_resolver` (`python/vaid-a2a/vaid_a2a/verifier.py`) now raises a
+new `TrustedIssuersConfigError` (exported from `vaid_a2a`) for either shape,
+instead of silently skipping the entry or letting a later duplicate's domain
+win:
+
+- An entry with a parseable `kernelPublicKey` but no `trustDomain` raises,
+  naming the key.
+- The same kernel public key listed more than once (any domains, equal or
+  different) raises, naming the key's derived thumbprint and every trust
+  domain it was listed under.
+
+Moved the call to `_build_key_resolver` to the top of `verify_a2a_message`,
+before any metadata-shaped early return, so a malformed `trust_config`
+always raises, whether or not the particular message being checked happens
+to carry a VAID. (Without this move, a config error would have gone
+unnoticed on any request with no VAID present, since the function returned
+before ever building the key resolver.)
+
+Spec section 2 gained a new "§2.1 `trustedIssuers` validity" subsection
+stating both rules normatively. Exact wording:
+
+> Each `trustedIssuers` entry pairs exactly one kernel key with exactly one
+> trust domain. A conforming implementation MUST reject the following
+> shapes as a configuration error, at the point this list is loaded, rather
+> than accept a narrowed or best-guess reading of it:
+>
+> - **An entry with no `trustDomain`.** A kernel key with no trust domain
+>   attached binds to nothing, so accepting it would leave every document's
+>   claimed `trust_domain` effectively unchecked for that key. Entries
+>   without `trustDomain` are not accepted.
+> - **The same kernel public key listed more than once.** Whichever
+>   `trustDomain` a lookup happened to resolve to last would otherwise
+>   decide, silently, which domain that key is actually trusted for. The
+>   error MUST name the key (its derived thumbprint) and every trust domain
+>   it was listed under, so the operator can see the conflict directly
+>   rather than re-deriving it from the raw configuration.
+>
+> These two rules apply before anything in section 5 runs: a `trustedIssuers`
+> list that violates either one is a defect in the agent's own
+> configuration, not a property of any particular incoming request.
+
+CHANGELOG line (`python/vaid-a2a/CHANGELOG.md`):
+
+> `trust_config.trustedIssuers` entries without `trustDomain` are no longer
+> accepted. Building the key resolver now raises
+> `vaid_a2a.TrustedIssuersConfigError` for an entry missing `trustDomain`,
+> and for the same kernel public key listed more than once (naming the
+> key's thumbprint and every domain it was listed under), instead of
+> silently skipping the entry or letting the last-seen domain win.
+
+Tests: `test_duplicate_key_across_trust_domains_raises` (asserts the
+thumbprint and both domains appear in the message),
+`test_entry_missing_trust_domain_raises`.
+
+### B. Spec section 5 step 3: explicit binding, ISSUER_MISMATCH in its list
+
+Step 1 ("Signature") now states the leaf's own binding check explicitly and
+names `ISSUER_MISMATCH` as its outcome. Step 3 ("Chain integrity") now states
+the same rule for every presented chain document and names `ISSUER_MISMATCH`
+there too, rather than leaving it implied only by step 1's list. Exact new
+wording for step 1 and step 3 (`docs/a2a/v1/extension.md` section 5):
+
+> 1. **Signature.** First, the leaf VAID's own binding: its claimed
+>    `trust_domain` MUST equal the trust domain that its
+>    `kernel_key_thumbprint` is bound to under §2's `trustedIssuers` (never
+>    the other way round, since a key is trusted for the domain
+>    `trustedIssuers` pairs it with, not for any domain a document cares to
+>    claim). A thumbprint resolving to no entry, or resolving to an entry
+>    bound to a different domain, is `ISSUER_MISMATCH`. Only once that
+>    binding holds does the leaf VAID's Ed25519 kernel signature get
+>    checked, against the key that same thumbprint resolved to. Equivalent
+>    to `vaid_mint.verify.verify_vaid_authenticity_graded`. Any
+>    `UNPARSEABLE`, `UNSUPPORTED_SIG_VERSION`, `MALFORMED_TRUST_DOMAIN`,
+>    `ISSUER_MISMATCH`, `LINEAGE_INCONSISTENT` or `INAUTHENTIC` result fails
+>    the request; see §6 for the specific error returned. This step is
+>    scoped to the leaf alone: it MUST reach its own verdict (`INAUTHENTIC`
+>    or otherwise) without being affected by any defect in a chain document
+>    considered under step 3.
+> 2. **Expiry / TTL.** [unchanged]
+> 3. **Chain integrity back to a trusted root.** For each document presented
+>    in `/vaidChain`, its own binding is checked first, the same rule as
+>    step 1: its claimed `trust_domain` MUST equal the trust domain its own
+>    `kernel_key_thumbprint` is bound to under `trustedIssuers`. A document
+>    whose thumbprint resolves to a different bound domain is
+>    `ISSUER_MISMATCH`, the same code step 1 uses for the leaf's own binding
+>    failure, applied here to a chain document instead. Only then does
+>    chain integrity proceed: every ancestor named by a signed `parent_vaid`
+>    is present in `/vaidChain`, every document in the chain is itself
+>    authentic under a trusted key, and no ancestor has passed its own
+>    `expires_at` at the verification instant. Equivalent to
+>    `vaid_mint.chain.verify_chain_at` through the point where it would
+>    return `INAUTHENTIC`, `UNVERIFIABLE` or `EXPIRED`.
+
+### C. Deterministic check order
+
+Confirmed the reviewer's report against the code at `adb434d`: the binding
+check ran as a single loop over `(leaf, *chain_raw)` before step 1's
+signature check, so a leaf with a bad signature returned `ISSUER_MISMATCH`
+(from a wrong-domain chain document) rather than `INAUTHENTIC`, whenever
+such a chain document happened to be presented alongside it. The order was
+incoherent: the leaf's own result should not depend on an unrelated
+document elsewhere in the request.
+
+Changed code and spec together, per the task's instruction for an
+incoherent order:
+
+- The leaf's own trust-domain binding check moved into step 1, immediately
+  before (not instead of) the leaf's signature check, so step 1 reaches a
+  verdict on the leaf alone before anything about `/vaidChain` is examined.
+- The per-document trust-domain binding check for `/vaidChain` moved into
+  step 3, running only after the leaf has cleared steps 1-2, and scoped to
+  `chain_raw` only (not the leaf, already settled).
+
+Net effect: a bad leaf signature is always `INAUTHENTIC`, regardless of
+what else is presented in `/vaidChain`; a wrong-domain chain document is
+`ISSUER_MISMATCH` only once the leaf itself has already passed. Spec
+section 5 states this ordering explicitly in a new paragraph under step 3
+("The order is deterministic, and this is why it matters in practice"),
+quoted in full in section B above (step 3's trailing paragraph).
+
+Regression test: `test_bad_leaf_signature_wins_over_a_wrong_domain_chain_document`.
+A leaf whose signature does not verify against its own correctly-bound key
+(signed by the wrong of two trusted keys), presented alongside a standalone
+chain document that is independently misbound to the wrong domain. Asserts
+`VerifyCode.INAUTHENTIC`, pinned to the documented order, never
+`ISSUER_MISMATCH`.
+
+### D. README revocation
+
+Removed `InMemoryRevocationList.assume_nothing_revoked()` from the README's
+main `## Use` example. It now passes the default, never-populated
+`InMemoryRevocationList()`, which is `UNAVAILABLE` by design and denies
+every request `indeterminate`, including a fully valid one, until the
+caller configures a real `vaid_mint.revocation.RevocationCheck`. Added a
+paragraph stating this plainly directly under the example, and a new
+"Configuring real revocation" subsection showing a minimal
+`RevocationCheck` implementation (a `check_lineage` method that queries a
+caller's own store and returns `UNAVAILABLE` on any error, never
+`NOT_REVOKED`).
+
+`assume_nothing_revoked()` is kept in a new subsection titled "Local demo
+only, never production", with a `# LOCAL DEMO ONLY, NEVER PRODUCTION.`
+comment on the snippet itself.
+
+Renamed and split the README example test to match: `test_readme_example_allows`
+(which asserted the old, now-removed example's behaviour) became
+`test_readme_main_example_denies_as_indeterminate` (runs the main example as
+written, asserts `VerifyCode.INDETERMINATE`, `allowed is False`) and
+`test_readme_local_demo_example_allows` (runs the local-demo snippet,
+asserts `VerifyCode.ALLOWED`, `allowed is True`), so the test suite now
+follows the main example's actual, intentionally-closed behaviour, not the
+behaviour it had before this follow-up.
+
+### Tests
+
+Full local run, four packages (same command as the first session 307
+report; `langchain-core` installed as an optional dependency, same
+pre-existing caveat noted there):
+
+```
+PYTHONPATH=.../vaid-pop:.../vaid-mint:.../vaid-a2a:.../vaid-langchain \
+  python3 -m pytest python/vaid-pop python/vaid-mint python/vaid-a2a python/vaid-langchain
+230 passed
+```
+
+(229 after the first session 307 report's 226 plus the 5 new/changed
+`vaid-a2a` tests for this follow-up: A adds 2, B adds 0 new tests of its
+own (covered by C's regression test and A/existing tests), C adds 1, D
+replaces 1 test with 2, net +4 over the 226 baseline, 230 total.)
+
+No file under `docs/a2a/v1/vectors/` was read or modified. No change to
+`vaid_mint` core in any language. `test_vectors.py` still passes unchanged.
+
+### Decisions made on Allan's behalf
+
+- Duplicate-key detection treats ANY repeat of the same kernel public key as
+  an error, including a hypothetical repeat under the *same* domain, not
+  only a repeat across two different domains. The task's title ("Duplicate
+  key across trust domains") names the exploitable case, but the stated
+  mechanism ("the same kernel public key appears more than once") does not
+  itself require the domains to differ, and a benign-looking duplicate
+  entry is still a configuration mistake worth surfacing rather than
+  silently accepting.
+- Moved `_build_key_resolver`'s call to the top of `verify_a2a_message`
+  (before the metadata-shaped early returns) so that a malformed
+  `trust_config` always raises. This was necessary for finding A's own
+  tests to pass: calling `verify_a2a_message` with `{"metadata": {}}` (no
+  VAID present) previously returned early, before the key resolver was
+  ever built, so a bad `trust_config` would have gone unnoticed on exactly
+  that kind of request. Not explicitly requested, but required to make the
+  stated behaviour ("raise a clear configuration error when trustedIssuers
+  is loaded") actually hold for every call, not only calls that also
+  happen to carry a VAID.
+
+### Ground rules re-confirmed
+
+- Private fork only; no release, no publish, no tag.
+- No change under `docs/a2a/v1/vectors/`.
+- No `vaid_mint` core change, in any language.
+- No em-dashes introduced in this follow-up's new text in
+  `docs/a2a/v1/extension.md`, `python/vaid-a2a/CHANGELOG.md`, or this report
+  (also swept and cleaned from the new text added to `verifier.py` and
+  `tests/test_verifier.py` in this follow-up, as a precaution beyond what
+  was strictly asked).
