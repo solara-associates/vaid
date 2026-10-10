@@ -19,6 +19,22 @@ Passport System):
   key was checked, so a key trusted for one issuer's domain could vouch for a
   document claiming a different trusted issuer's domain. Denied as
   `issuer_mismatch`, the existing code for an untrusted issuer.
+- `trust_config.trustedIssuers` entries without `trustDomain` are no longer
+  accepted. Building the key resolver now raises
+  `vaid_a2a.TrustedIssuersConfigError` for an entry missing `trustDomain`, and
+  for the same kernel public key listed more than once (naming the key's
+  thumbprint and every domain it was listed under), instead of silently
+  skipping the entry or letting the last-seen domain win.
+- The exact order of checks in `verify_a2a_message` is now specified
+  (`docs/a2a/v1/extension.md` section 5): the leaf's own trust-domain binding
+  is checked as part of step 1, before its signature; each presented chain
+  document's trust-domain binding is checked as part of step 3, after the
+  leaf has cleared steps 1-2. Previously the binding check ran over the leaf
+  and every chain document in one pass, before the leaf's own signature was
+  checked, so a leaf with an invalid signature could be denied
+  `issuer_mismatch` instead of `inauthentic` whenever an unrelated,
+  independently misbound chain document was also present. Both verifier and
+  spec now agree, and a regression test pins the mixed case.
 - `requested_action` is now a required keyword argument with no default.
   Skipping the requested-action scope check is still possible by passing
   `requested_action=None` explicitly, but it can no longer happen because a
@@ -27,10 +43,14 @@ Passport System):
   agent to check only the leaf and skip chain verification for a request.
   Every step applies to every request; a chain that is missing where one is
   required is denied.
-- The README's example now uses `InMemoryRevocationList.assume_nothing_revoked()`
-  and explains why the plain, never-populated constructor denied every
-  request, so a reader copying the example gets a working starting point
-  rather than one that fails closed on everything.
+- The README's main example no longer uses
+  `InMemoryRevocationList.assume_nothing_revoked()`. It now uses the default,
+  never-populated `InMemoryRevocationList()`, which denies every request as
+  `indeterminate` until the caller configures a real
+  `vaid_mint.revocation.RevocationCheck`, so the copy-paste path stays
+  closed, and the README says so plainly instead of silently assuming nothing
+  is revoked. `assume_nothing_revoked()` remains, clearly labelled
+  "local demo only, never production", in a separate example further down.
 
 ## [0.1.0]
 

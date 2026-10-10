@@ -175,6 +175,14 @@ class _TrustedIssuerMap:
         return entry.trust_domain if entry else None
 
 
+class TrustedIssuersConfigError(ValueError):
+    """``trust_config.trustedIssuers`` itself is malformed in a way spec §2
+    forbids outright, rather than in a way that merely resolves to no
+    trusted key. Raised by :func:`_build_key_resolver`, never swallowed:
+    an operator who misconfigures this list needs to find out at startup,
+    not have it silently narrowed to "the entries we could make sense of"."""
+
+
 def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
     """Build a :class:`_TrustedIssuerMap` from an ``AgentCard`` extension
     entry's ``params`` shape — ``{"trustedIssuers": [{"trustDomain": ...,
@@ -182,26 +190,53 @@ def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
 
     Every key is filed under the thumbprint it itself derives to, never from
     a caller-supplied thumbprint — a ``trustedIssuers`` entry with no
-    parseable ``kernelPublicKey`` or ``trustDomain`` is skipped rather than
-    trusted on the strength of its other fields, since a thumbprint or trust
-    domain alone is not key material (spec §2's ``trustedIssuers`` row).
+    parseable ``kernelPublicKey`` is skipped rather than trusted on the
+    strength of its other fields, since a thumbprint alone is not key
+    material (spec §2's ``trustedIssuers`` row).
+
+    Two shapes are configuration errors, not entries to skip
+    (:class:`TrustedIssuersConfigError`, spec §2):
+
+    - An entry with a parseable ``kernelPublicKey`` but no ``trustDomain``:
+      a key with no domain it is trusted for binds to nothing, so accepting
+      it silently would make every document's claimed ``trust_domain``
+      effectively unchecked for that key.
+    - The same kernel public key listed more than once: whichever domain a
+      lookup happens to land on last at build time would otherwise decide,
+      silently, which domain that key is actually trusted for.
     """
     issuers = trust_config.get("trustedIssuers") or []
     entries: dict[str, _TrustedIssuer] = {}
+    domains_by_thumbprint: dict[str, list[str]] = {}
     for entry in issuers:
         if not isinstance(entry, dict):
             continue
         raw = entry.get("kernelPublicKey")
-        domain = entry.get("trustDomain")
-        if not isinstance(raw, str) or not isinstance(domain, str):
+        if not isinstance(raw, str):
             continue
         try:
             key_bytes = _b64url_decode(raw)
         except (binascii.Error, ValueError):
             continue
-        entries[kernel_key_thumbprint(key_bytes)] = _TrustedIssuer(
-            public_key=key_bytes, trust_domain=domain
-        )
+        domain = entry.get("trustDomain")
+        if not isinstance(domain, str):
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry for kernel public key "
+                f"{raw!r} has no trustDomain, every entry must name the "
+                "domain its key is trusted for (spec §2)"
+            )
+        thumbprint = kernel_key_thumbprint(key_bytes)
+        domains_by_thumbprint.setdefault(thumbprint, []).append(domain)
+        entries[thumbprint] = _TrustedIssuer(public_key=key_bytes, trust_domain=domain)
+
+    for thumbprint, domains in domains_by_thumbprint.items():
+        if len(domains) > 1:
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers lists kernel key thumbprint "
+                f"{thumbprint!r} more than once, for domains {domains!r}, "
+                "a key must be trusted for exactly one trust_domain, never "
+                "whichever domain the last entry happened to list"
+            )
     return _TrustedIssuerMap(entries)
 
 
@@ -248,6 +283,15 @@ def verify_a2a_message(
     raise convention.
     """
     now = now or datetime.now(timezone.utc)
+
+    # Built first, before any metadata-shaped early return below, so a
+    # malformed trust_config (spec §2: duplicate key across trust domains,
+    # or an entry missing trustDomain) always raises
+    # TrustedIssuersConfigError, independent of whether this particular
+    # message happens to carry a VAID at all. A config mistake is a defect
+    # in the caller's configuration, not a property of any one request.
+    keys = _build_key_resolver(trust_config)
+
     metadata = message.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
@@ -285,50 +329,43 @@ def verify_a2a_message(
             "VAID document objects",
         )
 
-    keys = _build_key_resolver(trust_config)
-
-    # ── Trust-domain binding, over the LEAF and every presented chain
-    # document (spec §2's trustedIssuers row pairs a trust domain with a
-    # key; §5 step 1 requires "a kernel public key this agent trusts for the
-    # claimed trust_domain") ──
+    # ── Step 1: signature / authenticity of the LEAF, including the LEAF's
+    # own trust-domain binding ──
     #
-    # A key accepted under trust_config.trustedIssuers is accepted FOR THE
-    # DOMAIN trustedIssuers pairs it with, not for any domain a document
-    # cares to claim. Checked before any document is allowed to influence
-    # authenticity or chain assembly, and over every hop — not only the
-    # leaf — because the same misbinding is exploitable anywhere a document
-    # names a trusted key's thumbprint while claiming a trust_domain that
-    # key is not configured for.
-    for doc in (leaf, *chain_raw):
-        doc_thumbprint = doc.get("kernel_key_thumbprint")
-        if not isinstance(doc_thumbprint, str):
-            continue
-        bound_domain = keys.trust_domain_for(doc_thumbprint)
-        if bound_domain is not None and bound_domain != doc.get("trust_domain"):
-            return _deny(
-                VerifyCode.ISSUER_MISMATCH,
-                f"document {doc.get('vaid_id')!r} claims trust_domain "
-                f"{doc.get('trust_domain')!r}, but kernel key thumbprint "
-                f"{doc_thumbprint!r} is trusted under trust_config.trustedIssuers "
-                f"only for {bound_domain!r} — a key is trusted for the domain "
-                "it is paired with, not for any domain a document claims",
-            )
-
-    # ── Step 1: signature / authenticity of the LEAF ──
-    #
-    # Resolved and checked ahead of verify_chain_at so an unrecognised issuer
-    # (ISSUER_MISMATCH) is distinguishable from a recognised issuer whose
+    # The binding check (spec §2's trustedIssuers row pairs a trust domain
+    # with a key; §5 step 1 requires "a kernel public key this agent trusts
+    # for the claimed trust_domain") runs first, ahead of the signature
+    # check, so an unrecognised issuer or a misbound domain (ISSUER_MISMATCH)
+    # is distinguishable from a recognised, correctly-bound issuer whose
     # signature does not verify (INAUTHENTIC) — chain.py's own key-resolution
     # closure collapses both into INAUTHENTIC, which is correct for a chain
     # hop but loses a distinction §5's audit-trail note asks the extension to
     # keep for the leaf.
+    #
+    # Deliberately scoped to the LEAF alone: this check must run, and fail
+    # on the leaf's own defects, before anything about the presented chain
+    # is examined. A misbound ancestor is a step 3 concern (below); folding
+    # it in here would make the leaf's own INAUTHENTIC/ISSUER_MISMATCH
+    # outcome depend on what else happens to be present in /vaidChain, which
+    # is the exact nondeterminism this ordering exists to remove (spec §5,
+    # "the order is load-bearing").
     thumbprint = leaf.get("kernel_key_thumbprint")
     key = keys.resolve_key(thumbprint) if isinstance(thumbprint, str) else None
     if key is None:
         return _deny(
             VerifyCode.ISSUER_MISMATCH,
-            f"no trusted kernel key for thumbprint {thumbprint!r} — this issuer "
+            f"no trusted kernel key for thumbprint {thumbprint!r}, this issuer "
             "is not in trust_config.trustedIssuers",
+        )
+    bound_domain = keys.trust_domain_for(thumbprint)
+    if bound_domain != leaf.get("trust_domain"):
+        return _deny(
+            VerifyCode.ISSUER_MISMATCH,
+            f"leaf claims trust_domain {leaf.get('trust_domain')!r}, but kernel "
+            f"key thumbprint {thumbprint!r} is trusted under "
+            f"trust_config.trustedIssuers only for {bound_domain!r}: a key is "
+            "trusted for the domain it is paired with, not for any domain a "
+            "document claims",
         )
     authenticity = verify_vaid_authenticity_graded(key, leaf)
     if authenticity is not VaidVerdict.VALID:
@@ -346,6 +383,28 @@ def verify_a2a_message(
 
     # ── Steps 3 and 4: chain integrity back to a trusted root, and per-hop
     # attenuation (scope, capabilities, tenant, expiry) ──
+    #
+    # Each presented chain document's own trust-domain binding is checked
+    # first, over /vaidChain only (the leaf was already settled in step 1),
+    # and only once the leaf itself has cleared steps 1-2, so a bad leaf
+    # signature is always INAUTHENTIC on its own, never pre-empted by an
+    # unrelated wrong-domain ancestor elsewhere in the presented chain (spec
+    # §5 step 3 states this ordering explicitly).
+    for doc in chain_raw:
+        doc_thumbprint = doc.get("kernel_key_thumbprint")
+        if not isinstance(doc_thumbprint, str):
+            continue
+        doc_bound_domain = keys.trust_domain_for(doc_thumbprint)
+        if doc_bound_domain is not None and doc_bound_domain != doc.get("trust_domain"):
+            return _deny(
+                VerifyCode.ISSUER_MISMATCH,
+                f"document {doc.get('vaid_id')!r} claims trust_domain "
+                f"{doc.get('trust_domain')!r}, but kernel key thumbprint "
+                f"{doc_thumbprint!r} is trusted under trust_config.trustedIssuers "
+                f"only for {doc_bound_domain!r}: a key is trusted for the domain "
+                "it is paired with, not for any domain a document claims",
+            )
+
     bundle = PresentedBundle(chain_raw)
     chain_verdict = verify_chain_at(keys, leaf, bundle, AttestationBundle(), now)
     if chain_verdict is not ChainVerification.ATTENUATED:

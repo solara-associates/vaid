@@ -10,7 +10,13 @@ from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vaid_a2a import METADATA_CHAIN_KEY, METADATA_VAID_KEY, VerifyCode, verify_a2a_message
+from vaid_a2a import (
+    METADATA_CHAIN_KEY,
+    METADATA_VAID_KEY,
+    TrustedIssuersConfigError,
+    VerifyCode,
+    verify_a2a_message,
+)
 from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
@@ -322,11 +328,31 @@ def test_cross_key_hop_claiming_the_parents_domain_is_denied() -> None:
 # ── GHSA-hfjh-v2x2-r58v finding 4: the README example must actually allow ──
 
 
-def test_readme_example_allows() -> None:
-    """The README's `## Use` snippet, run for real. Before the fix it used a
-    bare ``InMemoryRevocationList()`` (never populated, therefore
-    ``UNAVAILABLE``), so the example denied every request — pinning that it
-    now allows catches a regression back to that state."""
+def test_readme_main_example_denies_as_indeterminate() -> None:
+    """The README's main `## Use` snippet, run for real. It passes a plain
+    ``InMemoryRevocationList()`` (never populated, therefore
+    ``UNAVAILABLE``), by design: a valid request is refused as
+    ``indeterminate`` until a real ``RevocationCheck`` is configured, so the
+    copy-paste path stays closed rather than silently assuming nothing is
+    revoked (GHSA-hfjh-v2x2-r58v follow-up finding D)."""
+    leaf = _leaf(str(uuid.uuid4()), ["data.acme.orders"])
+    result = verify_a2a_message(
+        {"metadata": {METADATA_VAID_KEY: leaf}},
+        trust_config=TRUST_CONFIG,
+        revocation=InMemoryRevocationList(),
+        requested_action="data.acme.orders",
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.INDETERMINATE
+
+
+def test_readme_local_demo_example_allows() -> None:
+    """The README's "Local demo only, never production" snippet, run for
+    real: with ``assume_nothing_revoked()`` the same otherwise-valid request
+    allows, confirming the labelled demo path still works for its stated
+    purpose (exercising signature/expiry/chain/scope with no revocation
+    source wired up) even though the main example above no longer uses it."""
     leaf = _leaf(str(uuid.uuid4()), ["data.acme.orders"])
     result = verify_a2a_message(
         {"metadata": {METADATA_VAID_KEY: leaf}},
@@ -337,3 +363,112 @@ def test_readme_example_allows() -> None:
     )
     assert result.allowed is True
     assert result.code is VerifyCode.ALLOWED
+
+
+# ── GHSA-hfjh-v2x2-r58v, reviewer follow-up A: trustedIssuers config errors ─
+#
+# These two shapes must raise a clear configuration error at config-build
+# time, not resolve to "no trusted key" or (worse) silently bind a key to
+# whichever domain a later duplicate entry happened to list.
+
+
+def test_duplicate_key_across_trust_domains_raises() -> None:
+    """The same kernel public key listed twice, for two different domains.
+    Must name the key (its thumbprint) and both domains in the error."""
+    bad_config = {
+        "trustedIssuers": [
+            {"trustDomain": _ISSUER_A_DOMAIN, "kernelPublicKey": _b64url(_ISSUER_A_PUBLIC)},
+            {"trustDomain": _ISSUER_B_DOMAIN, "kernelPublicKey": _b64url(_ISSUER_A_PUBLIC)},
+        ]
+    }
+    try:
+        verify_a2a_message(
+            {"metadata": {}},
+            trust_config=bad_config,
+            revocation=InMemoryRevocationList.assume_nothing_revoked(),
+            requested_action=None,
+            now=NOW,
+        )
+    except TrustedIssuersConfigError as exc:
+        message = str(exc)
+        assert _ISSUER_A_THUMBPRINT in message
+        assert _ISSUER_A_DOMAIN in message
+        assert _ISSUER_B_DOMAIN in message
+    else:
+        raise AssertionError("a duplicated kernel key across trust domains must raise")
+
+
+def test_entry_missing_trust_domain_raises() -> None:
+    """A ``trustedIssuers`` entry with a parseable key but no ``trustDomain``
+    must raise, not be silently skipped: a key with no declared domain
+    binds to nothing, which is a configuration mistake, not an absent key."""
+    bad_config = {"trustedIssuers": [{"kernelPublicKey": _b64url(_ISSUER_A_PUBLIC)}]}
+    try:
+        verify_a2a_message(
+            {"metadata": {}},
+            trust_config=bad_config,
+            revocation=InMemoryRevocationList.assume_nothing_revoked(),
+            requested_action=None,
+            now=NOW,
+        )
+    except TrustedIssuersConfigError:
+        pass
+    else:
+        raise AssertionError("a trustedIssuers entry missing trustDomain must raise")
+
+
+# ── GHSA-hfjh-v2x2-r58v, reviewer follow-up C: deterministic check order ───
+
+
+def test_bad_leaf_signature_wins_over_a_wrong_domain_chain_document() -> None:
+    """Regression for the reviewer's mixed case: a leaf with a bad signature,
+    presented alongside a chain document that is independently misbound to
+    the wrong trust_domain. The documented order (spec §5) checks the leaf's
+    own signature (step 1) before any presented chain document's binding
+    (step 3), so this must deny INAUTHENTIC, never ISSUER_MISMATCH, which
+    would mean the chain document's defect pre-empted the leaf's own."""
+    leaf_id = str(uuid.uuid4())
+    leaf_unsigned = build_unsigned_vaid_document(
+        vaid_id=leaf_id,
+        agent_id=leaf_id,
+        agent_class="test",
+        version="1.0.0",
+        tenant_id="t",
+        issued_at="2026-06-04T12:00:00Z",
+        expires_at="2999-01-01T00:00:00Z",
+        public_key_der=list(range(32)),
+        parent_vaid=None,
+        scope_boundary=["data.acme"],
+        lineage_hash=compute_lineage_hash(None, leaf_id),
+        capability_set=["read"],
+        trust_domain=_ISSUER_A_DOMAIN,
+        kernel_key_thumbprint=_ISSUER_A_THUMBPRINT,
+    )
+    # Signed by the WRONG key (B's), so the leaf's own signature does not
+    # verify against A's key, a bad signature, not a misbound domain.
+    bad_signature = _ISSUER_B_KEY.sign(canonical_vaid_signing_bytes(leaf_unsigned))
+    leaf = {**leaf_unsigned, "kernel_signature": list(bad_signature)}
+
+    # A standalone, independently misbound chain document: signed by B's
+    # key (bound to other.example) while claiming A's domain. On its own
+    # this denies ISSUER_MISMATCH (see test_root_signed_by_a_trusted_key_...
+    # above); here it is presented only to prove it does NOT pre-empt the
+    # leaf's own INAUTHENTIC result.
+    wrong_domain_doc = _signed_root(
+        _ISSUER_B_KEY, _ISSUER_B_THUMBPRINT, _ISSUER_A_DOMAIN, ["data.acme"]
+    )
+
+    result = verify_a2a_message(
+        {
+            "metadata": {
+                METADATA_VAID_KEY: leaf,
+                METADATA_CHAIN_KEY: [wrong_domain_doc],
+            }
+        },
+        trust_config=_TWO_ISSUER_TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action=None,
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.INAUTHENTIC
