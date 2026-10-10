@@ -135,6 +135,7 @@ const REGISTRY_SCOPE = [
   { registry: 'pypi',      dir: 'python/vaid-langchain', name: 'vaid-langchain' },
   { registry: 'pypi',      dir: 'python/vaid-a2a',       name: 'vaid-a2a' },
   { registry: 'pypi',      dir: 'python/vaid-adk',       name: 'vaid-adk' },
+  { registry: 'pypi',      dir: 'python/vaid-jwt-bridge', name: 'vaid-jwt-bridge' },
   {
     registry: 'pypi',
     dir: 'python/vaid-client',
