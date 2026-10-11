@@ -617,10 +617,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # `components` is named here and nowhere else in this file, and it is not
+      # cosmetic. rust-toolchain.toml requests rustfmt and clippy, so the first
+      # `cargo` invocation inside the repo makes rustup auto-install them ON TOP of
+      # the toolchain this action already placed, and that second install fails
+      # with "detected conflict: 'bin/cargo-clippy'". The other Rust jobs run a
+      # bare `cargo test` and happen not to trip it; this one runs cargo from a
+      # shell script under `set -e`, where the same failure is fatal to the whole
+      # script rather than to one step. Installing the components up front leaves
+      # rustup nothing to add.
       - name: Install Rust toolchain (pinned to rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: "1.88"
+          components: rustfmt, clippy
       - name: Set up Python
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
