@@ -417,16 +417,94 @@ def test_entry_missing_trust_domain_raises() -> None:
         raise AssertionError("a trustedIssuers entry missing trustDomain must raise")
 
 
+# ── GHSA-hfjh-v2x2-r58v, follow-up 3 item 3: loader strictness on a missing
+# or unparseable kernelPublicKey ───────────────────────────────────────────
+#
+# Before this fix, `_build_key_resolver` SKIPPED an entry with no parseable
+# `kernelPublicKey` (an empty object, a trustDomain-only entry, or a string
+# that failed base64url decoding) rather than raising. Spec §2.1 now states,
+# and the loader now enforces, that any of those shapes is a configuration
+# error, raised the same way as a missing trustDomain or a duplicate key.
+
+
+def test_entry_empty_dict_raises() -> None:
+    """``{}`` has no ``kernelPublicKey`` at all, so it must raise, not be
+    skipped."""
+    bad_config = {"trustedIssuers": [{}]}
+    try:
+        verify_a2a_message(
+            {"metadata": {}},
+            trust_config=bad_config,
+            revocation=InMemoryRevocationList.assume_nothing_revoked(),
+            requested_action=None,
+            now=NOW,
+        )
+    except TrustedIssuersConfigError:
+        pass
+    else:
+        raise AssertionError("an empty trustedIssuers entry ({}) must raise")
+
+
+def test_entry_trust_domain_only_raises() -> None:
+    """An entry naming only ``trustDomain``, with no key at all, must raise:
+    the same defect as ``{}``, just with one field present."""
+    bad_config = {"trustedIssuers": [{"trustDomain": _ISSUER_A_DOMAIN}]}
+    try:
+        verify_a2a_message(
+            {"metadata": {}},
+            trust_config=bad_config,
+            revocation=InMemoryRevocationList.assume_nothing_revoked(),
+            requested_action=None,
+            now=NOW,
+        )
+    except TrustedIssuersConfigError:
+        pass
+    else:
+        raise AssertionError("a trustDomain-only trustedIssuers entry must raise")
+
+
+def test_entry_unparseable_key_raises() -> None:
+    """A ``kernelPublicKey`` string that cannot be base64url-decoded (here,
+    one data character, a length that padding can never fix) must raise,
+    not be silently skipped as if the entry were simply absent."""
+    bad_config = {
+        "trustedIssuers": [{"trustDomain": _ISSUER_A_DOMAIN, "kernelPublicKey": "a"}]
+    }
+    try:
+        verify_a2a_message(
+            {"metadata": {}},
+            trust_config=bad_config,
+            revocation=InMemoryRevocationList.assume_nothing_revoked(),
+            requested_action=None,
+            now=NOW,
+        )
+    except TrustedIssuersConfigError:
+        pass
+    else:
+        raise AssertionError("an unparseable kernelPublicKey must raise")
+
+
+def test_valid_config_still_loads() -> None:
+    """Control for the three tests above: a well-formed two-issuer config
+    must still load without raising."""
+    result = verify_a2a_message(
+        {"metadata": {}},
+        trust_config=_TWO_ISSUER_TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action=None,
+        now=NOW,
+    )
+    assert result.allowed is True
+    assert result.code is VerifyCode.NO_VAID
+
+
 # ── GHSA-hfjh-v2x2-r58v, reviewer follow-up C: deterministic check order ───
 
 
-def test_bad_leaf_signature_wins_over_a_wrong_domain_chain_document() -> None:
-    """Regression for the reviewer's mixed case: a leaf with a bad signature,
-    presented alongside a chain document that is independently misbound to
-    the wrong trust_domain. The documented order (spec §5) checks the leaf's
-    own signature (step 1) before any presented chain document's binding
-    (step 3), so this must deny INAUTHENTIC, never ISSUER_MISMATCH, which
-    would mean the chain document's defect pre-empted the leaf's own."""
+def _bad_signature_leaf() -> dict:
+    """A leaf claiming A's domain and thumbprint, but signed by B's key: a
+    bad signature, not a misbound domain. Shared by the ordering tests
+    below, which each pair this same leaf with a different chain shape."""
     leaf_id = str(uuid.uuid4())
     leaf_unsigned = build_unsigned_vaid_document(
         vaid_id=leaf_id,
@@ -444,10 +522,18 @@ def test_bad_leaf_signature_wins_over_a_wrong_domain_chain_document() -> None:
         trust_domain=_ISSUER_A_DOMAIN,
         kernel_key_thumbprint=_ISSUER_A_THUMBPRINT,
     )
-    # Signed by the WRONG key (B's), so the leaf's own signature does not
-    # verify against A's key, a bad signature, not a misbound domain.
     bad_signature = _ISSUER_B_KEY.sign(canonical_vaid_signing_bytes(leaf_unsigned))
-    leaf = {**leaf_unsigned, "kernel_signature": list(bad_signature)}
+    return {**leaf_unsigned, "kernel_signature": list(bad_signature)}
+
+
+def test_bad_leaf_signature_wins_over_a_wrong_domain_chain_document() -> None:
+    """Regression for the reviewer's mixed case: a leaf with a bad signature,
+    presented alongside a chain document that is independently misbound to
+    the wrong trust_domain. The documented order (spec §5) checks the leaf's
+    own signature (step 1) before any presented chain document's binding
+    (step 3), so this must deny INAUTHENTIC, never ISSUER_MISMATCH, which
+    would mean the chain document's defect pre-empted the leaf's own."""
+    leaf = _bad_signature_leaf()
 
     # A standalone, independently misbound chain document: signed by B's
     # key (bound to other.example) while claiming A's domain. On its own
@@ -472,3 +558,36 @@ def test_bad_leaf_signature_wins_over_a_wrong_domain_chain_document() -> None:
     )
     assert result.allowed is False
     assert result.code is VerifyCode.INAUTHENTIC
+
+
+def test_bad_leaf_signature_with_empty_chain_is_inauthentic() -> None:
+    """Pin: a bad leaf signature denies INAUTHENTIC with an empty presented
+    chain, same as with no `/vaidChain` key at all. There being nothing
+    else to examine does not change the leaf's own verdict."""
+    leaf = _bad_signature_leaf()
+    result = verify_a2a_message(
+        {"metadata": {METADATA_VAID_KEY: leaf, METADATA_CHAIN_KEY: []}},
+        trust_config=_TWO_ISSUER_TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action=None,
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.INAUTHENTIC
+
+
+def test_bad_leaf_signature_with_unparseable_chain_is_unparseable() -> None:
+    """Pin: the same bad-signature leaf, but with a `/vaidChain` value that
+    is not a list of documents (`[null]`) is UNPARSEABLE, not INAUTHENTIC.
+    Malformed input-shape is rejected before step 1 is ever reached (spec
+    §5), so the leaf's own defect is never even examined here."""
+    leaf = _bad_signature_leaf()
+    result = verify_a2a_message(
+        {"metadata": {METADATA_VAID_KEY: leaf, METADATA_CHAIN_KEY: [None]}},
+        trust_config=_TWO_ISSUER_TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action=None,
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.UNPARSEABLE

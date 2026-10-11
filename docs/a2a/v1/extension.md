@@ -90,10 +90,17 @@ semantics, not special to VAID.
 ### 2.1 `trustedIssuers` validity
 
 Each `trustedIssuers` entry pairs exactly one kernel key with exactly one
-trust domain. A conforming implementation MUST reject the following shapes
-as a configuration error, at the point this list is loaded, rather than
-accept a narrowed or best-guess reading of it:
+trust domain. A conforming implementation's loader MUST reject every one of
+the following shapes as a configuration error, at the point this list is
+loaded, rather than accept a narrowed or best-guess reading of it:
 
+- **An entry with no parseable `kernelPublicKey`.** This covers an entry
+  with no `kernelPublicKey` field at all (`{}`), an entry that names only a
+  `trustDomain`, and an entry whose `kernelPublicKey` is present but cannot
+  be base64url-decoded. A thumbprint alone is not key material (§2's
+  `trustedIssuers` row), so there is no reading of such an entry that
+  resolves to key material the loader could actually trust: it is rejected
+  outright, never silently dropped from the list.
 - **An entry with no `trustDomain`.** A kernel key with no trust domain
   attached binds to nothing, so accepting it would leave every document's
   claimed `trust_domain` effectively unchecked for that key. Entries
@@ -105,8 +112,8 @@ accept a narrowed or best-guess reading of it:
   listed under, so the operator can see the conflict directly rather than
   re-deriving it from the raw configuration.
 
-These two rules apply before anything in section 5 runs: a `trustedIssuers`
-list that violates either one is a defect in the agent's own configuration,
+These rules apply before anything in section 5 runs: a `trustedIssuers` list
+that violates any one of them is a defect in the agent's own configuration,
 not a property of any particular incoming request.
 
 ## 3. Activation
@@ -194,6 +201,17 @@ key and, where the request requires chain verification, the documents in
 `vaid_mint.verify` and `vaid_mint.chain`: two verifiers that reach the same boolean
 by different routes can still disagree about *why*, and that disagreement is
 invisible unless the reason is named.
+
+**Input-shape validation comes first, before step 1.** Malformed input, meaning
+the `/vaid` metadata value present but not a VAID document object, or
+`/vaidChain` present but not a list of VAID document objects (a value such as
+`[null]` is such a case: a list, but not a list *of documents*), is rejected
+as `UNPARSEABLE` before step 1 is ever reached. This is not itself one of the
+numbered, ordered steps below; it is a precondition on them. The ordering
+stated for steps 1 onward governs only input that has already parsed into the
+expected shapes. It says nothing about, and makes no claim about, the relative
+order of two different malformed-shape rejections, because that question does
+not arise until parsing has already succeeded.
 
 1. **Signature.** First, the leaf VAID's own binding: its claimed
    `trust_domain` MUST equal the trust domain that its `kernel_key_thumbprint`

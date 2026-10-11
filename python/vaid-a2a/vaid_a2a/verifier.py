@@ -186,17 +186,21 @@ class TrustedIssuersConfigError(ValueError):
 def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
     """Build a :class:`_TrustedIssuerMap` from an ``AgentCard`` extension
     entry's ``params`` shape — ``{"trustedIssuers": [{"trustDomain": ...,
-    "kernelPublicKey": "<base64url>"}]}`` (spec §2).
+    "kernelPublicKey": "<base64url>"}]}`` (spec §2.1).
 
     Every key is filed under the thumbprint it itself derives to, never from
-    a caller-supplied thumbprint — a ``trustedIssuers`` entry with no
-    parseable ``kernelPublicKey`` is skipped rather than trusted on the
-    strength of its other fields, since a thumbprint alone is not key
+    a caller-supplied thumbprint, since a thumbprint alone is not key
     material (spec §2's ``trustedIssuers`` row).
 
-    Two shapes are configuration errors, not entries to skip
-    (:class:`TrustedIssuersConfigError`, spec §2):
+    Every shape below is a configuration error, raised rather than skipped
+    or narrowed to a best-guess reading (:class:`TrustedIssuersConfigError`,
+    spec §2.1):
 
+    - An entry that is not an object, or has no parseable
+      ``kernelPublicKey``: missing entirely (``{}``), present but not a
+      string, or a string that cannot be base64url-decoded. There is no
+      reading of such an entry that resolves to key material the loader
+      could actually trust.
     - An entry with a parseable ``kernelPublicKey`` but no ``trustDomain``:
       a key with no domain it is trusted for binds to nothing, so accepting
       it silently would make every document's claimed ``trust_domain``
@@ -210,20 +214,31 @@ def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
     domains_by_thumbprint: dict[str, list[str]] = {}
     for entry in issuers:
         if not isinstance(entry, dict):
-            continue
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry {entry!r} is not an "
+                "object, every entry must be {'trustDomain': ..., "
+                "'kernelPublicKey': ...} (spec §2.1)"
+            )
         raw = entry.get("kernelPublicKey")
         if not isinstance(raw, str):
-            continue
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry {entry!r} has no "
+                "parseable kernelPublicKey, every entry must name the raw "
+                "kernel public key it trusts (spec §2.1)"
+            )
         try:
             key_bytes = _b64url_decode(raw)
-        except (binascii.Error, ValueError):
-            continue
+        except (binascii.Error, ValueError) as exc:
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry for kernelPublicKey "
+                f"{raw!r} could not be base64url-decoded: {exc} (spec §2.1)"
+            ) from exc
         domain = entry.get("trustDomain")
         if not isinstance(domain, str):
             raise TrustedIssuersConfigError(
                 f"trust_config.trustedIssuers entry for kernel public key "
                 f"{raw!r} has no trustDomain, every entry must name the "
-                "domain its key is trusted for (spec §2)"
+                "domain its key is trusted for (spec §2.1)"
             )
         thumbprint = kernel_key_thumbprint(key_bytes)
         domains_by_thumbprint.setdefault(thumbprint, []).append(domain)
@@ -235,7 +250,7 @@ def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
                 f"trust_config.trustedIssuers lists kernel key thumbprint "
                 f"{thumbprint!r} more than once, for domains {domains!r}, "
                 "a key must be trusted for exactly one trust_domain, never "
-                "whichever domain the last entry happened to list"
+                "whichever domain the last entry happened to list (spec §2.1)"
             )
     return _TrustedIssuerMap(entries)
 
