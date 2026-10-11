@@ -58,9 +58,10 @@ import {
   canonicalVaidSigningBytes,
   computeLineageHash,
   isExpired,
-  VAID_SIG_VERSION_V3,
+  VAID_SIG_VERSION_V4,
   type AgentClass,
   type Vaid,
+  type ScopeBoundaryEntry,
 } from './document.js';
 import {
   assembleLineage,
@@ -89,7 +90,7 @@ export interface IssueAttributes {
   version: string;
   tenantId: TenantId;
   parentVaid: VaidId | null;
-  scopeBoundary: readonly string[];
+  scopeBoundary: readonly ScopeBoundaryEntry[];
   capabilitySet: readonly string[];
 }
 
@@ -340,7 +341,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
      * not exist here (R.4.6).
      */
     expiresAt: string;
-    scopeBoundary: readonly string[];
+    scopeBoundary: readonly ScopeBoundaryEntry[];
     capabilitySet: readonly string[];
   }): ConsentAttestation {
     const unsigned = buildUnsignedAttestation({
@@ -481,7 +482,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   }
 
   verifyVaid(vaid: Vaid): boolean {
-    if (vaid.sig_version !== VAID_SIG_VERSION_V3) return false;
+    if (vaid.sig_version !== VAID_SIG_VERSION_V4) return false;
     // TTL is enforced as a hard reject, not merely reported: an expired VAID
     // fails verification even with a valid kernel signature.
     if (isExpired(vaid)) return false;

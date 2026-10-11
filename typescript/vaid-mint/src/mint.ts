@@ -27,7 +27,10 @@ import {
   isExpired,
   isInScope,
   parseRfc3339,
+  boundaryIsEvaluable,
+  entryClaimedResource,
   scopeContains,
+  type ScopeBoundaryEntry,
   type Vaid,
 } from './document.js';
 import { IdentityError, UnauthorizedError } from './error.js';
@@ -57,8 +60,31 @@ export const MINT_POP_FRESHNESS_SECS = 300;
  * the parent. Fail closed: an empty child scope is permitted ONLY when the parent
  * is itself unrestricted (empty).
  */
-export function scopeAttenuates(parent: Vaid, childScope: readonly string[]): boolean {
+export function scopeAttenuates(
+  parent: Vaid,
+  childScope: readonly ScopeBoundaryEntry[],
+): boolean {
   return scopeAttenuatesWithin(parent.scope_boundary, childScope);
+}
+
+/**
+ * Why a child boundary does or does not attenuate its parent's.
+ *
+ * Three outcomes and not two, for the reason `verdict_v1.json` states for the
+ * standing surface: three implementations that refuse the same delegation for
+ * three different reasons agree on every boolean and disagree about what happened.
+ */
+export enum AttenuationReason {
+  /** Every entry of the child's boundary is within the parent's. */
+  Attenuated = 'attenuated',
+  /** The child names authority the parent does not hold. */
+  ScopeEscalation = 'scope_escalation',
+  /**
+   * One side carries a boundary kind this implementation cannot evaluate (spec
+   * S.10), so containment cannot be computed at all. NOT an escalation: the
+   * verifier is not saying the delegation is wider, it is saying it cannot tell.
+   */
+  UnknownScopeKind = 'unknown_scope_kind',
 }
 
 /**
@@ -70,14 +96,43 @@ export function scopeAttenuates(parent: Vaid, childScope: readonly string[]): bo
  * detached case is how the guard would be lost in one of them.
  */
 export function scopeAttenuatesWithin(
-  parentScope: readonly string[],
-  childScope: readonly string[],
+  parentScope: readonly ScopeBoundaryEntry[],
+  childScope: readonly ScopeBoundaryEntry[],
 ): boolean {
-  if (childScope.length === 0) {
-    // Child wants ⊤; allowed only if the parent is also ⊤.
-    return parentScope.length === 0;
+  return (
+    scopeAttenuationReason(parentScope, childScope) === AttenuationReason.Attenuated
+  );
+}
+
+/**
+ * THE attenuation rule. {@link scopeAttenuatesWithin} is `=== Attenuated` over
+ * this, so the bool and the reason cannot drift.
+ *
+ * **Both sides are checked for evaluability, not just the child.** An unreadable
+ * CHILD boundary cannot be shown to be within anything. An unreadable PARENT
+ * boundary bounds nothing this implementation can compute, so no child is provably
+ * within it. An implementation guarding only its input loses the second direction,
+ * and a boundary that is unreadable on BOTH sides is the case an equality
+ * short-circuit reports as attenuated while reading neither side.
+ */
+export function scopeAttenuationReason(
+  parentScope: readonly ScopeBoundaryEntry[],
+  childScope: readonly ScopeBoundaryEntry[],
+): AttenuationReason {
+  if (!boundaryIsEvaluable(parentScope) || !boundaryIsEvaluable(childScope)) {
+    return AttenuationReason.UnknownScopeKind;
   }
-  return childScope.every((s) => scopeContains(parentScope, s));
+  const attenuates =
+    childScope.length === 0
+      ? // Child wants ⊤; allowed only if the parent is also ⊤.
+        parentScope.length === 0
+      : childScope.every((entry) => {
+          const resource = entryClaimedResource(entry);
+          return resource !== null && scopeContains(parentScope, resource);
+        });
+  return attenuates
+    ? AttenuationReason.Attenuated
+    : AttenuationReason.ScopeEscalation;
 }
 
 /**
@@ -486,7 +541,7 @@ function seedAttributes(seed: VaidSeed): {
   version: string;
   tenantId: string;
   parentVaid: string | null;
-  scopeBoundary: string[];
+  scopeBoundary: ScopeBoundaryEntry[];
   capabilitySet: string[];
 } {
   return {

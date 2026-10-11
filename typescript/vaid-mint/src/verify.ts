@@ -33,7 +33,9 @@ import {
   canonicalVaidSigningBytes,
   computeLineageHash,
   isExpired,
-  VAID_SIG_VERSION_V3,
+  VAID_SIG_VERSION_V4,
+  boundaryIsEvaluable,
+  isWellFormedScopeBoundary,
   type Vaid,
 } from './document.js';
 import { RevocationStatus } from './revocation.js';
@@ -178,6 +180,22 @@ export const VaidVerdict = {
    * invites a renewal that would hand a forger a fresh document.
    */
   Expired: 'expired',
+  /**
+   * Authentic and unexpired, and its `scope_boundary` carries a boundary kind this
+   * implementation does not recognise (spec S.10, ADR-0009). Fails closed.
+   *
+   * **Not** {@link VaidVerdict.Unparseable}: the entry's shape is well formed and
+   * only its `kind` is unknown, so the document parses and its signature verifies.
+   * Collapsing the two would report an authentic, correctly signed, future-version
+   * credential as malformed bytes, which is the wrong accusation and one a holder
+   * cannot act on.
+   *
+   * This is the verdict that makes a future boundary kind an ADDITIVE change:
+   * because an old verifier refuses a kind it has never heard of, a kind that
+   * NARROWS authority cannot be silently dropped by the verifiers that most need
+   * it.
+   */
+  UnknownScopeKind: 'unknown_scope_kind',
   /** Authentic and unexpired, but some VAID in its lineage is revoked (R.4.4). */
   Revoked: 'revoked',
   /**
@@ -358,7 +376,7 @@ const REQUIRED_MEMBERS: ReadonlyArray<readonly [string, (v: unknown) => boolean]
   ['expires_at', (v) => typeof v === 'string'],
   ['public_key_der', isByteList],
   ['kernel_signature', isByteList],
-  ['scope_boundary', isStringList],
+  ['scope_boundary', isWellFormedScopeBoundary],
   ['lineage_hash', (v) => typeof v === 'string'],
   ['capability_set', isStringList],
   ['trust_domain', (v) => typeof v === 'string'],
@@ -433,7 +451,7 @@ export function verifyVaidAuthenticityGraded(
   kernelPublicKey: Uint8Array,
   vaid: Vaid,
 ): VaidVerdict {
-  if (vaid.sig_version !== VAID_SIG_VERSION_V3) return VaidVerdict.UnsupportedSigVersion;
+  if (vaid.sig_version !== VAID_SIG_VERSION_V4) return VaidVerdict.UnsupportedSigVersion;
   if (!isValidTrustDomain(vaid.trust_domain)) return VaidVerdict.MalformedTrustDomain;
   // The v3 key-commitment check: does the document's thumbprint CORRESPOND to
   // the key we were handed? Without it a caller could verify a document against a
@@ -495,6 +513,15 @@ export function verifyVaidStanding(
   const authenticity = verifyVaidAuthenticityGraded(kernelPublicKey, vaid);
   if (!isVerdictValid(authenticity)) return authenticity;
   if (isExpired(vaid)) return VaidVerdict.Expired;
+  // S.10, placed HERE deliberately. After the signature, because a content-level
+  // complaint about bytes that have not been authenticated is meaningless and the
+  // right answer there is Inauthentic. After expiry, because expiry is the cheaper
+  // and more actionable fact where both hold. Before revocation, because a
+  // credential that can never be used should not cost a lookup, and because
+  // revocation is the one input that can be unavailable. Inserting it here changes
+  // no pre-existing verdict: no document in any existing vector carries an
+  // unrecognised kind.
+  if (!boundaryIsEvaluable(vaid.scope_boundary)) return VaidVerdict.UnknownScopeKind;
   if (revocation === RevocationStatus.NotRevoked) return VaidVerdict.Valid;
   if (revocation === RevocationStatus.Revoked) return VaidVerdict.Revoked;
   return VaidVerdict.Indeterminate;

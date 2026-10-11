@@ -53,10 +53,14 @@ use vaid_mint::attestation::{
 };
 use vaid_mint::chain::{verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey};
 use vaid_mint::document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, scope_contains, Vaid, SCOPE_SEPARATORS,
+    boundary_is_evaluable, canonical_vaid_signing_bytes, compute_lineage_hash,
+    entry_claimed_resource, scope_contains, ScopeBoundaryEntry, Vaid, RECOGNISED_SCOPE_KINDS,
+    SCOPE_SEPARATORS,
 };
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
-use vaid_mint::mint::{expiry_attenuates_within, scope_attenuates_within};
+use vaid_mint::mint::{
+    expiry_attenuates_within, scope_attenuates_within, scope_attenuation_reason, AttenuationReason,
+};
 use vaid_mint::revocation::RevocationStatus;
 use vaid_mint::verify::{verify_vaid_authenticity, verify_vaid_standing_from_json, VaidVerdict};
 
@@ -466,6 +470,24 @@ fn check_attestation(v: &Value) -> Check {
     Ok(())
 }
 
+/// Parse a typed `scope_boundary` (spec S.8) out of a vector case.
+///
+/// Goes through `ScopeBoundaryEntry`'s own `Deserialize` rather than reading
+/// `kind`/`value` by hand, so the firewall exercises the SHIPPED shape gate. A
+/// hand-rolled reader here would accept entries the library refuses and report a
+/// pass for a build that cannot parse its own vector.
+fn boundary_of(v: &Value) -> Result<Vec<ScopeBoundaryEntry>, String> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| "scope_boundary is not an array".to_string())?;
+    arr.iter()
+        .map(|e| {
+            serde_json::from_value::<ScopeBoundaryEntry>(e.clone())
+                .map_err(|err| format!("scope_boundary entry {e}: {err}"))
+        })
+        .collect()
+}
+
 /// `scope_v1.json` — scope containment (spec S.3, ADR-0005).
 ///
 /// The only check here that verifies a PREDICATE rather than bytes. Containment is
@@ -488,14 +510,10 @@ fn check_scope(v: &Value) -> Check {
     let mut disagreements = 0usize;
 
     for case in cases {
-        let boundary: Vec<String> = case["boundary"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|s| s.as_str().unwrap_or_default().to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let boundary = match boundary_of(&case["boundary"]) {
+            Ok(b) => b,
+            Err(e) => return err(format!("scope case boundary is not well formed: {e}")),
+        };
         let resource = case["resource"].as_str().unwrap_or_default();
         let expected = match case["expected"].as_bool() {
             Some(b) => b,
@@ -516,7 +534,9 @@ fn check_scope(v: &Value) -> Check {
             negatives += 1;
         }
         if !boundary.is_empty() {
-            let old = boundary.iter().any(|s| resource.starts_with(s));
+            let old = boundary
+                .iter()
+                .any(|e| entry_claimed_resource(e).is_some_and(|p| resource.starts_with(p)));
             if old != expected {
                 disagreements += 1;
             }
@@ -715,22 +735,24 @@ fn check_verdict(v: &Value) -> Check {
                 (verdict.code().to_string(), verdict.is_valid())
             }
             Some("attenuation") => {
-                let scope_of = |k: &str| -> Vec<String> {
-                    case[k]
-                        .as_array()
-                        .map(|a| {
-                            a.iter()
-                                .map(|s| s.as_str().unwrap_or_default().to_string())
-                                .collect()
-                        })
-                        .unwrap_or_default()
+                let parent = match boundary_of(&case["parent_scope"]) {
+                    Ok(b) => b,
+                    Err(e) => return err(format!("attenuation case {name:?} parent: {e}")),
                 };
-                let ok =
-                    scope_attenuates_within(&scope_of("parent_scope"), &scope_of("child_scope"));
-                (
-                    if ok { "attenuated" } else { "scope_escalation" }.to_string(),
-                    ok,
-                )
+                let child = match boundary_of(&case["child_scope"]) {
+                    Ok(b) => b,
+                    Err(e) => return err(format!("attenuation case {name:?} child: {e}")),
+                };
+                let reason = scope_attenuation_reason(&parent, &child);
+                // The bool is DERIVED from the reason in the library; asserted
+                // here so a build whose two answers disagree cannot pass.
+                let ok = scope_attenuates_within(&parent, &child);
+                if ok != (reason == AttenuationReason::Attenuated) {
+                    return err(format!(
+                        "attenuation case {name:?}: the boolean and the reason disagree"
+                    ));
+                }
+                (attenuation_code(reason).to_string(), ok)
             }
             other => {
                 return err(format!(
@@ -840,6 +862,155 @@ fn check_verdict(v: &Value) -> Check {
     Ok(())
 }
 
+/// The wire string for an attenuation reason. The vocabulary
+/// `verdict_v1.json` and `scope_kinds_v1.json` are written in, and the thing
+/// three implementations must spell the same way.
+fn attenuation_code(reason: AttenuationReason) -> &'static str {
+    match reason {
+        AttenuationReason::Attenuated => "attenuated",
+        AttenuationReason::ScopeEscalation => "scope_escalation",
+        AttenuationReason::UnknownScopeKind => "unknown_scope_kind",
+    }
+}
+
+/// `scope_kinds_v1.json` — the typed boundary (spec S.8 to S.12, ADR-0009).
+///
+/// Three surfaces in one file, because they share ONE recognised-kind registry
+/// and splitting them is how the registry acquires two readers that disagree:
+/// containment over a typed boundary, attenuation over two of them, and
+/// parse-level acceptance of boundary bytes.
+///
+/// The declared `rule.kinds` is checked against [`RECOGNISED_SCOPE_KINDS`]
+/// directly, so a kind added to the code without being added to the
+/// specification fails here, and so does the reverse.
+fn check_scope_kinds(v: &Value) -> Check {
+    // The registry, both directions.
+    let declared: BTreeSet<&str> = match v["rule"]["kinds"].as_array() {
+        Some(a) => a.iter().filter_map(|k| k.as_str()).collect(),
+        None => return err("scope-kinds vector declares no `rule.kinds`"),
+    };
+    let built: BTreeSet<&str> = RECOGNISED_SCOPE_KINDS.iter().copied().collect();
+    if declared != built {
+        return err(format!(
+            "recognised scope kinds disagree: vector declares {declared:?}, this build              recognises {built:?} — a kind in one and not the other is a fail-closed              rule that fails open in whichever direction the gap runs"
+        ));
+    }
+
+    // Surface A: containment.
+    let cases = match v["containment_cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("scope-kinds vector carries no containment_cases"),
+    };
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let boundary = match boundary_of(&case["boundary"]) {
+            Ok(b) => b,
+            Err(e) => return err(format!("containment case {name:?}: {e}")),
+        };
+        let resource = case["resource"].as_str().unwrap_or_default();
+        let expected = match case["expected"].as_bool() {
+            Some(b) => b,
+            None => return err(format!("containment case {name:?} has no `expected`")),
+        };
+        let got = scope_contains(&boundary, resource);
+        if got != expected {
+            return err(format!(
+                "containment case {name:?}: expected {expected}, got {got}"
+            ));
+        }
+        // The reason must agree too, not merely the boolean.
+        let expected_reason = case["expected_reason"].as_str().unwrap_or_default();
+        let got_reason = if !boundary_is_evaluable(&boundary) {
+            "unknown_scope_kind"
+        } else if got {
+            "contained"
+        } else {
+            "not_contained"
+        };
+        if got_reason != expected_reason {
+            return err(format!(
+                "containment case {name:?}: reason {got_reason:?} != frozen                  {expected_reason:?} — a refusal and an inability to evaluate are                  different accusations and agree on every boolean"
+            ));
+        }
+    }
+
+    // Surface B: attenuation.
+    let cases = match v["attenuation_cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("scope-kinds vector carries no attenuation_cases"),
+    };
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let parent = match boundary_of(&case["parent_scope"]) {
+            Ok(b) => b,
+            Err(e) => return err(format!("attenuation case {name:?} parent: {e}")),
+        };
+        let child = match boundary_of(&case["child_scope"]) {
+            Ok(b) => b,
+            Err(e) => return err(format!("attenuation case {name:?} child: {e}")),
+        };
+        let reason = scope_attenuation_reason(&parent, &child);
+        let ok = scope_attenuates_within(&parent, &child);
+        if ok != (reason == AttenuationReason::Attenuated) {
+            return err(format!(
+                "attenuation case {name:?}: the boolean and the reason disagree"
+            ));
+        }
+        let expected_valid = case["expected_valid"].as_bool().unwrap_or(false);
+        let expected_reason = case["expected_reason"].as_str().unwrap_or_default();
+        if ok != expected_valid || attenuation_code(reason) != expected_reason {
+            return err(format!(
+                "attenuation case {name:?}: got ({ok}, {:?}), frozen                  ({expected_valid}, {expected_reason:?})",
+                attenuation_code(reason)
+            ));
+        }
+    }
+
+    // Surface C: the shape gate, over TEXT, so the malformed cases travel the
+    // same code path as the well-formed ones.
+    let cases = match v["shape_cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("scope-kinds vector carries no shape_cases"),
+    };
+    let mut parsed_controls = 0usize;
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let text = match case["boundary_json"].as_str() {
+            Some(t) => t,
+            None => return err(format!("shape case {name:?} has no boundary_json")),
+        };
+        // Every case's bytes are themselves well-formed JSON, so what is being
+        // exercised is the SHAPE gate and never the JSON parser.
+        let value: Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(e) => {
+                return err(format!(
+                    "shape case {name:?} is not valid JSON ({e}) — it would test the                      parser rather than the shape gate"
+                ))
+            }
+        };
+        let got_reason = match boundary_of(&value) {
+            Ok(_) => "parsed",
+            Err(_) => "unparseable",
+        };
+        let expected_reason = case["expected_reason"].as_str().unwrap_or_default();
+        if got_reason != expected_reason {
+            return err(format!(
+                "shape case {name:?}: {got_reason:?} != frozen {expected_reason:?}"
+            ));
+        }
+        if got_reason == "parsed" {
+            parsed_controls += 1;
+        }
+    }
+    if parsed_controls < 2 {
+        return err(
+            "the shape surface needs at least two positive controls, one of them an              unrecognised kind — without them, refusing every boundary passes every case",
+        );
+    }
+    Ok(())
+}
+
 /// Every vector this firewall knows how to check, by filename.
 ///
 /// The embedded set is enumerated by `build.rs`; this table says what each one
@@ -853,6 +1024,7 @@ const VECTOR_CHECKS: &[VectorCheck] = &[
     ("scope_v1.json", check_scope),
     ("roundtrip_v1.json", check_roundtrip),
     ("verdict_v1.json", check_verdict),
+    ("scope_kinds_v1.json", check_scope_kinds),
 ];
 
 /// Run every check against every embedded vector, returning `(name, digest)` pairs.
@@ -907,9 +1079,26 @@ fn run() -> Result<Vec<(String, String)>, ConformanceError> {
             value["digest_sha256_hex"]
                 .as_str()
                 .map(str::to_string)
-                .unwrap_or_else(|| match value["cases"].as_array() {
-                    Some(c) => format!("{} case(s) — predicate vector, no digest", c.len()),
-                    None => "(no digest)".to_string(),
+                .unwrap_or_else(|| {
+                    // `cases` for most predicate vectors; a vector with several
+                    // named surfaces carries none, so count across all of them
+                    // rather than print a blank for the one file whose shape is
+                    // different.
+                    let counted: usize = [
+                        "cases",
+                        "containment_cases",
+                        "attenuation_cases",
+                        "shape_cases",
+                    ]
+                    .iter()
+                    .filter_map(|k| value[*k].as_array())
+                    .map(|a| a.len())
+                    .sum();
+                    if counted > 0 {
+                        format!("{counted} case(s) — predicate vector, no digest")
+                    } else {
+                        "(no digest)".to_string()
+                    }
                 }),
         ));
     }

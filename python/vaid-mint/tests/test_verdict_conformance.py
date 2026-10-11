@@ -26,7 +26,11 @@ from importlib.resources import files
 
 import pytest
 
-from vaid_mint.mint import scope_attenuates_within
+from vaid_mint.mint import (
+    AttenuationReason,
+    scope_attenuates_within,
+    scope_attenuation_reason,
+)
 from vaid_mint.revocation import RevocationStatus
 from vaid_mint.verify import VaidVerdict, verify_vaid_standing_from_json
 
@@ -48,8 +52,15 @@ def _evaluate(case: dict) -> tuple[str, bool]:
             KERNEL_PK, case["document_json"], REVOCATION[case["revocation"]]
         )
         return verdict.code, verdict.is_valid()
+    att = scope_attenuation_reason(case["parent_scope"], case["child_scope"])
     ok = scope_attenuates_within(case["parent_scope"], case["child_scope"])
-    return ("attenuated" if ok else "scope_escalation"), ok
+    # The bool is DERIVED from the reason in the library. Asserted here so a build
+    # whose two answers disagree cannot pass: one rule with two readers is how the
+    # readers drift.
+    assert ok == (att is AttenuationReason.ATTENUATED), (
+        "the attenuation boolean and the attenuation reason disagree"
+    )
+    return att.value, ok
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])

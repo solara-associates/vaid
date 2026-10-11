@@ -26,6 +26,34 @@ import {
 import { packEnvelope, parseEnvelope } from './envelope.mjs';
 import { mintAttenuatedChild } from './delegate.mjs';
 import { Finding, Headline, loadAnchor, verifyEnvelope } from './verify-core.mjs';
+
+/**
+ * Render a `scope_boundary` for a human.
+ *
+ * Handles BOTH wire forms deliberately, and this is display rather than
+ * verification, so that is not a legacy acceptance of anything. This package
+ * installs the PUBLISHED SDK (release-map.json), so it must render a v3 bare-string
+ * boundary while that is what the registry serves and a v4 typed entry once
+ * ADR-0009 ships. Hard-coding either one prints `[object Object]` or `undefined` on
+ * the other side of that release, over a credential the user is being asked to
+ * read before sending.
+ *
+ * A `prefix` entry prints as its value, so the common case reads exactly as the
+ * bare-string form did. Any other kind prints as `kind=value`: a credential the
+ * SDK cannot evaluate must not be displayed as though it were ordinary, because
+ * `vaid verify` will refuse it as `unknown_scope_kind` and the display has to be
+ * legible enough for a reader to see why.
+ */
+function formatBoundary(boundary) {
+  if (!boundary?.length) return dim('(none)');
+  return boundary
+    .map((entry) => {
+      if (typeof entry === 'string') return entry;
+      if (entry?.kind === 'prefix' && typeof entry.value === 'string') return entry.value;
+      return `${entry?.kind ?? '?'}=${JSON.stringify(entry?.value)}`;
+    })
+    .join(', ');
+}
 import {
   b64u,
   loadIssuerSeed,
@@ -149,6 +177,12 @@ async function cmdMint(flags) {
     agentClass: String(flags.class ?? 'agent'),
     version: String(flags.version ?? '1.0.0'),
     tenantId: String(flags.tenant ?? 'local'),
+    // `--scope` is a comma-separated list of resource prefixes, which is the one
+    // boundary kind ADR-0009 S.8 defines. It is passed to the SDK in the SDK's own
+    // form, and this package installs the PUBLISHED SDK rather than this repo's
+    // sources on purpose (release-map.json), so it cannot send typed entries until
+    // the typed SDK is on the registry. See BACKLOG: this line moves to
+    // `.map(prefixEntry)` in the same change that bumps the dependency.
     scopeBoundary: list(flags.scope),
     capabilitySet: list(flags.caps),
   };
@@ -205,7 +239,7 @@ async function cmdMint(flags) {
   out();
   out(`  ${dim('id')}         ${vaid.vaid_id}`);
   out(`  ${dim('class')}      ${vaid.agent_class}  ${dim('tenant')} ${vaid.tenant_id}`);
-  out(`  ${dim('scope')}      ${vaid.scope_boundary.length ? vaid.scope_boundary.join(', ') : dim('(none)')}`);
+  out(`  ${dim('scope')}      ${formatBoundary(vaid.scope_boundary)}`);
   out(`  ${dim('caps')}       ${vaid.capability_set.length ? vaid.capability_set.join(', ') : dim('(none)')}`);
   out(`  ${dim('expires')}    ${vaid.expires_at}`);
   if (parentDoc) out(`  ${dim('parent')}     ${vaid.parent_vaid}  ${dim(`(+${chain.length} ancestor(s) presented)`)}`);

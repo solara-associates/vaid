@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import { fromHex } from 'vaid-pop';
@@ -36,7 +37,7 @@ function publicKeyAndDoc(): { publicKey: Uint8Array; vaid: Vaid } {
     version: '1.0.0',
     tenantId: 't',
     parentVaid: null,
-    scopeBoundary: ['data.x'],
+    scopeBoundary: [prefixEntry('data.x')],
     capabilitySet: ['read'],
   });
   return { publicKey: issuer.kernelPublicKey(), vaid };
@@ -54,7 +55,7 @@ test('a third party verifies with the public key only', () => {
 test('a tampered document fails', () => {
   const { publicKey, vaid } = publicKeyAndDoc();
   // Widen the scope after signing — a valid-looking document, broken signature.
-  const forged: Vaid = { ...vaid, scope_boundary: ['data.x', 'data.everything'] };
+  const forged: Vaid = { ...vaid, scope_boundary: [prefixEntry('data.x'), prefixEntry('data.everything')] };
   assert.equal(verifyVaidAuthenticity(publicKey, forged), false, 'a rewritten field must fail');
 });
 

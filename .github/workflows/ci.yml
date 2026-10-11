@@ -404,6 +404,20 @@ jobs:
           cmp \
             crates/vaid-mint/tests/vectors/scope_v1.json \
             typescript/vaid-mint/vectors/scope_v1.json
+      # The TYPED boundary (ADR-0009). Same cmp discipline, and the reason it
+      # matters here is the fail-closed rule: this vector declares the recognised
+      # KIND SET, which each implementation checks against its own registry. Three
+      # copies of that declaration are three chances for one language to be
+      # measured against a different set from the other two, and the whole point of
+      # S.10 is that the set is the same everywhere.
+      - name: Cross-language scope-kinds-vector byte-identity (cmp)
+        run: |
+          cmp \
+            crates/vaid-mint/tests/vectors/scope_kinds_v1.json \
+            python/vaid-mint/vaid_mint/vectors/scope_kinds_v1.json
+          cmp \
+            crates/vaid-mint/tests/vectors/scope_kinds_v1.json \
+            typescript/vaid-mint/vectors/scope_kinds_v1.json
       # The NEGATIVE path. Same cmp discipline, and the reason it matters here is
       # sharper than for the vectors above: this one pins REASON CODES, and three
       # copies of the case table are three chances for one language's expected
@@ -429,6 +443,8 @@ jobs:
         run: cargo test -p vaid-mint --test attestation_conformance --locked
       - name: Rust scope conformance gate (ADR-0005)
         run: cargo test -p vaid-mint --test scope_conformance --locked
+      - name: Rust typed-boundary conformance gate (ADR-0009)
+        run: cargo test -p vaid-mint --test scope_kinds_conformance --locked
       - name: Rust roundtrip conformance gate (ADR-0006)
         run: cargo test -p vaid-mint --test roundtrip_conformance --locked
       - name: Rust verdict conformance gate (negative path, graded verdicts)
@@ -446,6 +462,8 @@ jobs:
         run: python -m pytest python/vaid-mint/tests/test_attestation_conformance.py
       - name: Python scope conformance gate (ADR-0005)
         run: python -m pytest python/vaid-mint/tests/test_scope_conformance.py
+      - name: Python typed-boundary conformance gate (ADR-0009)
+        run: python -m pytest python/vaid-mint/tests/test_scope_kinds_conformance.py
       - name: Python roundtrip conformance gate (ADR-0006)
         run: python -m pytest python/vaid-mint/tests/test_roundtrip_conformance.py
       - name: Python verdict conformance gate (negative path, graded verdicts)
@@ -592,6 +610,43 @@ jobs:
       # AssuranceTier enum-string drift guard.
       - name: TypeScript completion conformance gate (packaged firewall)
         run: node typescript/vaid-pop/dist/bin/conformance.js
+
+  unknown-scope-kind-agreement:
+    name: Unknown-scope-kind verdict agreement (Rust == Python == TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install vaid-pop + vaid-mint
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python/vaid-pop"
+          python -m pip install "./python/vaid-mint"
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install TypeScript workspace
+        run: npm ci --prefix typescript
+      # Each language's own conformance test already checks its verdict against
+      # the vector, and all three agreeing WITH THE VECTOR implies they agree with
+      # each other. That implication is only as good as the three harnesses being
+      # equivalent, and S.10 is where they are least likely to be: Rust gets its
+      # boundary shape gate from serde, Python and TypeScript hand-roll theirs, and
+      # the whole point of the rule is a document that PARSES in all three and is
+      # then refused by a VERDICT. An implementation refusing it at parse returns
+      # `unparseable` where the others return `unknown_scope_kind` — two refusals,
+      # identical booleans, different reasons. This diffs the reasons directly.
+      - name: Unknown-scope-kind verdict agreement (ADR-0009 S.10)
+        run: bash scripts/unknown_scope_kind_agreement.sh
 
   capabilities:
     name: Capabilities manifest & claims-register verified

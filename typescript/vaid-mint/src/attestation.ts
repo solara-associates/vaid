@@ -76,6 +76,7 @@
  */
 
 import { canonicalize, ed25519Verify, sha256, type VaidId } from 'vaid-pop';
+import type { ScopeBoundaryEntry } from './document.js';
 
 import { isValidTrustDomain, kernelKeyThumbprint } from './issuerIdentity.js';
 import { MINT_POP_FRESHNESS_SECS } from './mint.js';
@@ -126,7 +127,7 @@ export interface ConsentAttestation {
    */
   expires_at: string;
   /** The maximum scope consented to; the child's own must be contained by it. */
-  scope_boundary: string[];
+  scope_boundary: ScopeBoundaryEntry[];
   /** The maximum capabilities consented to. */
   capability_set: string[];
   /** The attesting issuer's trust domain. MUST equal the parent document's. */
@@ -152,7 +153,7 @@ export function buildUnsignedAttestation(fields: {
   childTenantId: string;
   issuedAt: string;
   expiresAt: string;
-  scopeBoundary: readonly string[];
+  scopeBoundary: readonly ScopeBoundaryEntry[];
   capabilitySet: readonly string[];
   trustDomain: string;
   kernelKeyThumbprint: string;

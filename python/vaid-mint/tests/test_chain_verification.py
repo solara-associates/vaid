@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain
 from vaid_mint.document import (
+    prefix_entry,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
@@ -76,7 +77,7 @@ class LocalMint:
             expires_at="2999-01-01T00:00:00Z",
             public_key_der=list(range(32)),
             parent_vaid=parent_vaid,
-            scope_boundary=scope,
+            scope_boundary=[prefix_entry(s) for s in scope],
             lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
             capability_set=caps,
             # RFC 2606 reserved, matching the frozen vector's reasoning: a suite

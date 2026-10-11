@@ -19,10 +19,15 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { SCOPE_SEPARATORS, scopeContains } from '../src/document.js';
+import {
+  SCOPE_SEPARATORS,
+  entryClaimedResource,
+  scopeContains,
+  type ScopeBoundaryEntry,
+} from '../src/document.js';
 
 interface Case {
-  boundary: string[];
+  boundary: ScopeBoundaryEntry[];
   resource: string;
   expected: boolean;
   why: string;
@@ -63,7 +68,10 @@ test('the vector pins cases where bare prefix matching disagreed', () => {
   const disagreements = VECTOR.cases.filter(
     (c) =>
       c.boundary.length > 0 &&
-      c.boundary.some((s) => c.resource.startsWith(s)) !== c.expected,
+      c.boundary.some((e) => {
+        const p = entryClaimedResource(e);
+        return p !== null && c.resource.startsWith(p);
+      }) !== c.expected,
   );
   assert.ok(
     disagreements.length >= 5,

@@ -19,6 +19,7 @@ bytes match a conforming verifier by construction.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -28,6 +29,8 @@ from vaid_pop import canonical_request_signing_bytes
 from vaid_mint.audit import AuditSink
 from vaid_mint.authz import AuthorizationGate, PermitAll
 from vaid_mint.document import (
+    boundary_is_evaluable,
+    entry_claimed_resource,
     _parse_rfc3339,
     is_expired,
     caps_contain,
@@ -48,24 +51,74 @@ from vaid_mint.mint_types import (
 MINT_POP_FRESHNESS_SECS = 300
 
 
-def scope_attenuates(parent: dict, child_scope: list[str]) -> bool:
+def scope_attenuates(parent: dict, child_scope: list[dict]) -> bool:
     """Is every entry of ``child_scope`` within ``parent``'s scope? Uses only
     ``is_in_scope`` (the single matcher). Empty child scope = ⊤ is permitted only
     under an empty/⊤ parent (the escalation guard)."""
     return scope_attenuates_within(parent["scope_boundary"], child_scope)
 
 
-def scope_attenuates_within(parent_scope: list[str], child_scope: list[str]) -> bool:
+class AttenuationReason(str, Enum):
+    """Why a child boundary does or does not attenuate its parent's.
+
+    Three outcomes and not two, for the reason ``verdict_v1.json`` states for the
+    standing surface: three implementations that refuse the same delegation for
+    three different reasons agree on every boolean and disagree about what
+    happened. A refusal is also a different accusation in each case, and a caller
+    is entitled to tell them apart.
+    """
+
+    #: Every entry of the child's boundary is within the parent's.
+    ATTENUATED = "attenuated"
+    #: The child names authority the parent does not hold.
+    SCOPE_ESCALATION = "scope_escalation"
+    #: One side carries a boundary kind this implementation cannot evaluate
+    #: (spec S.10), so containment cannot be computed at all. NOT an escalation:
+    #: the verifier is not saying the delegation is wider, it is saying it cannot
+    #: tell.
+    UNKNOWN_SCOPE_KIND = "unknown_scope_kind"
+
+
+def scope_attenuates_within(parent_scope: list[dict], child_scope: list[dict]) -> bool:
     """The same predicate over a bare boundary rather than a document.
 
     A consent attestation carries a ``scope_boundary`` belonging to no document, and
     the child's authority must be contained by it under EXACTLY this rule —
     including the empty-child ⊤ guard, which is the subtle half. Reimplementing the
     rule for the detached case is how the guard would be lost in one of them.
+
+    ``== ATTENUATED`` over :func:`scope_attenuation_reason`, so the bool and the
+    reason cannot drift.
     """
+    return scope_attenuation_reason(parent_scope, child_scope) is AttenuationReason.ATTENUATED
+
+
+def scope_attenuation_reason(
+    parent_scope: list[dict], child_scope: list[dict]
+) -> AttenuationReason:
+    """THE attenuation rule. Mirror of Rust ``scope_attenuation_reason``.
+
+    **Both sides are checked for evaluability, not just the child.** An unreadable
+    CHILD boundary cannot be shown to be within anything. An unreadable PARENT
+    boundary bounds nothing this implementation can compute, so no child is
+    provably within it. An implementation guarding only its input loses the second
+    direction, and a boundary that is unreadable on BOTH sides is the case an
+    equality short-circuit reports as attenuated while reading neither side.
+    """
+    if not boundary_is_evaluable(parent_scope) or not boundary_is_evaluable(child_scope):
+        return AttenuationReason.UNKNOWN_SCOPE_KIND
     if not child_scope:
-        return not parent_scope
-    return all(scope_contains(parent_scope, s) for s in child_scope)
+        # Child wants ⊤; allowed only if the parent is also ⊤.
+        attenuates = not parent_scope
+    else:
+        attenuates = all(
+            (resource := entry_claimed_resource(e)) is not None
+            and scope_contains(parent_scope, resource)
+            for e in child_scope
+        )
+    return (
+        AttenuationReason.ATTENUATED if attenuates else AttenuationReason.SCOPE_ESCALATION
+    )
 
 
 def tenant_attenuates(parent: dict, child_trust_domain: str, child_tenant: str) -> bool:

@@ -9,6 +9,92 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [0.10.0]
+
+> **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
+> moves to `4`.** Every `scope_boundary` entry becomes a typed object rather than a
+> bare string, so the canonical bytes of every document with a non-empty boundary
+> move, and a v3 credential does not verify under a v4 verifier. Credentials carry a
+> one hour default TTL, so the in-flight population expires on its own; there is no
+> dual-acceptance path and there is deliberately none to add. Taken pre-1.0 on
+> purpose. See `docs/adr/0009-typed-extensible-scope-boundary.md` and
+> `docs/spec/scope.md` revision 2.
+
+### Changed (BREAKING)
+
+- **`scope_boundary` entries are typed.** `["orders/123/"]` becomes
+  `[{"kind": "prefix", "value": "orders/123/"}]`. `kind` names the sort of boundary
+  and `value`'s type is fixed by the kind; an entry carries no other member, and one
+  that does makes the document **unparseable** (spec S.8). This revision defines
+  exactly one kind, `prefix`, whose containment rule is ADR-0005's, unchanged: the
+  typing changes the envelope and not the rule, so the segment-bounded matcher and
+  every case in `scope_v1.json` are carried over as they were.
+- **`sig_version` moves from `3` to `4`**, and `VAID_SIG_VERSION_V3` is REMOVED
+  rather than retained, as the v2 constant was before it: every use site becomes a
+  compile error (or an import error), so none is missed. ADR-0008 makes
+  `sig_version` the discriminant for the required member set and forbids accepting
+  two values that do not require the same members, so `{3, 4}` is forbidden rather
+  than merely unwise.
+- **Three signed structures are affected**: the VAID document, `MintPopPayload` (as
+  `scopeBoundary`), and the detached consent attestation.
+- **An empty boundary is unchanged.** `[]` still means unrestricted, and a document
+  with an empty `scope_boundary` is byte-identical to its v3 self apart from
+  `sig_version`.
+
+### Added
+
+- **`unknown_scope_kind`**, a new verdict on both the standing and the attenuation
+  surface, and the point of the whole change. A verifier REFUSES a credential
+  carrying a boundary kind it does not recognise, rather than skipping the entry it
+  cannot read (spec S.10). That is what makes a future kind additive: because old
+  verifiers refuse what they have never heard of, a constraint that NARROWS
+  authority cannot be silently dropped by the verifiers that most need it, and a new
+  kind arrives as a minor version instead of a 2.0.
+  - It is **not** `unparseable`. The entry's shape is well formed and only its
+    `kind` is unknown, so the document parses and its signature verifies; reporting
+    it as malformed bytes would accuse a correctly signed future-version credential
+    of being forged.
+  - It is **not** `scope_escalation`. The verifier has formed no opinion about
+    width; it cannot read the boundary at all.
+  - An unreadable entry refuses the WHOLE boundary, even when another entry already
+    matched. "At least one matched" is the natural implementation of a union and it
+    returns true here, granting authority the signer withheld.
+  - Standing order is now parse, `sig_version`, `trust_domain`, thumbprint,
+    `lineage_hash`, signature, expiry, unknown scope kind, revocation. No
+    pre-existing case's reason changes.
+- `scope_attenuation_reason` alongside `scope_attenuates_within`, which is now
+  `== Attenuated` over it. One rule, two readers, and each language's conformance
+  gate asserts the two agree.
+- `scope_kinds_v1.json`, a new conformance vector pinning three surfaces over one
+  recognised-kind registry: containment, attenuation, and the boundary shape gate.
+  It declares the recognised KIND SET and is checked against each implementation's
+  registry in both directions.
+- `RECOGNISED_SCOPE_KINDS`, `SCOPE_KIND_PREFIX`, and the boundary-entry
+  constructors and predicates, exported from all three implementations.
+- `scripts/unknown_scope_kind_agreement.sh`, which diffs the unknown-kind verdict
+  across Rust, Python and TypeScript directly rather than inferring agreement from
+  three separate vector assertions. S.10 is where the three are least alike: Rust
+  gets its boundary shape gate from `serde`, the other two hand-roll theirs, and an
+  implementation that refused an unknown kind at PARSE would return `unparseable`
+  where the others return `unknown_scope_kind` — two refusals, identical booleans,
+  different accusations.
+- Generators for `chain_expiry_v1`, `roundtrip_v1` and `verdict_v1`, which had none.
+  Eighteen, four and thirty-two signed documents respectively could previously only
+  be re-frozen by hand, which is how a signature gets edited into agreement with
+  bytes nobody recomputed.
+- `python/vaid-mint/scripts/emit_encoding_wrong_choice_digests.py`, which recomputes
+  the `docs/spec/encoding.md` E.13 tables. E.13 says its digests are computed values
+  and that a stale row is a documentation defect; until now there was no way to
+  recompute them.
+
+### Re-frozen vectors
+
+`mint_v1`, `mint_pop_v1`, `chain_v1`, `chain_expiry_v1`, `attestation_v1` and
+`roundtrip_v1` carry new digests and signatures. `verdict_v1` and `scope_v1` are
+re-issued because their case tables were written in the old wire form; `verdict_v1`
+also gains a case carrying a real v3 credential verbatim, which a v4 verifier
+refuses as `unparseable`. `scope_kinds_v1` is new.
+
 ## [0.9.0]
 
 > **Read this before upgrading. A bare `ReferenceIssuer` no longer verifies what

@@ -34,7 +34,20 @@ pub use vaid_pop::{TenantId, VaidId};
 /// accept a v2 document. There is no dual-version acceptance — a v2 document must
 /// not verify under a v3 verifier, because accepting both would recreate the very
 /// downgrade surface that signing `sig_version` exists to close.
-pub const VAID_SIG_VERSION_V3: u8 = 3;
+///
+/// **v4 (ADR-0009).** v4 types `scope_boundary`: its entries become
+/// `{"kind": ..., "value": ...}` objects rather than bare strings. No member is
+/// added or removed, but the type of an existing member's elements changes, so
+/// the canonical bytes of every document with a non-empty boundary move.
+///
+/// The v3 constant is removed for exactly the reason the v2 one was. It is also
+/// the case that keeping both would be forbidden rather than merely unwise:
+/// ADR-0008 states that a verifier MAY accept two `sig_version` values only
+/// where they require the SAME members, and that if two accepted values do not,
+/// one is a downgrade of the other. A v3 document's boundary entries are
+/// strings; a v4 document's are objects. They do not require the same shape, so
+/// `{3, 4}` is forbidden and there is no legacy acceptance to write.
+pub const VAID_SIG_VERSION_V4: u8 = 4;
 
 /// Unique identifier for an agent instance. Not part of the PoP signing contract,
 /// so it is defined here rather than in `vaid-pop`.
@@ -274,8 +287,10 @@ pub struct Vaid {
         skip_serializing_if = "Option::is_none"
     )]
     parent_vaid: Option<Option<PresentedUuid>>,
-    /// Data domains / resource namespaces this agent may operate within.
-    scope_boundary: Vec<String>,
+    /// Data domains / resource namespaces this agent may operate within. v4
+    /// types the entries: see [`ScopeBoundaryEntry`] and `docs/spec/scope.md`
+    /// S.8.
+    scope_boundary: Vec<ScopeBoundaryEntry>,
     /// Hash of the parent VAID chain — enables delegation-tree reconstruction.
     lineage_hash: String,
     /// Explicit capability grants at spawn. No ambient authority.
@@ -323,7 +338,7 @@ impl Vaid {
         public_key_der: Vec<u8>,
         kernel_signature: Vec<u8>,
         parent_vaid: Option<VaidId>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         lineage_hash: String,
         capability_set: Vec<String>,
         trust_domain: String,
@@ -331,7 +346,7 @@ impl Vaid {
     ) -> Self {
         let vaid_id = PresentedUuid::from(*agent_id.as_uuid());
         Self {
-            sig_version: VAID_SIG_VERSION_V3,
+            sig_version: VAID_SIG_VERSION_V4,
             vaid_id,
             agent_id: PresentedUuid::from(*agent_id.as_uuid()),
             agent_class,
@@ -417,7 +432,7 @@ impl Vaid {
             .and_then(|p| p.as_ref())
             .map(|p| VaidId::from_uuid(p.uuid()))
     }
-    pub fn scope_boundary(&self) -> &[String] {
+    pub fn scope_boundary(&self) -> &[ScopeBoundaryEntry] {
         &self.scope_boundary
     }
     pub fn lineage_hash(&self) -> &str {
@@ -527,6 +542,220 @@ impl Vaid {
 /// instead of being a property of a deployment. See [`scope_contains`].
 pub const SCOPE_SEPARATORS: [char; 2] = ['/', '.'];
 
+/// The one scope-boundary kind v4 defines: today's resource-prefix semantics,
+/// unchanged from the bare-string form it replaces (spec S.3).
+pub const SCOPE_KIND_PREFIX: &str = "prefix";
+
+/// THE recognised-kind registry (spec S.7, S.10).
+///
+/// Stated once, and consulted by both the matcher ([`scope_contains`]) and the
+/// standing verdict ([`crate::verify::verify_vaid`]). Two copies of this list is
+/// how a kind gets recognised by one and not the other, which is the fail-closed
+/// rule of S.10 failing open. `scope_kinds_v1.json` declares the same list and
+/// is checked against this constant directly, so a kind added here without being
+/// added to the specification fails conformance, and so does the reverse.
+pub const RECOGNISED_SCOPE_KINDS: [&str; 1] = [SCOPE_KIND_PREFIX];
+
+/// A build that recognises no kind contains every boundary in nothing, so the
+/// registry must never be empty. Asserted at COMPILE time rather than in a test,
+/// because the registry is a constant and a runtime assertion over it is vacuous
+/// (clippy's `const_is_empty`). The Python and TypeScript twins assert the same
+/// thing in their conformance gates, which is the earliest point either of them
+/// can.
+const _: () = assert!(!RECOGNISED_SCOPE_KINDS.is_empty());
+
+/// One typed entry of a [`Vaid`]'s `scope_boundary` (spec S.8).
+///
+/// ```json
+/// { "kind": "prefix", "value": "orders/123/" }
+/// ```
+///
+/// `kind` names the sort of boundary; `value`'s JSON type is fixed by the kind.
+/// An entry carries NO other member, and `Deserialize` refuses one that does.
+///
+/// # Why `value` is a `serde_json::Value` and `kind` is a `String`
+///
+/// The obvious Rust shape is an adjacently-tagged enum
+/// (`#[serde(tag = "kind", content = "value")]`), and it is wrong here. Serde
+/// refuses an unknown variant at DESERIALIZATION, so an unrecognised kind would
+/// be a parse failure in Rust and a verdict over an authentic document in Python
+/// and TypeScript, which have no such gate. The booleans would agree and the
+/// REASONS would not, for an authentic future-version credential: precisely the
+/// cross-implementation divergence `verdict_v1.json` exists to police, and
+/// precisely the distinction S.10 draws. So the entry is parsed structurally and
+/// classified afterwards, by the same two steps in all three implementations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScopeBoundaryEntry {
+    kind: String,
+    value: serde_json::Value,
+}
+
+impl ScopeBoundaryEntry {
+    /// A `prefix` entry over `value`. The only kind v4 defines, so this is the
+    /// constructor a producer wants.
+    pub fn prefix(value: impl Into<String>) -> Self {
+        Self {
+            kind: SCOPE_KIND_PREFIX.to_string(),
+            value: serde_json::Value::String(value.into()),
+        }
+    }
+
+    /// An entry of an arbitrary kind, subject to the same validation
+    /// `Deserialize` applies, so an entry that could not have been parsed cannot
+    /// be constructed either. Public because the conformance vector's
+    /// unrecognised-kind cases are built in-process rather than parsed, and
+    /// because the matcher's refusal path must be reachable from a bare boundary
+    /// that never passed document verify.
+    pub fn new(kind: impl Into<String>, value: serde_json::Value) -> Result<Self, String> {
+        let kind = kind.into();
+        validate_scope_entry(&kind, &value)?;
+        Ok(Self { kind, value })
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub fn value(&self) -> &serde_json::Value {
+        &self.value
+    }
+}
+
+/// The in-process convenience for the only kind v4 defines: a bare string is a
+/// `prefix` entry.
+///
+/// This is NOT a wire-level fallback, and the distinction matters. `Deserialize`
+/// refuses a bare string outright (S.8), so no document can reach a verifier in
+/// the old form and be quietly reinterpreted. This conversion exists only for
+/// callers constructing a boundary in process, where `prefix` is the only kind
+/// there is to mean.
+impl From<&str> for ScopeBoundaryEntry {
+    fn from(value: &str) -> Self {
+        Self::prefix(value)
+    }
+}
+
+impl From<String> for ScopeBoundaryEntry {
+    fn from(value: String) -> Self {
+        Self::prefix(value)
+    }
+}
+
+/// Compare an entry to a bare string, meaning its `prefix` value. Lets an
+/// assertion over a boundary stay readable without spelling out an entry
+/// literal; an entry of any other kind equals no string.
+impl PartialEq<&str> for ScopeBoundaryEntry {
+    fn eq(&self, other: &&str) -> bool {
+        self.kind == SCOPE_KIND_PREFIX && self.value.as_str() == Some(*other)
+    }
+}
+
+/// The entry-shape rule of S.8, stated once and applied by both
+/// [`ScopeBoundaryEntry::new`] and `Deserialize`.
+///
+/// For a RECOGNISED kind the `value` type is fixed and checked here, so a
+/// `prefix` entry carrying a number makes the document unparseable. For an
+/// unrecognised kind the `value` is NOT inspected: this implementation does not
+/// know what type a later kind's value takes, and guessing would mean refusing
+/// an authentic future document for a reason it invented. That entry parses, and
+/// S.10 refuses it at verify instead.
+fn validate_scope_entry(kind: &str, value: &serde_json::Value) -> Result<(), String> {
+    if kind.is_empty() {
+        return Err("scope_boundary entry `kind` must be a non-empty string".to_string());
+    }
+    if kind == SCOPE_KIND_PREFIX && !value.is_string() {
+        return Err(format!(
+            "scope_boundary entry of kind `{SCOPE_KIND_PREFIX}` must carry a string `value`"
+        ));
+    }
+    Ok(())
+}
+
+impl<'de> Deserialize<'de> for ScopeBoundaryEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        /// `deny_unknown_fields` is the S.11 asymmetry with ADR-0006, in one
+        /// attribute. At DOCUMENT level an unknown member is preserved, because
+        /// it sits outside every predicate a verifier computes. Inside an entry
+        /// there is no outside: every member is part of the authority the entry
+        /// states, so a verifier that ignored `{"kind": "prefix", "value": "a",
+        /// "max": 5}` would compute a boundary strictly wider than the one the
+        /// signer committed to, and would do it silently.
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            kind: String,
+            value: serde_json::Value,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        validate_scope_entry(&raw.kind, &raw.value).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            kind: raw.kind,
+            value: raw.value,
+        })
+    }
+}
+
+/// Evaluate ONE entry against `resource`.
+///
+/// `None` means this implementation cannot evaluate the entry at all: its kind
+/// is not in [`RECOGNISED_SCOPE_KINDS`], or it is of a recognised kind whose
+/// `value` is not the type that kind fixes. This is the ONLY `match` on `kind`
+/// in the crate; adding a kind means adding an arm here and a name to the
+/// registry, and nothing else reads a kind.
+fn entry_contains(entry: &ScopeBoundaryEntry, resource: &str) -> Option<bool> {
+    match entry.kind.as_str() {
+        SCOPE_KIND_PREFIX => entry.value.as_str().map(|p| prefix_contains(p, resource)),
+        _ => None,
+    }
+}
+
+/// The resource a child entry CLAIMS, for the attenuation predicate. `None`
+/// when the entry is not one this implementation can evaluate.
+///
+/// For the `prefix` kind a boundary and a resource are the same shape, which is
+/// why attenuation has always been decidable with the containment predicate: a
+/// child entry is fed to the matcher as if it were a resource, so mint-time and
+/// verify-time cannot answer differently. A future kind whose boundary is not
+/// resource-shaped will need its own containment rule rather than this
+/// projection; `docs/spec/scope.md` S.13 records that as a constraint on the
+/// next revision.
+///
+/// This is the crate's SECOND and last `match` on `kind`.
+/// `every_registered_kind_is_one_the_matcher_can_evaluate` asserts that both it
+/// and [`entry_contains`] answer for every name in
+/// [`RECOGNISED_SCOPE_KINDS`], so a kind cannot be added to the registry and
+/// one of the two matches and not the other.
+pub fn entry_claimed_resource(entry: &ScopeBoundaryEntry) -> Option<&str> {
+    match entry.kind.as_str() {
+        SCOPE_KIND_PREFIX => entry.value.as_str(),
+        _ => None,
+    }
+}
+
+/// Can `entry` be evaluated here at all?
+///
+/// DERIVED from [`entry_contains`] rather than restated, so a kind cannot be
+/// added to one and forgotten in the other. Whether `entry_contains` returns
+/// `Some` is a property of the entry alone and never of the resource, which is
+/// what makes deriving it from a single arbitrary resource exact rather than
+/// approximate. `evaluability_does_not_depend_on_the_resource` asserts that
+/// over every boundary in the conformance vector.
+fn entry_is_evaluable(entry: &ScopeBoundaryEntry) -> bool {
+    entry_contains(entry, "").is_some()
+}
+
+/// Can every entry of `boundary` be evaluated here (spec S.10)?
+///
+/// `false` is the S.10 refusal condition, and it is a property of the boundary
+/// alone: a verifier reports it over a document rather than over a request, so
+/// the standing verdict can reach it without having a resource in hand.
+pub fn boundary_is_evaluable(boundary: &[ScopeBoundaryEntry]) -> bool {
+    boundary.iter().all(entry_is_evaluable)
+}
+
 /// Is `resource` within `boundary`? An empty boundary means unrestricted (⊤).
 ///
 /// This is THE scope matcher. [`Vaid::is_in_scope`] delegates here rather than
@@ -535,11 +764,24 @@ pub const SCOPE_SEPARATORS: [char; 2] = ['/', '.'];
 /// the same rule as a document's own. Duplicating the rule for the detached case is
 /// how the two would drift.
 ///
-/// # Containment is segment-bounded (spec S.3)
+/// # An entry this implementation cannot read refuses the WHOLE boundary (S.10)
 ///
-/// A boundary entry `P` contains a resource `R` iff `R == P`, or `P` ends with a
-/// separator and `R` starts with `P`, or `R` starts with `P` followed by a
-/// separator. **Bare prefix matching is not containment.**
+/// Not just itself. The natural implementation of a union is
+/// `boundary.iter().any(..)`, and the natural implementation returns `true` for
+/// a boundary of a satisfied `prefix` entry plus one unrecognised entry: it
+/// finds the match and never reaches the entry it cannot read. An unrecognised
+/// kind can only ever NARROW what the signer meant, so skipping it grants
+/// authority the signer withheld. The loop below therefore refuses on the first
+/// unevaluable entry even when a match is already in hand.
+///
+/// This is reachable from a bare boundary that never passed document verify, so
+/// the refusal lives here and not only in [`crate::verify::verify_vaid`].
+///
+/// # Containment is segment-bounded for the `prefix` kind (spec S.3)
+///
+/// A `prefix` entry whose `value` is `P` contains a resource `R` iff `R == P`,
+/// or `P` ends with a separator and `R` starts with `P`, or `R` starts with `P`
+/// followed by a separator. **Bare prefix matching is not containment.**
 ///
 /// Until 0.5.0 this was `R.starts_with(P)`, which made `data.governance` contain
 /// `data.governance-secret` — a *sibling*, sharing a textual prefix and nothing
@@ -549,7 +791,7 @@ pub const SCOPE_SEPARATORS: [char; 2] = ['/', '.'];
 /// parent never held, and let a verifier confirm the delegation as legitimate.
 /// The rule below is **strictly narrower**: it denies cases the old one allowed
 /// and permits nothing new, so no previously-rejected delegation becomes
-/// possible.
+/// possible. v4 typed the entries and did not touch the rule.
 ///
 /// # Why both separators, always
 ///
@@ -567,27 +809,31 @@ pub const SCOPE_SEPARATORS: [char; 2] = ['/', '.'];
 /// sibling-capture bug in the other separator. With it, `data/user.admin` is
 /// unambiguously the path `data`, `user`, `admin`, and containment is correct.
 ///
-/// The segment constraint is normative on producers but is **not enforced here**
-/// in 0.5.0; enforcement would reject documents this version accepts, which is a
-/// second breaking change. See `docs/spec/scope.md` S.6.
+/// The segment constraint is normative on producers but is **not enforced here**;
+/// enforcement would reject documents this version accepts, which is a further
+/// breaking change. See `docs/spec/scope.md` S.6.
 ///
 /// Formulated with only `==`, `starts_with`, `ends_with` and concatenation — no
 /// character indexing — so Rust (bytes), Python (code points) and TypeScript
 /// (UTF-16) cannot diverge on a multi-byte boundary.
-pub fn scope_contains(boundary: &[String], resource: &str) -> bool {
-    if boundary.is_empty() {
-        return true;
+pub fn scope_contains(boundary: &[ScopeBoundaryEntry], resource: &str) -> bool {
+    let mut contained = false;
+    for entry in boundary {
+        match entry_contains(entry, resource) {
+            // S.10: refuse the whole boundary, even with a match already found.
+            None => return false,
+            Some(true) => contained = true,
+            Some(false) => {}
+        }
     }
-    boundary
-        .iter()
-        .any(|scope| prefix_contains(scope, resource))
+    boundary.is_empty() || contained
 }
 
-/// Does a single boundary entry `prefix` contain `resource`? The one-entry core
-/// of [`scope_contains`], split out so the rule is stated exactly once.
+/// Does a single `prefix` value contain `resource`? The one-entry core of
+/// [`scope_contains`], split out so the rule is stated exactly once.
 ///
-/// An empty entry matches everything, preserving the match-all that an empty
-/// string had under prefix matching. It is unreachable from a well-formed
+/// An empty value matches everything, preserving the match-all that an empty
+/// string had under the bare-string form. It is unreachable from a well-formed
 /// boundary (an empty *list* is the way to say ⊤) and is kept only so the rule
 /// is total.
 fn prefix_contains(prefix: &str, resource: &str) -> bool {
@@ -606,7 +852,6 @@ fn prefix_contains(prefix: &str, resource: &str) -> bool {
         .iter()
         .any(|sep| resource.starts_with(&format!("{prefix}{sep}")))
 }
-
 /// Does `capabilities` hold `capability` (exact membership)? THE capability
 /// matcher; [`Vaid::has_capability`] delegates here, for the same reason.
 pub fn caps_contain(capabilities: &[String], capability: &str) -> bool {
@@ -822,7 +1067,7 @@ mod tests {
             vec![],
             vec![],
             None,
-            scope.into_iter().map(String::from).collect(),
+            scope.into_iter().map(ScopeBoundaryEntry::prefix).collect(),
             "lineage".into(),
             caps.into_iter().map(String::from).collect(),
             "vaid.example".into(),
@@ -973,5 +1218,148 @@ mod tests {
         let signed = unsigned.clone().with_kernel_signature(vec![9u8; 64]);
         let after = canonical_vaid_signing_bytes(&signed);
         assert_eq!(before, after);
+    }
+
+    // ---- v4 typed boundary entries (spec S.8, S.10, ADR-0009) ----
+
+    fn entry(json: &str) -> Result<ScopeBoundaryEntry, serde_json::Error> {
+        serde_json::from_str::<ScopeBoundaryEntry>(json)
+    }
+
+    #[test]
+    fn a_well_formed_prefix_entry_parses() {
+        let e = entry(r#"{"kind":"prefix","value":"orders/123/"}"#).expect("parses");
+        assert_eq!(e.kind(), "prefix");
+        assert_eq!(e.value().as_str(), Some("orders/123/"));
+    }
+
+    /// An unrecognised kind PARSES. It is refused at verify (S.10), not here:
+    /// collapsing the two would report an authentic, correctly signed,
+    /// future-version credential as malformed bytes.
+    #[test]
+    fn an_unrecognised_kind_parses_and_is_not_evaluable() {
+        let e = entry(r#"{"kind":"amount","value":100}"#).expect("parses");
+        assert!(!entry_is_evaluable(&e));
+        assert!(!boundary_is_evaluable(std::slice::from_ref(&e)));
+    }
+
+    #[test]
+    fn a_bare_string_entry_is_not_an_entry() {
+        assert!(entry(r#""data.governance""#).is_err());
+    }
+
+    #[test]
+    fn an_entry_missing_a_required_member_is_not_an_entry() {
+        assert!(entry(r#"{"kind":"prefix"}"#).is_err());
+        assert!(entry(r#"{"value":"a"}"#).is_err());
+    }
+
+    /// S.11: the deliberate asymmetry with ADR-0006. At document level an
+    /// unknown member is preserved; inside an entry it is refused, because a
+    /// verifier ignoring it would compute a wider boundary than was signed.
+    #[test]
+    fn an_entry_with_an_extra_member_is_not_an_entry() {
+        assert!(entry(r#"{"kind":"prefix","value":"a","max":5}"#).is_err());
+    }
+
+    #[test]
+    fn a_prefix_entry_with_a_non_string_value_is_not_an_entry() {
+        assert!(entry(r#"{"kind":"prefix","value":5}"#).is_err());
+        assert!(entry(r#"{"kind":"prefix","value":null}"#).is_err());
+    }
+
+    #[test]
+    fn an_empty_kind_is_not_an_entry() {
+        assert!(entry(r#"{"kind":"","value":"a"}"#).is_err());
+    }
+
+    /// The in-process constructor applies the same rule as `Deserialize`, so an
+    /// entry that could not have been parsed cannot be built either.
+    #[test]
+    fn the_constructor_applies_the_same_shape_rule_as_deserialize() {
+        assert!(ScopeBoundaryEntry::new("prefix", serde_json::json!(5)).is_err());
+        assert!(ScopeBoundaryEntry::new("", serde_json::json!("a")).is_err());
+        // An unrecognised kind's value is never inspected, so this is accepted
+        // here and refused at verify.
+        assert!(ScopeBoundaryEntry::new("amount", serde_json::json!(100)).is_ok());
+    }
+
+    /// THE SUBTLE ONE (S.10). `any()` over the entries finds the satisfied
+    /// prefix and never reaches the entry it cannot read, so it returns true.
+    /// An unrecognised kind can only ever NARROW what the signer meant, so an
+    /// unreadable entry must refuse the whole boundary.
+    #[test]
+    fn an_unreadable_entry_refuses_the_whole_boundary_even_when_another_matches() {
+        let boundary = vec![
+            ScopeBoundaryEntry::prefix("data.governance"),
+            ScopeBoundaryEntry::new("amount", serde_json::json!(100)).unwrap(),
+        ];
+        assert!(
+            scope_contains(
+                std::slice::from_ref(&boundary[0]),
+                "data.governance.reports"
+            ),
+            "control: the prefix entry alone does contain the resource"
+        );
+        assert!(
+            !scope_contains(&boundary, "data.governance.reports"),
+            "an entry this implementation cannot read must refuse the boundary"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_entry_alone_contains_nothing() {
+        let boundary = vec![ScopeBoundaryEntry::new("amount", serde_json::json!(100)).unwrap()];
+        assert!(!scope_contains(&boundary, "anything.at.all"));
+        assert!(!scope_contains(&boundary, ""));
+    }
+
+    /// `entry_is_evaluable` derives evaluability from `entry_contains` over one
+    /// arbitrary resource. That is exact only if Some-ness is a property of the
+    /// entry alone. Asserted rather than assumed.
+    #[test]
+    fn evaluability_does_not_depend_on_the_resource() {
+        let entries = vec![
+            ScopeBoundaryEntry::prefix(""),
+            ScopeBoundaryEntry::prefix("data.governance"),
+            ScopeBoundaryEntry::prefix("t/"),
+            ScopeBoundaryEntry::new("amount", serde_json::json!(100)).unwrap(),
+            ScopeBoundaryEntry::new("future", serde_json::json!({"a": 1})).unwrap(),
+        ];
+        let resources = ["", "data.governance", "data.governance.reports", "t/x", "z"];
+        for e in &entries {
+            let derived = entry_is_evaluable(e);
+            for r in resources {
+                assert_eq!(
+                    entry_contains(e, r).is_some(),
+                    derived,
+                    "evaluability of {:?} changed with the resource {r:?}",
+                    e.kind()
+                );
+            }
+        }
+    }
+
+    /// A kind named in the registry must be one `entry_contains` can actually
+    /// evaluate. Without this, a name could be added to the registry alone and
+    /// the matcher would refuse a kind the specification says is recognised.
+    #[test]
+    fn every_registered_kind_is_one_the_matcher_can_evaluate() {
+        for kind in RECOGNISED_SCOPE_KINDS {
+            let e = match kind {
+                SCOPE_KIND_PREFIX => ScopeBoundaryEntry::prefix("data.x"),
+                other => {
+                    panic!("registered kind {other:?} has no witness here — add one with the kind")
+                }
+            };
+            assert!(
+                entry_is_evaluable(&e),
+                "registered kind {kind:?} is not evaluable by the matcher"
+            );
+            assert!(
+                entry_claimed_resource(&e).is_some(),
+                "registered kind {kind:?} has no attenuation projection"
+            );
+        }
     }
 }

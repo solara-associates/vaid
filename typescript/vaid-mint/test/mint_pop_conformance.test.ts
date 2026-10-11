@@ -30,6 +30,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
@@ -61,7 +62,7 @@ function builtPayload() {
       version: '1.0.0',
       tenantId: 'aifactory',
       parentVaid: null,
-      scopeBoundary: ['data.aifactory'],
+      scopeBoundary: [prefixEntry('data.aifactory')],
       capabilitySet: ['read'],
       publicKeyDer: registered,
     },
@@ -149,7 +150,7 @@ test('a captured PoP is not replayable to mint a higher-privilege VAID', () => {
   const signature = fromHex(vector.ed25519.signature_hex);
   for (const escalation of [
     { capabilitySet: ['read', 'write'] },
-    { scopeBoundary: ['data.aifactory', 'data.everything'] },
+    { scopeBoundary: [prefixEntry('data.aifactory'), prefixEntry('data.everything')] },
     { tenantId: 'someone-else' },
   ]) {
     assert.equal(

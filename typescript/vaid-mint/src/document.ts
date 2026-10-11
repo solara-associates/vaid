@@ -45,7 +45,16 @@ export type { Rfc3339Utc, TenantId, VaidId } from 'vaid-pop';
  * verification. A document whose `sig_version` is not this value is rejected at
  * verify.
  */
-export const VAID_SIG_VERSION_V3 = 3;
+/**
+ * v4 (ADR-0009) types `scope_boundary`: its entries become
+ * `{"kind": ..., "value": ...}` objects rather than bare strings. The v3 constant
+ * is removed for exactly the reason the v2 one was, and keeping both would also be
+ * forbidden: ADR-0008 states a verifier MAY accept two `sig_version` values only
+ * where they require the SAME members. A v3 boundary's entries are strings; a v4
+ * boundary's are objects, so `{3, 4}` is forbidden and there is no legacy
+ * acceptance to write.
+ */
+export const VAID_SIG_VERSION_V4 = 4;
 
 /** Unique identifier for an agent instance — a UUID string. */
 export type AgentId = string;
@@ -92,7 +101,7 @@ export interface Vaid {
    */
   kernel_key_thumbprint: string;
   /** Data domains / resource namespaces this agent may operate within. */
-  scope_boundary: string[];
+  scope_boundary: ScopeBoundaryEntry[];
   /** Hash of the parent VAID chain — enables delegation-tree reconstruction. */
   lineage_hash: string;
   /** Explicit capability grants at spawn. No ambient authority. */
@@ -145,14 +154,14 @@ export function buildUnsignedVaidDocument(fields: {
   expiresAt: Rfc3339Utc;
   publicKeyDer: readonly number[];
   parentVaid: VaidId | null;
-  scopeBoundary: readonly string[];
+  scopeBoundary: readonly ScopeBoundaryEntry[];
   lineageHash: string;
   capabilitySet: readonly string[];
   trustDomain: string;
   kernelKeyThumbprint: string;
 }): Vaid {
   return {
-    sig_version: VAID_SIG_VERSION_V3,
+    sig_version: VAID_SIG_VERSION_V4,
     vaid_id: fields.vaidId,
     agent_id: fields.agentId,
     agent_class: fields.agentClass,
@@ -315,6 +324,156 @@ export function hasConformingTimestamps(vaid: Vaid): boolean {
 export const SCOPE_SEPARATORS: readonly string[] = ['/', '.'];
 
 /**
+ * The one scope-boundary kind v4 defines: today's resource-prefix semantics,
+ * unchanged from the bare-string form it replaces (spec S.3).
+ */
+export const SCOPE_KIND_PREFIX = 'prefix';
+
+/**
+ * THE recognised-kind registry (spec S.7, S.10).
+ *
+ * Stated once, and consulted by both the matcher ({@link scopeContains}) and the
+ * standing verdict ({@link verifyVaidStanding}). Two copies of this list is how a
+ * kind gets recognised by one and not the other, which is the fail-closed rule of
+ * S.10 failing open. `scope_kinds_v1.json` declares the same list and is checked
+ * against this constant directly, so a kind added here without being added to the
+ * specification fails conformance, and so does the reverse.
+ */
+export const RECOGNISED_SCOPE_KINDS: readonly string[] = [SCOPE_KIND_PREFIX];
+
+/** The members a boundary entry carries, and no others (spec S.8). */
+const ENTRY_MEMBERS: readonly string[] = ['kind', 'value'];
+
+/**
+ * One typed entry of a {@link Vaid}'s `scope_boundary` (spec S.8).
+ *
+ * ```json
+ * { "kind": "prefix", "value": "orders/123/" }
+ * ```
+ *
+ * `kind` names the sort of boundary; `value`'s JSON type is fixed by the kind. An
+ * entry carries NO other member, and the shape gate below refuses one that does.
+ */
+export interface ScopeBoundaryEntry {
+  kind: string;
+  value: unknown;
+}
+
+/** A `prefix` entry over `value`. The only kind v4 defines. */
+export function prefixEntry(value: string): ScopeBoundaryEntry {
+  return { kind: SCOPE_KIND_PREFIX, value };
+}
+
+/**
+ * Is `entry` a well-formed boundary entry (spec S.8)?
+ *
+ * An object with EXACTLY `kind` (a non-empty string) and `value`, whose type is
+ * fixed by the kind. For a RECOGNISED kind the value type is checked here, so a
+ * `prefix` entry carrying a number makes the document unparseable. For an
+ * unrecognised kind the value is NOT inspected: this implementation does not know
+ * what type a later kind's value takes, and guessing would mean refusing an
+ * authentic future document for a reason it invented. That entry is well formed,
+ * and S.10 refuses it at verify instead.
+ *
+ * This is the TypeScript half of the gate Rust gets from `serde`'s typed struct
+ * plus `deny_unknown_fields`. Without it the three implementations would answer
+ * different questions about a malformed boundary and a conformance vector
+ * comparing them would be comparing nothing.
+ *
+ * The member set being EXACT is the S.11 asymmetry with ADR-0006. At DOCUMENT
+ * level an unknown member is preserved, because it sits outside every predicate a
+ * verifier computes. Inside an entry there is no outside: every member is part of
+ * the authority the entry states, so a verifier that ignored
+ * `{"kind": "prefix", "value": "a", "max": 5}` would compute a boundary strictly
+ * wider than the one the signer committed to, and would do it silently.
+ */
+export function isWellFormedScopeEntry(entry: unknown): entry is ScopeBoundaryEntry {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return false;
+  const keys = Object.keys(entry as Record<string, unknown>);
+  if (keys.length !== ENTRY_MEMBERS.length) return false;
+  if (!ENTRY_MEMBERS.every((m) => keys.includes(m))) return false;
+  const { kind, value } = entry as { kind: unknown; value: unknown };
+  if (typeof kind !== 'string' || kind === '') return false;
+  if (kind === SCOPE_KIND_PREFIX && typeof value !== 'string') return false;
+  return true;
+}
+
+/**
+ * Is `boundary` a well-formed `scope_boundary` (spec S.8)?
+ *
+ * An array of well-formed entries. There is no per-entry fallback: one malformed
+ * entry is a malformed boundary, which is what makes the bare-string form of v3
+ * refused outright rather than reinterpreted.
+ */
+export function isWellFormedScopeBoundary(
+  boundary: unknown,
+): boundary is ScopeBoundaryEntry[] {
+  return Array.isArray(boundary) && boundary.every(isWellFormedScopeEntry);
+}
+
+/**
+ * The resource a child entry CLAIMS, for the attenuation predicate. `null` when
+ * the entry is not one this implementation can evaluate.
+ *
+ * For the `prefix` kind a boundary and a resource are the same shape, which is why
+ * attenuation has always been decidable with the containment predicate: a child
+ * entry is fed to the matcher as if it were a resource, so mint-time and
+ * verify-time cannot answer differently. A future kind whose boundary is not
+ * resource-shaped will need its own containment rule rather than this projection;
+ * `docs/spec/scope.md` S.13 records that as a constraint on the next revision.
+ *
+ * This is the module's SECOND and last branch on `kind`.
+ * `every registered kind is evaluable` asserts that it and {@link entryContains}
+ * both answer for every name in {@link RECOGNISED_SCOPE_KINDS}.
+ */
+export function entryClaimedResource(entry: ScopeBoundaryEntry): string | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  if (entry.kind !== SCOPE_KIND_PREFIX) return null;
+  return typeof entry.value === 'string' ? entry.value : null;
+}
+
+/**
+ * Evaluate ONE entry against `resource`.
+ *
+ * `null` means this implementation cannot evaluate the entry at all: its kind is
+ * not in {@link RECOGNISED_SCOPE_KINDS}, or it is of a recognised kind whose
+ * `value` is not the type that kind fixes. This is the only place a kind's
+ * containment rule is written; adding a kind means adding a branch here and a name
+ * to the registry.
+ */
+function entryContains(entry: ScopeBoundaryEntry, resource: string): boolean | null {
+  if (entry === null || typeof entry !== 'object') return null;
+  if (entry.kind !== SCOPE_KIND_PREFIX) return null;
+  if (typeof entry.value !== 'string') return null;
+  return prefixContains(entry.value, resource);
+}
+
+/**
+ * Can `entry` be evaluated here at all?
+ *
+ * DERIVED from {@link entryContains} rather than restated, so a kind cannot be
+ * added to one and forgotten in the other. Whether `entryContains` returns a
+ * verdict is a property of the entry alone and never of the resource, which is
+ * what makes deriving it from a single arbitrary resource exact rather than
+ * approximate; `evaluability does not depend on the resource` asserts that over
+ * every boundary in the conformance vector.
+ */
+export function entryIsEvaluable(entry: ScopeBoundaryEntry): boolean {
+  return entryContains(entry, '') !== null;
+}
+
+/**
+ * Can every entry of `boundary` be evaluated here (spec S.10)?
+ *
+ * `false` is the S.10 refusal condition, and it is a property of the boundary
+ * alone: a verifier reports it over a document rather than over a request, so the
+ * standing verdict can reach it without having a resource in hand.
+ */
+export function boundaryIsEvaluable(boundary: readonly ScopeBoundaryEntry[]): boolean {
+  return boundary.every(entryIsEvaluable);
+}
+
+/**
  * Does a single boundary entry contain `resource`? The one-entry core of
  * {@link scopeContains}, split out so the rule is stated exactly once.
  *
@@ -333,12 +492,31 @@ function prefixContains(prefix: string, resource: string): boolean {
   return SCOPE_SEPARATORS.some((sep) => resource.startsWith(prefix + sep));
 }
 
+/**
+ * Is `resource` within `boundary`? An empty boundary means unrestricted (⊤).
+ *
+ * **An entry this implementation cannot read refuses the WHOLE boundary** (S.10),
+ * not just itself. The natural implementation of a union is `some()`, and the
+ * natural implementation returns `true` for a boundary of a satisfied `prefix`
+ * entry plus one unrecognised entry: it finds the match and never reaches the
+ * entry it cannot read. An unrecognised kind can only ever NARROW what the signer
+ * meant, so skipping it grants authority the signer withheld. The loop below
+ * therefore refuses on the first unevaluable entry even when a match is already in
+ * hand. This is reachable from a bare boundary that never passed document verify,
+ * so the refusal lives here and not only in the standing verdict.
+ */
 export function scopeContains(
-  boundary: readonly string[],
+  boundary: readonly ScopeBoundaryEntry[],
   resource: string,
 ): boolean {
-  if (boundary.length === 0) return true;
-  return boundary.some((scope) => prefixContains(scope, resource));
+  let contained = false;
+  for (const entry of boundary) {
+    const verdict = entryContains(entry, resource);
+    // S.10: refuse the whole boundary, even with a match already found.
+    if (verdict === null) return false;
+    contained = contained || verdict;
+  }
+  return boundary.length === 0 || contained;
 }
 
 /**

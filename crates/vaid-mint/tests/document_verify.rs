@@ -52,7 +52,10 @@ fn tampered_document_fails() {
     let (public_key, vaid) = public_key_and_doc();
     // Widen the scope after signing — a valid-looking document, broken signature.
     let mut val = serde_json::to_value(&vaid).unwrap();
-    val["scope_boundary"] = json!(["data.x", "data.everything"]);
+    val["scope_boundary"] = json!([
+        { "kind": "prefix", "value": "data.x" },
+        { "kind": "prefix", "value": "data.everything" }
+    ]);
     let forged: Vaid = serde_json::from_value(val).unwrap();
     assert!(
         !verify_vaid_authenticity(&public_key, &forged),

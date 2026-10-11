@@ -47,7 +47,7 @@ from vaid_mint.issuer_identity import (
     kernel_key_thumbprint,
 )
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V3,
+    VAID_SIG_VERSION_V4,
     _parse_rfc3339,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
@@ -217,7 +217,7 @@ class ReferenceIssuer:
         child_trust_domain: str,
         child_tenant_id: str,
         expires_at: str,
-        scope_boundary: list[str],
+        scope_boundary: list[dict],
         capability_set: list[str],
     ) -> dict:
         """Sign a **detached consent attestation**: this issuer, as the party that
@@ -316,7 +316,7 @@ class ReferenceIssuer:
         version: str,
         tenant_id: str,
         parent_vaid: str | None,
-        scope_boundary: list[str],
+        scope_boundary: list[dict],
         capability_set: list[str],
         public_key_der: bytes,
         not_after: str | None,
@@ -385,7 +385,7 @@ class ReferenceIssuer:
         version: str,
         tenant_id: str,
         parent_vaid: str | None,
-        scope_boundary: list[str],
+        scope_boundary: list[dict],
         capability_set: list[str],
         public_key_der: bytes,
         not_after: str | None = None,
@@ -416,7 +416,7 @@ class ReferenceIssuer:
         version: str,
         tenant_id: str,
         parent_vaid: str | None,
-        scope_boundary: list[str],
+        scope_boundary: list[dict],
         capability_set: list[str],
         not_after: str | None = None,
     ) -> dict:
@@ -456,7 +456,7 @@ class ReferenceIssuer:
 
         A bad signature is ``False``, never an exception.
         """
-        if vaid.get("sig_version") != VAID_SIG_VERSION_V3:
+        if vaid.get("sig_version") != VAID_SIG_VERSION_V4:
             return False
         # TTL is enforced as a hard reject, not merely reported: an expired VAID
         # fails verification even with a valid kernel signature.

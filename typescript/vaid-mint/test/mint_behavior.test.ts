@@ -8,6 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { entryClaimedResource, isInScope, prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import {
@@ -54,7 +55,7 @@ function byoSeed(publicKey: Uint8Array): VaidSeed {
     version: '1.0.0',
     tenantId: 'acme',
     parentVaid: null,
-    scopeBoundary: ['data.x'],
+    scopeBoundary: [prefixEntry('data.x')],
     capabilitySet: ['read'],
     publicKeyDer: publicKey,
   };
@@ -82,12 +83,12 @@ test('root generate-and-discard mints and audits', async () => {
       agentClass: 'researcher',
       version: '1.0.0',
       tenantId: 'acme',
-      scopeBoundary: ['data.governance'],
+      scopeBoundary: [prefixEntry('data.governance')],
       capabilitySet: ['read.documents'],
     },
   });
   assert.equal(vaid.agent_class, 'researcher');
-  assert.deepEqual(vaid.scope_boundary, ['data.governance']);
+  assert.deepEqual(vaid.scope_boundary, [prefixEntry('data.governance')]);
   assert.equal(vaid.parent_vaid, null);
   assert.equal(audit.length, 1);
   assert.equal(audit.entries()[0].eventType, 'vaid_minted');
@@ -170,7 +171,7 @@ function parentDoc(tenant: string, scope: string[], caps: string[]): Vaid {
     version: '1.0.0',
     tenantId: tenant,
     parentVaid: null,
-    scopeBoundary: scope,
+    scopeBoundary: scope.map(prefixEntry),
     capabilitySet: caps,
   });
 }
@@ -181,7 +182,7 @@ function childSeed(parent: Vaid, scope: string[], caps: string[], childPub: Uint
     version: '1.0.0',
     tenantId: parent.tenant_id,
     parentVaid: parent.vaid_id,
-    scopeBoundary: scope,
+    scopeBoundary: scope.map(prefixEntry),
     capabilitySet: caps,
     publicKeyDer: childPub,
   };
@@ -328,7 +329,7 @@ test('end-to-end: a minted child verifies against its issuer and is contained by
       agentClass: 'parent',
       version: '1.0.0',
       tenantId: 'aifactory',
-      scopeBoundary: ['data.aifactory'],
+      scopeBoundary: [prefixEntry('data.aifactory')],
       capabilitySet: ['read', 'write'],
     },
   });
@@ -338,7 +339,12 @@ test('end-to-end: a minted child verifies against its issuer and is contained by
   );
 
   assert.equal(issuer.verifyVaid(child), true, 'a minted child must verify against the issuer');
-  assert.ok(child.scope_boundary.every((s) => parent.scope_boundary.some((p) => s.startsWith(p))));
+  assert.ok(
+    child.scope_boundary.every((e) => {
+      const r = entryClaimedResource(e);
+      return r !== null && isInScope(parent, r);
+    }),
+  );
   assert.ok(child.capability_set.every((c) => parent.capability_set.includes(c)));
 });
 
@@ -409,7 +415,7 @@ test('delegation works across a second boundary', async () => {
       version: '1.0.0',
       tenantId: 'acme',
       parentVaid: null,
-      scopeBoundary: ['data.x'],
+      scopeBoundary: [prefixEntry('data.x')],
       capabilitySet: ['read'],
     },
   });
@@ -508,7 +514,7 @@ test('the root path is unclamped', async () => {
       version: '1.0.0',
       tenantId: 'acme',
       parentVaid: null,
-      scopeBoundary: ['data.x'],
+      scopeBoundary: [prefixEntry('data.x')],
       capabilitySet: ['read'],
     },
   });
@@ -566,7 +572,7 @@ test('a root mint is never bounded by a parent it does not have', async () => {
       version: '1.0.0',
       tenantId: 'acme',
       parentVaid: null,
-      scopeBoundary: ['data.x'],
+      scopeBoundary: [prefixEntry('data.x')],
       capabilitySet: ['read'],
     },
   });

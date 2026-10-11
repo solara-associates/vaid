@@ -19,8 +19,8 @@ use uuid::Uuid;
 
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
-    VaidId, VAID_SIG_VERSION_V3,
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, ScopeBoundaryEntry,
+    TenantId, Vaid, VaidId, VAID_SIG_VERSION_V4,
 };
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -49,7 +49,7 @@ fn main() {
     let expires_at = "2026-06-05T12:00:00Z";
     // A fixed 32-byte "registered child key" — bytes 0x00..0x1f.
     let public_key_der: Vec<u8> = (0u8..32).collect();
-    let scope_boundary = vec!["data.aifactory.sub".to_string()];
+    let scope_boundary = vec![ScopeBoundaryEntry::prefix("data.aifactory.sub")];
     let capability_set = vec!["read".to_string()];
     // v3 (ADR-0004). RESERVED BY DESIGN: this vector publishes its own kernel
     // private seed below, so anyone can produce validly-signed documents under
@@ -102,7 +102,7 @@ fn main() {
 
     // The `input` is the unsigned document, snake_case, kernel_signature = [].
     let input = serde_json::json!({
-        "sig_version": VAID_SIG_VERSION_V3,
+        "sig_version": VAID_SIG_VERSION_V4,
         "vaid_id": agent_uuid.to_string(),
         "agent_id": agent_uuid.to_string(),
         "agent_class": agent_class,

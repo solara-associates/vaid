@@ -18,6 +18,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import { ed25519PublicKey, ed25519Sign, type VaidId } from 'vaid-pop';
@@ -84,7 +85,7 @@ class Org {
       expiresAt: '2999-01-01T00:00:00Z' as Vaid['expires_at'],
       publicKeyDer: Array.from({ length: 32 }, (_, i) => i),
       parentVaid,
-      scopeBoundary: scope,
+      scopeBoundary: scope.map(prefixEntry),
       lineageHash: computeLineageHash(parentVaid, agentId),
       capabilitySet: caps,
       trustDomain: this.trustDomain,
@@ -121,7 +122,7 @@ class Org {
       expiresAt: e6(expiresAt) as Vaid['expires_at'],
       publicKeyDer: Array.from({ length: 32 }, (_, i) => i),
       parentVaid,
-      scopeBoundary: scope,
+      scopeBoundary: scope.map(prefixEntry),
       lineageHash: computeLineageHash(parentVaid, agentId),
       capabilitySet: caps,
       trustDomain: this.trustDomain,
@@ -158,7 +159,7 @@ class Org {
       childTenantId: childTenant,
       issuedAt: e6(issuedAt ?? new Date(now - 60_000)),
       expiresAt: e6(expiresAt ?? new Date(now + 3_600_000)),
-      scopeBoundary: scope,
+      scopeBoundary: scope.map(prefixEntry),
       capabilitySet: caps,
       trustDomain: this.trustDomain,
       kernelKeyThumbprint: this.thumbprint(),

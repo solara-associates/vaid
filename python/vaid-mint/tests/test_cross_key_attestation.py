@@ -38,6 +38,7 @@ from vaid_mint.chain import (
 )
 from vaid_mint.mint import MINT_POP_FRESHNESS_SECS
 from vaid_mint.document import (
+    prefix_entry,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
@@ -82,7 +83,7 @@ class Org:
             expires_at="2999-01-01T00:00:00Z",
             public_key_der=list(range(32)),
             parent_vaid=parent_vaid,
-            scope_boundary=scope,
+            scope_boundary=[prefix_entry(s) for s in scope],
             lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
             capability_set=caps,
             trust_domain=self.trust_domain,
@@ -113,7 +114,7 @@ class Org:
             expires_at=_e6(expires_at),
             public_key_der=list(range(32)),
             parent_vaid=parent_vaid,
-            scope_boundary=scope,
+            scope_boundary=[prefix_entry(s) for s in scope],
             lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
             capability_set=caps,
             trust_domain=self.trust_domain,
@@ -146,7 +147,7 @@ class Org:
             child_tenant_id=child_tenant,
             issued_at=_e6(issued_at),
             expires_at=_e6(expires_at),
-            scope_boundary=scope,
+            scope_boundary=[prefix_entry(s) for s in scope],
             capability_set=caps,
             trust_domain=self.trust_domain,
             kernel_key_thumbprint=self.thumbprint(),

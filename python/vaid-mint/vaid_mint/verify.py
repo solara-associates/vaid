@@ -30,7 +30,9 @@ from vaid_mint.issuer_identity import (
     kernel_key_thumbprint,
 )
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V3,
+    VAID_SIG_VERSION_V4,
+    boundary_is_evaluable,
+    is_well_formed_scope_boundary,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
     is_expired,
@@ -162,6 +164,20 @@ class VaidVerdict(enum.Enum):
     #: more serious reason wins, because "expired" invites a renewal that would
     #: hand a forger a fresh document.
     EXPIRED = "expired"
+    #: Authentic and unexpired, and its ``scope_boundary`` carries a boundary kind
+    #: this implementation does not recognise (spec S.10, ADR-0009). Fails closed.
+    #:
+    #: **Not** :attr:`UNPARSEABLE`: the entry's shape is well formed and only its
+    #: ``kind`` is unknown, so the document parses and its signature verifies.
+    #: Collapsing the two would report an authentic, correctly signed,
+    #: future-version credential as malformed bytes, which is the wrong accusation
+    #: and one a holder cannot act on.
+    #:
+    #: This is the verdict that makes a future boundary kind an ADDITIVE change:
+    #: because an old verifier refuses a kind it has never heard of, a kind that
+    #: NARROWS authority cannot be silently dropped by the verifiers that most
+    #: need it.
+    UNKNOWN_SCOPE_KIND = "unknown_scope_kind"
     #: Authentic and unexpired, but some VAID in its lineage is revoked (R.4.4).
     REVOKED = "revoked"
     #: Standing could not be determined: the revocation store could not be
@@ -268,7 +284,7 @@ _REQUIRED_MEMBERS: tuple[tuple[str, object], ...] = (
     ("expires_at", lambda v: isinstance(v, str)),
     ("public_key_der", _is_byte_list),
     ("kernel_signature", _is_byte_list),
-    ("scope_boundary", _is_str_list),
+    ("scope_boundary", is_well_formed_scope_boundary),
     ("lineage_hash", lambda v: isinstance(v, str)),
     ("capability_set", _is_str_list),
     ("trust_domain", lambda v: isinstance(v, str)),
@@ -337,7 +353,7 @@ def verify_vaid_authenticity_graded(kernel_public_key: bytes, vaid: dict) -> Vai
     :attr:`~VaidVerdict.INDETERMINATE`: authenticity is not standing. Use
     :func:`verify_vaid_standing` for that.
     """
-    if vaid.get("sig_version") != VAID_SIG_VERSION_V3:
+    if vaid.get("sig_version") != VAID_SIG_VERSION_V4:
         return VaidVerdict.UNSUPPORTED_SIG_VERSION
     if not is_valid_trust_domain(vaid.get("trust_domain")):
         return VaidVerdict.MALFORMED_TRUST_DOMAIN
@@ -402,6 +418,16 @@ def verify_vaid_standing(
         return authenticity
     if is_expired(vaid):
         return VaidVerdict.EXPIRED
+    # S.10, placed HERE deliberately. After the signature, because a
+    # content-level complaint about bytes that have not been authenticated is
+    # meaningless and the right answer there is INAUTHENTIC. After expiry, because
+    # expiry is the cheaper and more actionable fact where both hold. Before
+    # revocation, because a credential that can never be used should not cost a
+    # lookup, and because revocation is the one input that can be unavailable.
+    # Inserting it here changes no pre-existing verdict: no document in any
+    # existing vector carries an unrecognised kind.
+    if not boundary_is_evaluable(vaid["scope_boundary"]):
+        return VaidVerdict.UNKNOWN_SCOPE_KIND
     if revocation is RevocationStatus.NOT_REVOKED:
         return VaidVerdict.VALID
     if revocation is RevocationStatus.REVOKED:

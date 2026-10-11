@@ -324,6 +324,7 @@ The cross-language set:
 | `chain_expiry_v1.json` | expiry containment — a child may not outlive its parent, and a lapsed ancestor is not attenuation |
 | `attestation_v1.json` | cross-issuer consent attestations |
 | `scope_v1.json` | segment-bounded scope containment |
+| `scope_kinds_v1.json` | the typed scope boundary — and that an unrecognised boundary kind is refused rather than skipped |
 | `roundtrip_v1.json` | verification over presented bytes |
 | `verdict_v1.json` | the negative path — which failure, not just that one occurred |
 | `pathquery_v1.json` | path-with-query canonicalization |

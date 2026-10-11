@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 
 // ── The intended version of the vaid-mint release on this branch. HAND-WRITTEN.
 //    Do not derive this from a manifest, a lockfile, a changelog or a tag.
-const EXPECTED = '0.9.0';
+const EXPECTED = '0.10.0';
 
 const ROOT = new URL('../', import.meta.url);
 const read = (p) => readFileSync(fileURLToPath(new URL(p, ROOT)), 'utf8');

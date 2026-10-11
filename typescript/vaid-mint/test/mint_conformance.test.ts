@@ -21,6 +21,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import { THUMBPRINT_URI_PREFIX } from '../src/issuerIdentity.js';
@@ -119,8 +120,12 @@ test('every signed field is covered — a one-field change breaks the digest', (
   const mutations: Record<string, unknown> = {
     // Must NOT be the document's real value, or the "mutation" is a no-op and
     // the assertion below passes vacuously. It read `3` while the document was
-    // v2; the v3 bump made the two coincide, and this test caught it.
-    sig_version: 4,
+    // v2; the v3 bump made the two coincide, and this test caught it. The v4 bump
+    // (ADR-0009) made them coincide again, and it caught that too. The value has
+    // to move with every bump, which is the cost of the mutation being a literal
+    // rather than derived; deriving it from the constant would make the test
+    // unable to fail in the one way it exists to fail.
+    sig_version: 5,
     vaid_id: '22222222-2222-2222-2222-222222222222',
     agent_id: '22222222-2222-2222-2222-222222222222',
     agent_class: 'other',
@@ -130,7 +135,7 @@ test('every signed field is covered — a one-field change breaks the digest', (
     expires_at: '2026-06-05T12:00:01Z',
     public_key_der: [...document.public_key_der.slice(0, 31), 99],
     parent_vaid: null,
-    scope_boundary: ['data.aifactory.sub', 'data.everything'],
+    scope_boundary: [prefixEntry('data.aifactory.sub'), prefixEntry('data.everything')],
     lineage_hash: '0'.repeat(64),
     capability_set: ['read', 'write'],
     trust_domain: 'other.example',

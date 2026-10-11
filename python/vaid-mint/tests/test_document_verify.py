@@ -18,6 +18,7 @@ from vaid_mint import (
     verify_vaid_authenticity,
 )
 from vaid_mint.document import is_expired
+from vaid_mint.document import prefix_entry
 
 MINT_VECTOR = Path(__file__).resolve().parents[1] / "vaid_mint" / "vectors" / "mint_v1.json"
 
@@ -29,7 +30,7 @@ def _public_key_and_doc() -> tuple[bytes, dict]:
         version="1.0.0",
         tenant_id="t",
         parent_vaid=None,
-        scope_boundary=["data.x"],
+        scope_boundary=[prefix_entry("data.x")],
         capability_set=["read"],
     )
     # Return only the public key + document; the issuer goes out of scope.

@@ -37,6 +37,7 @@
 
 use ring::signature::{Ed25519KeyPair, KeyPair};
 
+use vaid_mint::document::ScopeBoundaryEntry;
 use vaid_mint::mint_types::VaidSeed;
 use vaid_pop::vaid_pop::{canonical_request_signing_bytes, sign_payload};
 
@@ -72,7 +73,7 @@ fn main() {
         version: "1.0.0".into(),
         tenant_id: "aifactory".into(),
         parent_vaid: None,
-        scope_boundary: vec!["data.aifactory".to_string()],
+        scope_boundary: vec![ScopeBoundaryEntry::prefix("data.aifactory")],
         capability_set: vec!["read".to_string()],
         public_key_der: Some(registered_key.clone()),
     };

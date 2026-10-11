@@ -13,15 +13,18 @@
     "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y",
     "parent_vaid": "d0000000-0000-0000-0000-000000000001",
     "scope_boundary": [
-      "data.aifactory.sub"
+      {
+        "kind": "prefix",
+        "value": "data.aifactory.sub"
+      }
     ],
     "signature": [],
     "trust_domain": "a.example"
   },
-  "digest_sha256_hex": "50c20577c8c1c74e5e0e1cefc3ea8c2bc6f340c0d01a180e228d50dbd24f988c",
+  "digest_sha256_hex": "dfef3a34179f9e63ac0accd93fc2e3ddc904e894532081de6165b7285a85a1f8",
   "ed25519": {
     "kernel_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
     "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
   },
-  "signature_hex": "b8bc653ae7b761a69d1d118534e129621511c784117b5dcde4f7cd898220a1e3f97f1f06a2e7d88acf498ba03ed11365ebda6c2a94137b708c8667c2d231dc0c"
+  "signature_hex": "f556bf2d288ba9bf59d9edf54d5e5dbd7c4788cc183c5a04963e32d8be03b6d83666d73927d00556d00de579be64da4ed88c1ebd84f87156d392ebdb32a95200"
 }

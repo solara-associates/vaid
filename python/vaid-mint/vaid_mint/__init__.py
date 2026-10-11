@@ -52,7 +52,15 @@ from vaid_mint.chain import (
 )
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V3,
+    VAID_SIG_VERSION_V4,
+    RECOGNISED_SCOPE_KINDS,
+    SCOPE_KIND_PREFIX,
+    boundary_is_evaluable,
+    entry_claimed_resource,
+    entry_is_evaluable,
+    is_well_formed_scope_boundary,
+    is_well_formed_scope_entry,
+    prefix_entry,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
@@ -69,6 +77,8 @@ from vaid_mint.mint import (
     caps_attenuate,
     scope_attenuates,
     scope_attenuates_within,
+    scope_attenuation_reason,
+    AttenuationReason,
     tenant_attenuates,
 )
 from vaid_mint.mint_types import (
@@ -114,9 +124,19 @@ __all__ = [
     "has_capability",
     "scope_attenuates",
     "scope_attenuates_within",
+    "scope_attenuation_reason",
+    "AttenuationReason",
     "caps_attenuate",
     "tenant_attenuates",
-    "VAID_SIG_VERSION_V3",
+    "VAID_SIG_VERSION_V4",
+    "RECOGNISED_SCOPE_KINDS",
+    "SCOPE_KIND_PREFIX",
+    "boundary_is_evaluable",
+    "entry_claimed_resource",
+    "entry_is_evaluable",
+    "is_well_formed_scope_boundary",
+    "is_well_formed_scope_entry",
+    "prefix_entry",
     "MINT_POP_FRESHNESS_SECS",
     "DEFAULT_VAID_TTL_HOURS",
     "RevocationCheck",
@@ -161,4 +181,4 @@ __all__ = [
     "AuditError",
 ]
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"

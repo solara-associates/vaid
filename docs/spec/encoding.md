@@ -5,7 +5,10 @@ Revision 3, 31 July 2026. Written from the findings of the third (TypeScript)
 implementation; revised 29 July to record that E.11's gap is closed by
 `mint_pop_v1.json`; revised again for **v3** (ADR-0004), which adds
 `trust_domain` and `kernel_key_thumbprint` to the VAID document and moves
-`sig_version` to `3`.
+`sig_version` to `3`; revised again for **v4** (ADR-0009), which makes each
+`scope_boundary` entry a typed `{kind, value}` object and moves `sig_version` to
+`4`. v4 adds and removes no member, so every rule below is unchanged; what moved
+is the TYPE of an existing member's elements, and with it every digest in E.13.
 
 **On the section numbering.** The two new field rules are E.15 and E.16 but appear
 below between E.10 and E.11, where they belong logically — with the other
@@ -45,7 +48,7 @@ The vectors freeze the answer. This writes down the rule.
 Each section below states the rule, then states what a wrong choice produces.
 Those consequences are computed, not asserted: E.13 lists the digest each wrong
 choice yields for the `mint_v1` input, against the correct
-`eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0`.
+`9d353fa8929b6993470b086ac1d286d2d3c790eff7b989f12259dae137829982`.
 
 ## E.1a A verifier canonicalizes the member VALUES it was presented
 
@@ -239,7 +242,10 @@ an omit-empty mode that would silently do the wrong thing.
 Empty *collections* are a different matter and are **not** null: an empty
 `scope_boundary` or `capability_set` is `[]`. Note that an empty `scope_boundary`
 carries meaning — it denotes an unrestricted scope (⊤), not an absent one — so the
-distinction between `[]` and `null` here is semantic as well as syntactic.
+distinction between `[]` and `null` here is semantic as well as syntactic. At v4
+the ELEMENTS of `scope_boundary` are typed objects rather than strings, and their
+member set is exact; see [`scope.md`](scope.md) S.8, which also records why that
+is deliberately stricter than E.7a's posture on a document's own members.
 
 ## E.7a A duplicate member name is not a document
 
@@ -264,7 +270,7 @@ collision before returning: once there is a parsed object, the evidence is gone.
 
 ## E.8 Numbers are numbers
 
-`sig_version` is a JSON **number** (`3` at v3), not a string (`"3"`).
+`sig_version` is a JSON **number** (`4` at v4), not a string (`"4"`).
 
 Numeric values are serialized per RFC 8785 §3.2.2.3, which is ECMAScript
 `Number::toString`. VAID's signed structures contain only small non-negative
@@ -483,34 +489,49 @@ the `mint_v1.json` input, holding everything else correct. An implementation
 debugging a vector failure can match its own output against this table to identify
 which rule it broke.
 
-**Every digest below was recomputed for v3.** They are computed values, not
-asserted ones, so the v3 field additions changed all of them — a stale row here
-would be exactly the documentation defect E.11 exists to shame.
+**Every digest below was recomputed for v4.** They are computed values, not
+asserted ones, so the v3 field additions changed all of them and the v4
+`scope_boundary` typing changed all of them again — a stale row here would be
+exactly the documentation defect E.11 exists to shame.
+
+They are also now RECOMPUTABLE, which until v4 they were not:
+`python/vaid-mint/scripts/emit_encoding_wrong_choice_digests.py` emits both tables
+below, and reproduces every v3 digest byte for byte when pointed at a v3 vector
+tree. That is the check that each transformation is the one its row's prose names;
+two of them were not what a first reading suggests, and were recovered from the v3
+numbers rather than guessed. See the script's header.
 
 | Rule | Choice | Resulting digest |
 |---|---|---|
-| — | **Correct — all rules applied** | `eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0` |
-| E.3 | Document keys camelCased | `320c00f79438a359450bc6f77f2fdda17b56f17dcce71a3fd556fd234fdc0386` |
-| E.4 | Byte fields as base64 strings | `35f1a0101717c37f0f81bc910a7866b31819cd96713fb90b977935138efd1e39` |
-| E.4 | Byte fields as hex strings | `7622e1e253e674f7f7939ed94f81cf3ed13df04e9579556eb4e884375325885f` |
-| E.5 | `kernel_signature` key deleted | `ee352179f515329b9698227565f8764a5310b141254369259c113e7441fb68cd` |
-| E.5 | `kernel_signature` left as `[]` | `88d844a78690f7748d0821807c489d2e3e9ad105d1e3f9fdbbdf9d28a6ac15b1` |
-| E.6 | Timestamps with milliseconds | `32e408ba68f7dfcda03b92db42386d16eba406550b6f8ba848f668c7e4547b9d` |
-| E.6 | Timestamps with a `+00:00` offset | `34fbca5466cb9afa84a95c0fccbb5956d75b98784df4423242ab08abf8a67f81` |
-| E.7 | `parent_vaid` key omitted (its value here is a UUID, not null — the null case is exercised by `mint_pop_v1` below) | `18b94a22485f6015ac7a8651d609b30abdeee47119eefb580adfd24994f082a2` |
-| E.8 | `sig_version` as the string `"3"` | `2c3c24fb01fa6ade8ee98a96b8ae6be5b6a731580afd957b7d2b1c6ed2cc10aa` |
-| E.15 | `trust_domain` uppercased — i.e. normalized rather than rejected | `c10c41523236d31b3c63eeb33f409d60bf7e81a1af72641aa00909074b6cebdf` |
-| E.15 | `trust_domain` with a trailing dot | `7d6b0608ee40a8c5c74691d7017a8a4abec4dad1baa08e55dac95abac894cd83` |
-| E.16 | `kernel_key_thumbprint` as a bare thumbprint, RFC 9278 URI prefix dropped | `b9840d4bc3397ffc7cfbac0fae0599df81094bd5bc5887238e9c85a599e4f187` |
-| E.16 | Thumbprint base64 (standard alphabet, padded) instead of base64url unpadded | `0fec448428fb446275fbc03ba2dd5ea38d2dc35c5e059c51b19b4865c8407476` |
-| E.16 | Raw public key in place of its hash — the thumbprint never computed | `81c346a15b2174adcb197c662bfbdaf88c51641395b132e4c5995d20a76503ec` |
+| — | **Correct — all rules applied** | `9d353fa8929b6993470b086ac1d286d2d3c790eff7b989f12259dae137829982` |
+| E.3 | Document keys camelCased | `5efa39975e19f23cb67b78f6cd9f05055792bceb3552e9257daf845f311cb6de` |
+| E.4 | Byte fields as base64 strings | `8c4f5f6b2662713fab1e8ddc0e47711083c8d3546f42c7ffcbb7b99f34b1a4ef` |
+| E.4 | Byte fields as hex strings | `425082d3f3eb2df19ce911dcd326bb7afd6a1d267be5ec3f52f55ef078bfca02` |
+| E.5 | `kernel_signature` key deleted | `cca5160a4b2d424084b8c47d0f8693abf07a62ce595eeb4dc3ac92566685d4f1` |
+| E.5 | `kernel_signature` left as `[]` | `8a0ed4241a7521e3407466f0ce59381aa69a9cc25540bd1e77d417de5d3ad54a` |
+| E.6 | Timestamps with milliseconds | `af06e03b249ae5f4379c4aa87fecd3a7af64e4f4c43ee8cf6eac4df3e5358328` |
+| E.6 | Timestamps with a `+00:00` offset | `0cc557d3795113739393b8ebed627fe9911eeb04d44e5128a6653b797c10f48d` |
+| E.7 | `parent_vaid` key omitted (its value here is a UUID, not null — the null case is exercised by `mint_pop_v1` below) | `c5a9e2e2c2fd4439986477430acab455ed3443f6a367637e0d22fd276977ba79` |
+| E.8 | `sig_version` as the string `"4"` | `024c586487e18c7fe12a5ba69189f37660ab61b40dcdaa4630f87aca375bf332` |
+| E.15 | `trust_domain` uppercased — i.e. normalized rather than rejected | `6570c635802f6f7b2852e982f82738d7e88904b459ce20b9667f071f0699f160` |
+| E.15 | `trust_domain` with a trailing dot | `613b88818b0647ab420052d160a9f7ab4bc4a4457744ec3bac8a0a9ad576f247` |
+| E.16 | `kernel_key_thumbprint` as a bare thumbprint, RFC 9278 URI prefix dropped | `2985914a8e29996b07ba8c30641deb755794bab61535c8c4d39b6a012218ddbe` |
+| E.16 | Thumbprint base64 (standard alphabet, padded) instead of base64url unpadded | `5f527ac7ecb49e8dc89396d911c7940fdbde91b9d541ac9302aad9db71d95f84` |
+| E.16 | Raw public key in place of its hash — the thumbprint never computed | `3c97f9e1d5914de0efe0bc3dceae3f926a89d704a797a256c35211c13d99f7dd` |
+| S.8 | `scope_boundary` entries as bare strings, the pre-v4 form | `d88656e7272144facc1c6567a029698785680ab2e37e2b6bddcc1802b89a296e` |
 
-The last three rows are the v3 additions worth dwelling on. Dropping the URI prefix
+The three **E.16** rows are the v3 additions worth dwelling on. Dropping the URI prefix
 and using the wrong base64 alphabet are both what an implementer reaches for when
 reading "thumbprint" and skipping RFC 9278; and putting the raw key where its hash
 belongs is the shortcut that makes the document look self-verifying, which is
 exactly the failure mode ADR-0004 rejects the embedded-key design over. All three
 are well-formed JSON that a non-conforming implementation would sign happily.
+
+The **S.8** row is the v4 addition, and it is the one an implementer is most
+likely to hit: it is the digest a v3 producer gets if it bumps `sig_version` to
+`4` and leaves its boundary entries as strings. It is also the exact bytes a v4
+verifier refuses as `unparseable` rather than verifying, so an implementation that
+reaches this digest has a second, earlier signal available to it.
 
 Every wrong choice yields a digest that is wrong in the ordinary way — completely
 different, immediately visible. None of them produces a near-miss, and none of them
@@ -523,16 +544,25 @@ Two rules bite differently on `MintPopPayload`, so it gets its own table. E.3
 inverts — the payload is camelCase, so *snake_case* is the error — and E.7 is
 genuinely exercised for the first time, because this is the only vector whose input
 contains a null. Correct digest:
-`5360ff1f70ea39b3bca277301f9d0a8f9280e8530d32a405bc25b1b46dcf810c`.
+`43703467a007b382f2add5bcfd4f0e5a6f5b95c32f8157efff0eeb9db46cd8c9`.
 
 | Rule | Choice | Resulting digest |
 |---|---|---|
-| E.3 | Payload keys snake_cased (the inverse error) | `86bdb94b8d65d4c316a4001913079e69f4bb99754a0d9268ec64dd2aed1ddb5e` |
-| E.4 | `publicKeyDer` as a base64 string | `f7f7bc94f27395bbc2e51fb92b4ad53d0ff1dd9a9c3abafec12d5c9cd17cf756` |
-| E.7 | `parentVaid` key omitted instead of null | `b4d7fdb1afd59ce9dabca67998aaf1517f6ef9fce89bec9263bc7da65cb66eda` |
-| E.7 | `parentVaid` as the empty string `""` | `5383b00aedf24e4088596914b9fe5a7bbd0d732d8d2f26814f9c0e359480e618` |
+| E.3 | Payload keys snake_cased (the inverse error) | `86ddc7508617d7655b1e7eeb716f0adc5d9f8fbd2550d642035edbcb3b88babd` |
+| E.4 | `publicKeyDer` as a base64 string | `cc679df2e643f0aa227543d08e44bab4e40c5d60e08335544a7cd13b0e3d3f53` |
+| E.7 | `parentVaid` key omitted instead of null | `a1a2baa56d95a48aba9361b69945565a8e4603e4acf960dfd34da6bccec89782` |
+| E.7 | `parentVaid` as the empty string `""` | `2a59bb4c501ad5a4eb26d07b4ae096b3f817008cff9df873ee25700782bd3e6e` |
+| S.8 | `scopeBoundary` entries as bare strings, the pre-v4 form | `5360ff1f70ea39b3bca277301f9d0a8f9280e8530d32a405bc25b1b46dcf810c` |
 
-The last row is worth its own line. An empty string is the substitution a
+The **S.8** row here is worth a line of its own, because it is the one digest in
+either table that is not new: it equals the CORRECT v3 `mint_pop_v1` digest,
+`5360ff1f70ea39b3bca277301f9d0a8f9280e8530d32a405bc25b1b46dcf810c`. `MintPopPayload`
+carries no `sig_version`, so reverting its boundary to the string form reproduces a
+v3 payload exactly. A v3 holder's proof-of-possession is therefore indistinguishable
+from a v4 one that got the boundary wrong, which is why the mint rejects the request
+on the SEED's boundary shape and not on the payload digest.
+
+The `parentVaid` empty-string row is worth its own line too. An empty string is the substitution a
 statically-typed implementation reaches for when its `parentVaid` field is a
 non-nullable string — it is not obviously wrong, it round-trips, and it produces a
 digest that differs from the correct one only in the way every other error does.

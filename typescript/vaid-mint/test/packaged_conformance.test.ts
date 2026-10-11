@@ -9,6 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import {
@@ -50,10 +51,18 @@ test('the packaged firewall passes against EVERY bundled vector', () => {
   assert.equal(new Set(digests).size, digests.length);
 
   // A predicate vector must still carry content, so "no digest" cannot become a
-  // way to ship an empty vector past the firewall.
+  // way to ship an empty vector past the firewall. `cases` for most of them; a
+  // vector with several named surfaces carries none, so count across all of them
+  // rather than report the one file whose shape is different as empty.
+  const CASE_KEYS = ['cases', 'containment_cases', 'attenuation_cases', 'shape_cases'] as const;
   for (const n of covered.filter((x) => result[x]!.digest_sha256_hex === undefined)) {
+    const row = result[n]! as Record<string, unknown>;
+    const counted = CASE_KEYS.reduce((total, k) => {
+      const list = row[k] as unknown[] | undefined;
+      return total + (list?.length ?? 0);
+    }, 0);
     assert.ok(
-      (result[n]!.cases?.length ?? 0) > 0,
+      counted > 0,
       `${n} has neither a digest nor any cases — it asserts nothing`,
     );
   }
@@ -97,7 +106,7 @@ test('a tampered document field is caught by the digest check', () => {
     () =>
       checkDocumentDigest({
         ...v,
-        input: { ...v.input, scope_boundary: ['data.aifactory.sub', 'data.everything'] },
+        input: { ...v.input, scope_boundary: [prefixEntry('data.aifactory.sub'), prefixEntry('data.everything')] },
       }),
     ConformanceError,
   );

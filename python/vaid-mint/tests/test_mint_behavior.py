@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vaid_pop import canonical_request_signing_bytes, utc_whole_second_rfc3339
 
+from vaid_mint.document import entry_claimed_resource, prefix_entry
 from vaid_mint import (
     DenyAll,
     InMemoryAudit,
@@ -67,13 +68,15 @@ def byo_seed(public_key_der: bytes) -> VaidSeed:
         agent_class="runner",
         version="1.0.0",
         tenant_id="acme",
-        scope_boundary=["data.x"],
+        scope_boundary=[prefix_entry("data.x")],
         capability_set=["read"],
         public_key_der=public_key_der,
     )
 
 
 def parent_doc(tenant, scope, caps) -> dict:
+    """``scope`` is given as bare strings for readability and normalised to
+    ``prefix`` entries here, exactly as :func:`child_seed` does."""
     vid = str(uuid.uuid4())
     return build_unsigned_vaid_document(
         vaid_id=vid,
@@ -90,7 +93,7 @@ def parent_doc(tenant, scope, caps) -> dict:
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=[],
         parent_vaid=None,
-        scope_boundary=list(scope),
+        scope_boundary=[e if isinstance(e, dict) else prefix_entry(e) for e in scope],
         lineage_hash="lineage",
         capability_set=list(caps),
         trust_domain="vaid.example",
@@ -99,12 +102,15 @@ def parent_doc(tenant, scope, caps) -> dict:
 
 
 def child_seed(parent, scope, caps, child_pub) -> VaidSeed:
+    """``scope`` is given as bare strings for readability and normalised to
+    ``prefix`` entries here. The test fixture is the only place that conversion
+    lives; the mint itself takes typed entries (S.8)."""
     return VaidSeed(
         agent_class="child",
         version="1.0.0",
         tenant_id=parent["tenant_id"],
         parent_vaid=parent["vaid_id"],
-        scope_boundary=list(scope),
+        scope_boundary=[e if isinstance(e, dict) else prefix_entry(e) for e in scope],
         capability_set=list(caps),
         public_key_der=child_pub,
     )
@@ -126,12 +132,12 @@ def test_root_generate_and_discard_mints_and_audits():
         agent_class="researcher",
         version="1.0.0",
         tenant_id="acme",
-        scope_boundary=["data.governance"],
+        scope_boundary=[prefix_entry("data.governance")],
         capability_set=["read.documents"],
     )
     vaid = svc.mint_root(seed)
     assert vaid["agent_class"] == "researcher"
-    assert vaid["scope_boundary"] == ["data.governance"]
+    assert vaid["scope_boundary"] == [prefix_entry("data.governance")]
     assert vaid["parent_vaid"] is None
     assert len(audit.entries) == 1
     assert audit.entries[0].details["delegated"] is False
@@ -312,7 +318,7 @@ def test_minted_child_verifies_and_is_contained_by_parent():
             agent_class="parent",
             version="1.0.0",
             tenant_id="aifactory",
-            scope_boundary=["data.aifactory"],
+            scope_boundary=[prefix_entry("data.aifactory")],
             capability_set=["read", "write"],
         )
     )
@@ -320,7 +326,9 @@ def test_minted_child_verifies_and_is_contained_by_parent():
     child = svc.mint_child(seed, parent, pop).vaid
 
     assert issuer.verify_vaid(child)
-    assert all(is_in_scope(parent, s) for s in child["scope_boundary"])
+    assert all(
+        is_in_scope(parent, entry_claimed_resource(e)) for e in child["scope_boundary"]
+    )
     assert all(has_capability(parent, c) for c in child["capability_set"])
     # sanity: the derived lineage_hash on the child is self-consistent
     assert child["lineage_hash"] == compute_lineage_hash(child["parent_vaid"], child["agent_id"])
@@ -384,7 +392,7 @@ def test_delegation_works_across_a_second_boundary():
             agent_class="parent",
             version="1.0.0",
             tenant_id="aifactory",
-            scope_boundary=["data.aifactory"],
+            scope_boundary=[prefix_entry("data.aifactory")],
             capability_set=["read"],
         )
     )
@@ -483,7 +491,7 @@ def test_the_root_path_is_unclamped():
             agent_class="root",
             version="1.0.0",
             tenant_id="acme",
-            scope_boundary=["data.acme"],
+            scope_boundary=[prefix_entry("data.acme")],
             capability_set=["read"],
         )
     )

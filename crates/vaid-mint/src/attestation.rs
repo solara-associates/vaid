@@ -90,7 +90,7 @@ use sha2::{Digest, Sha256};
 
 use ring::signature::{UnparsedPublicKey, ED25519};
 
-use crate::document::VaidId;
+use crate::document::{ScopeBoundaryEntry, VaidId};
 
 /// Attestation format discriminant. Independent of `sig_version`: this is a
 /// separate object with its own shape, and bumping one must not imply the other.
@@ -137,7 +137,7 @@ pub struct ConsentAttestation {
     pub expires_at: DateTime<Utc>,
     /// The maximum scope the parent consents to. The child's own
     /// `scope_boundary` must be contained by this.
-    pub scope_boundary: Vec<String>,
+    pub scope_boundary: Vec<ScopeBoundaryEntry>,
     /// The maximum capabilities the parent consents to.
     pub capability_set: Vec<String>,
     /// The attesting issuer's trust domain. MUST equal the parent document's, so
@@ -165,7 +165,7 @@ impl ConsentAttestation {
         child_tenant_id: String,
         issued_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
         trust_domain: String,
         kernel_key_thumbprint: String,
