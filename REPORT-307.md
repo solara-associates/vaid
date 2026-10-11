@@ -400,3 +400,153 @@ No file under `docs/a2a/v1/vectors/` was read or modified. No change to
   (also swept and cleaned from the new text added to `verifier.py` and
   `tests/test_verifier.py` in this follow-up, as a precaution beyond what
   was strictly asked).
+
+## Follow-up 3
+
+Reviewer Tymofii Pidlisnyi confirmed `e7f174f` fixes the issue. Three items
+before publishing: a PR head mismatch to resolve first, a section 5 wording
+amendment, and a stricter, loader-matching section 2.1.
+
+### Item 1: PR #1 head mismatch
+
+Before any change, `gh api repos/.../pulls/1` and `gh pr view 1` both
+reported PR #1's head SHA as `adb434d`, while the local `fix/trust-domain-
+binding` branch (and `origin`'s copy of it, confirmed via `git ls-remote`
+and `GET /git/refs/heads/fix/trust-domain-binding`) was already at
+`b369dd8`, a fast-forward descendant of `adb434d` that already contains
+`e7f174f`. `git merge-base --is-ancestor adb434d b369dd8` confirmed the
+ancestry; `pushed_at` on the PR's head repo (`2026-10-10T08:24:07Z`) is
+after both `e7f174f` and `b369dd8`'s commit timestamps, consistent with
+the push having already landed. `gh pr list --json ... ,isCrossRepository`
+reported `true` for PR #1, but the head repository's GraphQL node ID
+(`R_kgDOVCU4Cw`) is identical to the base repository's own node ID, so
+head and base are the same repository and the same branch
+(`fix/trust-domain-binding`); `isCrossRepository: true` here is an
+artifact of how a GHSA private-fork PR is represented internally, not
+evidence of a second fork. The PR's reported `head_sha` was simply a
+stale read on GitHub's side of a branch that had already moved forward;
+there were no commits to push that the branch did not already have.
+
+This follow-up's own commit (`c8157ce`, see below) was pushed as an
+ordinary fast-forward of the already-current branch. Re-querying both
+the REST and GraphQL endpoints afterward shows the PR's head catching up
+immediately:
+
+| | repo | branch | SHA |
+|---|---|---|---|
+| Before this follow-up's push | `solara-associates/vaid-ghsa-hfjh-v2x2-r58v` | `fix/trust-domain-binding` | `adb434dff13aa08506753a9bb1b9a807a85110ee` (stale API read; live branch was already at `b369dd8`) |
+| After this follow-up's push | `solara-associates/vaid-ghsa-hfjh-v2x2-r58v` | `fix/trust-domain-binding` | `c8157ce275c824209aa258fe2fc796c8a8e8503d` |
+
+`git merge-base --is-ancestor e7f174f c8157ce` confirms `e7f174f` is an
+ancestor of the new head. No force-push was used or needed; no commits
+belonging to anyone else were at risk.
+
+### Item 2: section 5 order wording
+
+Code unchanged, as asked. `docs/a2a/v1/extension.md` section 5 gained one
+paragraph, inserted between the introductory paragraph and numbered step 1,
+stating that input-shape validation precedes the ordered steps and that the
+order governs only input that has already parsed:
+
+> **Input-shape validation comes first, before step 1.** Malformed input,
+> meaning the `/vaid` metadata value present but not a VAID document
+> object, or `/vaidChain` present but not a list of VAID document objects
+> (a value such as `[null]` is such a case: a list, but not a list *of
+> documents*), is rejected as `UNPARSEABLE` before step 1 is ever reached.
+> This is not itself one of the numbered, ordered steps below; it is a
+> precondition on them. The ordering stated for steps 1 onward governs
+> only input that has already parsed into the expected shapes. It says
+> nothing about, and makes no claim about, the relative order of two
+> different malformed-shape rejections, because that question does not
+> arise until parsing has already succeeded.
+
+Two new regression tests in `python/vaid-a2a/tests/test_verifier.py` pin
+both halves of the claimed input, reusing the same bad-signature leaf
+(`_bad_signature_leaf`, a leaf claiming issuer A's domain and thumbprint
+but signed by issuer B's key):
+
+- `test_bad_leaf_signature_with_empty_chain_is_inauthentic`: bad leaf
+  signature, `vaidChain: []` -> `VerifyCode.INAUTHENTIC`.
+- `test_bad_leaf_signature_with_unparseable_chain_is_unparseable`: the same
+  bad leaf signature, `vaidChain: [None]` -> `VerifyCode.UNPARSEABLE`.
+
+No change was needed in `verifier.py`'s behaviour for this item: the
+existing shape check on `/vaidChain` (lines before step 1's comment block)
+already ran ahead of the authenticity check; only the spec's wording and
+the pinning tests were missing.
+
+### Item 3: section 2.1 and the loader, made stricter and brought into agreement
+
+Before this follow-up, `_build_key_resolver` (`python/vaid-a2a/vaid_a2a/
+verifier.py`) silently `continue`d past (skipped) a `trustedIssuers` entry
+with no parseable `kernelPublicKey`: an empty object `{}`, an entry
+naming only `trustDomain`, or an entry whose key string failed
+base64url-decoding, rather than raising `TrustedIssuersConfigError`, the
+same exception already used for a missing `trustDomain` or a duplicate
+key. That asymmetry meant section 2.1's two documented rules and the
+loader's actual behaviour disagreed on a third shape neither named.
+
+`_build_key_resolver` now raises `TrustedIssuersConfigError` for all of:
+an entry that is not an object, an entry with no `kernelPublicKey` field,
+an entry whose `kernelPublicKey` is present but not a string, and an
+entry whose `kernelPublicKey` string cannot be base64url-decoded, in
+addition to the two cases already raised (no `trustDomain`; the same key
+listed under more than one domain).
+
+`docs/a2a/v1/extension.md` section 2.1 gained a third bullet, listing this
+rule alongside the two it already stated, and its closing sentence now
+says "any one of them" rather than "either one", since there are now
+three rules, not two.
+
+Four new tests in `test_verifier.py`:
+
+- `test_entry_empty_dict_raises`: `trustedIssuers: [{}]` raises.
+- `test_entry_trust_domain_only_raises`: `trustedIssuers:
+  [{"trustDomain": ...}]` (no key at all) raises.
+- `test_entry_unparseable_key_raises`: `kernelPublicKey: "a"` (one data
+  character, a length base64 padding can never fix) raises.
+- `test_valid_config_still_loads`: the existing two-issuer well-formed
+  config still loads without raising (control).
+
+### Tests
+
+Full local run across all four Python packages, in a fresh venv with each
+package installed editable (`pip install -e python/vaid-mint -e
+python/vaid-a2a -e python/vaid-pop -e python/vaid-langchain`, plus
+`langchain-core` for the optional `vaid-langchain` suite, same
+pre-existing environment note as the earlier follow-ups):
+
+```
+python/vaid-mint:      185 passed
+python/vaid-a2a:        28 passed
+python/vaid-pop:         9 passed
+python/vaid-langchain:  14 passed
+-----------------------------------
+Total:                 236 passed, 0 failed
+```
+
+(28 in `vaid-a2a` is follow-up 2's 22 plus this follow-up's 6 new tests:
+2 for item 2's ordering regression, 4 for item 3's loader strictness.)
+
+No file under `docs/a2a/v1/vectors/` was read or modified. No change to
+`vaid_mint` core in any language.
+
+### Commit and push
+
+Commit `c8157ce` ("fix(a2a): reviewer follow-up 3 (loader strictness on
+kernelPublicKey, order wording)") on `fix/trust-domain-binding`, pushed as
+an ordinary fast-forward. PR #1's head SHA, re-queried via both the REST
+and GraphQL APIs after the push, is `c8157ce275c824209aa258fe2fc796c8a8e8503d`,
+the exact commit pushed, confirmed to contain `e7f174f` as an ancestor.
+
+### Ground rules re-confirmed
+
+- Private fork only; no release, no publish, no tag.
+- No change under `docs/a2a/v1/vectors/`.
+- No `vaid_mint` core change, in any language: this follow-up touched only
+  `docs/a2a/v1/extension.md` and the `vaid-a2a` package.
+- No force-push used; the one push in this follow-up was an ordinary
+  fast-forward of a branch that was already current.
+- No em-dashes introduced in this follow-up's new text in
+  `docs/a2a/v1/extension.md`, `python/vaid-a2a/vaid_a2a/verifier.py`,
+  `python/vaid-a2a/tests/test_verifier.py`, or this report section.
