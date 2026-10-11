@@ -44,8 +44,22 @@ echo "==> Python"
   > "$OUT/python.json"
 
 echo "==> TypeScript"
-(cd "$REPO_ROOT/typescript/vaid-mint" && npm run --silent build >/dev/null \
-  && node scripts/emit-unknown-scope-kind-verdict.mjs) > "$OUT/typescript.json"
+# Build from the WORKSPACE ROOT, not from vaid-mint. vaid-mint imports vaid-pop,
+# whose declarations only exist once vaid-pop is built, so `npm run build` inside
+# vaid-mint fails from a clean checkout with "Cannot find module 'vaid-pop'". The
+# root script builds in dependency order.
+#
+# The build output goes to a file and is PRINTED ON FAILURE rather than discarded.
+# Sending it to /dev/null is what made the first CI failure of this script
+# undiagnosable: tsc writes its errors to stdout, so the job reported exit 2 with
+# nothing to read.
+if ! npm run --silent build --prefix "$REPO_ROOT/typescript" > "$OUT/tsbuild.log" 2>&1; then
+  echo "TypeScript build FAILED:" >&2
+  cat "$OUT/tsbuild.log" >&2
+  exit 1
+fi
+(cd "$REPO_ROOT/typescript/vaid-mint" && node scripts/emit-unknown-scope-kind-verdict.mjs) \
+  > "$OUT/typescript.json"
 
 echo
 echo "==> diff Rust vs Python"
