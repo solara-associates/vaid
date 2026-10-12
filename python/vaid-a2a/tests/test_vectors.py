@@ -89,6 +89,6 @@ def test_all_vectors_covered() -> None:
 
     The floor tracks the number of vectors that actually exist. Left at a
     stale lower number it stops being a guard against anything but total
-    absence: with 12 vectors published, a floor of 6 would let half of them
-    disappear and still report a clean pass."""
-    assert len(_vector_files()) >= 12
+    absence: with 14 vectors published, a floor of 6 would let more than half
+    of them disappear and still report a clean pass."""
+    assert len(_vector_files()) >= 14

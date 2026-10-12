@@ -47,10 +47,10 @@ from vaid_mint.revocation import InMemoryRevocationList
 from vaid_a2a import METADATA_CHAIN_KEY, METADATA_VAID_KEY, verify_a2a_message
 
 #: The number of vectors the extension publishes. A floor, not a target: left at
-#: a stale lower number it stops guarding anything but total absence — with 12
-#: vectors bundled, a floor of 6 would let half of them vanish from a wheel and
-#: still report a clean pass. Raise it when a vector is added.
-EXPECTED_VECTOR_COUNT = 12
+#: a stale lower number it stops guarding anything but total absence — with 14
+#: vectors bundled, a floor of 6 would let more than half of them vanish from a
+#: wheel and still report a clean pass. Raise it when a vector is added.
+EXPECTED_VECTOR_COUNT = 14
 
 
 class ConformanceError(AssertionError):

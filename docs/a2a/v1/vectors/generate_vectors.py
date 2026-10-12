@@ -92,13 +92,28 @@ def sign(
     *,
     agent_id: str,
     parent_vaid: str | None,
-    scope: list[str],
+    scope: list[str] | None = None,
+    raw_scope_boundary: list[dict] | None = None,
     caps: list[str],
     expires_at: str = FAR_FUTURE,
     issued_at: str = ISSUED_AT,
     trust_domain: str = TRUST_DOMAIN,
     tenant: str = TENANT,
+    extra_fields: dict | None = None,
 ) -> dict:
+    # ``scope`` is written as bare strings at every call site below and typed
+    # HERE, once. Since ADR-0009 a boundary entry is ``{"kind", "value"}``,
+    # and v4 defines exactly one kind, so every entry built this way is a
+    # ``prefix``. ``raw_scope_boundary`` is the escape hatch vectors 13 and 14
+    # need: an entry of a kind this repo's own producers never emit (13), or
+    # extra top-level document fields that are not scope_boundary at all (14)
+    # — neither is reachable by typing bare strings as ``prefix`` entries.
+    if raw_scope_boundary is not None:
+        if scope is not None:
+            raise ValueError("pass scope or raw_scope_boundary, not both")
+        scope_boundary = raw_scope_boundary
+    else:
+        scope_boundary = [prefix_entry(value) for value in (scope or [])]
     unsigned = build_unsigned_vaid_document(
         vaid_id=agent_id,
         agent_id=agent_id,
@@ -109,18 +124,17 @@ def sign(
         expires_at=expires_at,
         public_key_der=AGENT_PUBLIC_KEY_DER,
         parent_vaid=parent_vaid,
-        # ``scope`` is written as bare strings at every call site below and
-        # typed HERE, once. Since ADR-0009 a boundary entry is
-        # ``{"kind", "value"}``, and v4 defines exactly one kind, so every
-        # entry in these vectors is a ``prefix``. Naming the kind in one place
-        # keeps the case table readable and leaves exactly one line to change
-        # when a vector first needs a different kind.
-        scope_boundary=[prefix_entry(value) for value in scope],
+        scope_boundary=scope_boundary,
         lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
         capability_set=caps,
         trust_domain=trust_domain,
         kernel_key_thumbprint=thumbprint,
     )
+    if extra_fields:
+        # Added BEFORE signing, so the extra member is inside the signed
+        # bytes (ADR-0006): the document is authentic WITH the field present,
+        # not merely tolerated as noise outside the signature.
+        unsigned = {**unsigned, **extra_fields}
     signature = key.sign(canonical_vaid_signing_bytes(unsigned))
     return {**unsigned, "kernel_signature": list(signature)}
 
@@ -448,6 +462,129 @@ def main() -> None:
             "be collapsed: 06 is an unknown key, 12 is a known key used "
             "outside the one domain it was trusted for."
         ),
+    })
+
+    # ── 13. Forward compatibility: an unrecognised scope_boundary kind ──────
+    #
+    # a2aproject/A2A#2028 fixture request #1. A hop carries a well-formed
+    # scope entry of a kind no verifier here recognises, alongside an entry
+    # that DOES match the requested action. Per spec §5 step 2a / ADR-0009
+    # S.10, a verifier MUST refuse the WHOLE boundary rather than fall back
+    # to the entries it can read, because an unrecognised kind can only ever
+    # narrow what the signer granted. The matching "prefix" entry is there
+    # on purpose, mirroring
+    # test_verifier.py's test_one_unreadable_entry_refuses_a_boundary_that_also_matches
+    # — a verifier that evaluates the union and stops at the first match
+    # never reaches the unreadable entry, and would wrongly ALLOW this
+    # vector.
+    #
+    # A ROOT leaf (no parent, no presented chain) ON PURPOSE, not a two-hop
+    # chain: per-hop attenuation (step 4) already refuses an unreadable
+    # boundary on EITHER side of a hop, but only where there IS a parent to
+    # attenuate against. A root reaches step 5 with no attenuation check ever
+    # having run over its own boundary, so a root is the one shape that
+    # isolates step 2a as the ONLY thing standing between this scope entry
+    # and an ALLOW — exactly the gap spec §5 step 2a's own rationale names
+    # ("a root leaf carrying an unrecognised kind would otherwise reach step
+    # 5 unchecked"). A two-hop version of this vector would also be refused
+    # by attenuation over the child's boundary, which would make it a weaker
+    # positive control: a verifier that skipped step 2a entirely could still
+    # pass a two-hop version of this vector for a reason that is not the one
+    # under test.
+    leaf13 = kernel_sign(
+        agent_id=vid(25), parent_vaid=None,
+        raw_scope_boundary=[
+            prefix_entry("data.acme.orders"),
+            {"kind": "amount_limit", "value": {"max": 100}},
+        ],
+        caps=["read"],
+    )
+    write_vector("13-unknown-scope-kind-future-compat", {
+        "description": (
+            "A root leaf (no parent, no presented chain) whose scope_boundary "
+            "carries two entries: a 'prefix' entry ('data.acme.orders') that "
+            "matches the requested action, and an 'amount_limit' entry of a "
+            "kind no verifier here recognises. The document is otherwise "
+            "authentic and unexpired. Per ADR-0009 S.10 one unreadable entry "
+            "refuses the WHOLE boundary even though another entry in it would "
+            "have matched: the unrecognised kind can only narrow what the "
+            "signer meant, so skipping it would grant authority the signer "
+            "withheld. It is a root ON PURPOSE: per-hop attenuation (spec §5 "
+            "step 4) only runs where there is a parent, so a root is the one "
+            "shape where step 2a is the ONLY check standing between this "
+            "boundary and an ALLOW, which is exactly why spec §5 places step "
+            "2a ahead of step 4 rather than relying on it. This is a refusal "
+            "over an AUTHENTIC document (the entry is well formed, only its "
+            "kind is unknown), never a parse failure — reporting it as "
+            "malformed bytes would accuse a correctly signed future-version "
+            "credential of being forged."
+        ),
+        "trust_config": trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme.orders",
+        "inputs": {"leaf": leaf13, "chain": []},
+        "revoked_vaid_ids": [],
+        "expected_result": "fail",
+        "expected_error_code": "unknown_scope_kind",
+    })
+
+    # ── 14. No privilege via an unused field ─────────────────────────────────
+    #
+    # a2aproject/A2A#2028 fixture request #2. The leaf is correctly signed
+    # OVER a top-level field, "x_elevated_scope_boundary", that it carries
+    # alongside its real "scope_boundary" — additive and preserved per
+    # ADR-0006, since an unrecognised DOCUMENT member sits outside every
+    # predicate a verifier computes (unlike an unrecognised member INSIDE a
+    # boundary entry, which S.11 refuses outright: that asymmetry is the
+    # whole point of ADR-0009). The extra field is shaped exactly like what a
+    # careless verifier might mistake for the real boundary: a wider
+    # scope_boundary that WOULD cover the requested action if read.
+    #
+    # The real scope_boundary ('data.acme.orders', same on root and leaf — a
+    # no-op attenuation) does not cover the requested action
+    # ('data.acme.customers'). The correctly signed, authentic, properly
+    # attenuated chain is therefore refused for exactly the reason it would
+    # be refused with the extra field absent: out_of_scope. The extra field
+    # changes nothing, because nothing in the specified verification order
+    # ever reads it. A verifier that granted anything from
+    # "x_elevated_scope_boundary" — treated it as an override, a fallback, or
+    # a second boundary to union against — would wrongly ALLOW this vector.
+    root14 = kernel_sign(
+        agent_id=vid(27), parent_vaid=None,
+        scope=["data.acme.orders"], caps=["read"],
+    )
+    leaf14 = kernel_sign(
+        agent_id=vid(28), parent_vaid=vid(27),
+        scope=["data.acme.orders"], caps=["read"],
+        extra_fields={
+            "x_elevated_scope_boundary": [prefix_entry("data.acme")],
+        },
+    )
+    write_vector("14-no-privilege-via-unused-field", {
+        "description": (
+            "The leaf carries an extra top-level field, "
+            "'x_elevated_scope_boundary', signed over (authentic, not "
+            "inauthentic) and shaped like a WIDER scope_boundary "
+            "('data.acme' instead of the real 'data.acme.orders'). The real "
+            "scope_boundary is unchanged and properly attenuated from the "
+            "parent. The requested action ('data.acme.customers') is outside "
+            "the real scope_boundary but inside the fabricated one. Nothing "
+            "in spec §5's verification order reads any field but "
+            "scope_boundary for this check (ADR-0006: an unrecognised "
+            "top-level member is preserved and ignored, never promoted into "
+            "a predicate), so the correct verdict is identical to the same "
+            "chain with the extra field removed: fail, out_of_scope. A "
+            "verifier that read the extra field as an override, a fallback, "
+            "or a second scope to union against would ALLOW this request, "
+            "granting privilege the signer never put in scope_boundary."
+        ),
+        "trust_config": trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme.customers",
+        "inputs": {"leaf": leaf14, "chain": [root14]},
+        "revoked_vaid_ids": [],
+        "expected_result": "fail",
+        "expected_error_code": "out_of_scope",
     })
 
     print(f"\nkernel public key (vectors 01-05): base64url {b64url(KERNEL_PUBLIC_KEY)}")

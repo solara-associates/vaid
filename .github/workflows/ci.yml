@@ -782,7 +782,7 @@ jobs:
             ./python/vaid-a2a \
             ./python/vaid-adk \
             ./python/vaid-jwt-bridge
-      - name: vaid-a2a packaged firewall (extension verdicts, all 12 vectors)
+      - name: vaid-a2a packaged firewall (extension verdicts, all 14 vectors)
         run: vaid-a2a-conformance
       - name: vaid-adk packaged firewall (frozen chain verdicts, fail-closed denials)
         run: vaid-adk-conformance
