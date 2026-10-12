@@ -23,17 +23,18 @@ from __future__ import annotations
 import base64
 import binascii
 import enum
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from vaid_mint.attestation import AttestationBundle
 from vaid_mint.chain import (
     ChainVerification,
-    KernelKeyMap,
     PresentedBundle,
     verify_chain_at,
 )
 from vaid_mint.document import is_expired_at, is_in_scope
+from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import RevocationCheck, RevocationStatus, assemble_lineage
 from vaid_mint.verify import VaidVerdict, verify_vaid_authenticity_graded
 
@@ -129,37 +130,182 @@ _CHAIN_VERDICT_TO_CODE: dict[ChainVerification, VerifyCode] = {
 }
 
 
-def _b64url_decode(value: str) -> bytes:
-    """Decode base64url with or without the trailing ``=`` padding that
-    :func:`base64.urlsafe_b64encode` emits and that a hand-written
-    ``trustedIssuers`` entry may omit."""
-    padded = value + "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(padded)
+#: Length of a raw Ed25519 public key. ``trustedIssuers`` carries raw keys,
+#: never DER or PEM (spec §2.1), so this is the only accepted length.
+_ED25519_PUBLIC_KEY_BYTES = 32
+
+#: Unpadded base64url alphabet, anchored and non-empty. ``=`` is deliberately
+#: absent: spec §2.1 specifies the unpadded form, so a padded string is a
+#: padding error rather than an alternative spelling.
+_B64URL_UNPADDED = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _build_key_resolver(trust_config: dict) -> KernelKeyMap:
-    """Build a :class:`~vaid_mint.chain.KernelKeyMap` from an ``AgentCard``
-    extension entry's ``params`` shape — ``{"trustedIssuers": [{"trustDomain":
-    ..., "kernelPublicKey": "<base64url>"}]}`` (spec §2).
+def _strict_b64url_decode(value: str) -> bytes:
+    """Decode ``value`` as **strict unpadded base64url**, raising
+    :class:`ValueError` on anything that is not exactly that.
 
-    Every key is filed under the thumbprint :class:`KernelKeyMap` derives from
-    the key bytes themselves, never from a caller-supplied thumbprint — a
-    ``trustedIssuers`` entry with no parseable ``kernelPublicKey`` is skipped
-    rather than trusted on the strength of its other fields, since a
-    thumbprint or trust domain alone is not key material (spec §2's
-    ``trustedIssuers`` row).
+    Strict means all three of the following are errors, not inputs to be
+    repaired, because each of them makes the decoded bytes something other
+    than what the configuration file literally says (spec §2.1):
+
+    - a character outside the unpadded base64url alphabet, ``=`` included,
+      which :func:`base64.urlsafe_b64decode` would otherwise DISCARD, so
+      ``"!!!!"`` decoded to ``b""`` and was accepted as a key;
+    - a length that no base64 string can have (``len % 4 == 1``), and the
+      empty string, which decoded to zero bytes;
+    - a non-canonical encoding: a final character whose unused low bits are
+      not zero, so two distinct strings decode to the same bytes and the
+      thumbprint a reader derives by hand from the configured text need not
+      be the one the loader files the key under.
+
+    Canonicality is checked by re-encoding rather than by masking bits, so
+    the assertion is the one that matters directly: this string is the one
+    and only base64url spelling of these bytes.
+    """
+    if not _B64URL_UNPADDED.fullmatch(value):
+        raise ValueError(
+            "not strict unpadded base64url (allowed characters are A-Z, a-z, "
+            "0-9, '-' and '_', with no '=' padding, and the value must not "
+            "be empty)"
+        )
+    decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+        raise ValueError(
+            "non-canonical base64url: the trailing bits of the final "
+            "character are not zero, so this is not the unique encoding of "
+            "the bytes it decodes to"
+        )
+    return decoded
+
+
+@dataclass(frozen=True)
+class _TrustedIssuer:
+    """One resolved ``trustedIssuers`` entry: a kernel key, filed under its
+    own derived thumbprint, paired with the trust domain spec §2 declares
+    that key for. ``vaid_mint.chain.KernelKeyMap`` keeps only the key bytes
+    — correct for its own job, selecting a key to check a signature against
+    — so this extension keeps the pairing itself, the half spec §2's
+    ``trustedIssuers`` row and §5 step 1 both require ("a kernel public key
+    this agent trusts for the claimed ``trust_domain``") and that
+    ``vaid_mint.mint.tenant_attenuates`` documents as deliberately out of
+    band for ``vaid_mint`` to enforce on its own."""
+
+    public_key: bytes
+    trust_domain: str
+
+
+class _TrustedIssuerMap:
+    """Resolves a kernel key by thumbprint like
+    :class:`~vaid_mint.chain.KernelKeyMap` (and satisfies the same
+    ``KernelKeyResolver`` protocol, so it can be passed straight to
+    :func:`~vaid_mint.chain.verify_chain_at`), while also answering which
+    trust domain each resolved key is bound to."""
+
+    def __init__(self, entries: dict[str, _TrustedIssuer]) -> None:
+        self._entries = entries
+
+    def resolve_key(self, thumbprint: str) -> bytes | None:
+        entry = self._entries.get(thumbprint)
+        return entry.public_key if entry else None
+
+    def trust_domain_for(self, thumbprint: str) -> str | None:
+        """The trust domain this map's ``trustedIssuers`` configuration
+        binds to ``thumbprint``, or ``None`` if ``thumbprint`` resolves to no
+        trusted key."""
+        entry = self._entries.get(thumbprint)
+        return entry.trust_domain if entry else None
+
+
+class TrustedIssuersConfigError(ValueError):
+    """``trust_config.trustedIssuers`` itself is malformed in a way spec §2
+    forbids outright, rather than in a way that merely resolves to no
+    trusted key. Raised by :func:`_build_key_resolver`, never swallowed:
+    an operator who misconfigures this list needs to find out at startup,
+    not have it silently narrowed to "the entries we could make sense of"."""
+
+
+def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
+    """Build a :class:`_TrustedIssuerMap` from an ``AgentCard`` extension
+    entry's ``params`` shape — ``{"trustedIssuers": [{"trustDomain": ...,
+    "kernelPublicKey": "<base64url>"}]}`` (spec §2.1).
+
+    Every key is filed under the thumbprint it itself derives to, never from
+    a caller-supplied thumbprint, since a thumbprint alone is not key
+    material (spec §2's ``trustedIssuers`` row).
+
+    Every shape below is a configuration error, raised rather than skipped
+    or narrowed to a best-guess reading (:class:`TrustedIssuersConfigError`,
+    spec §2.1):
+
+    - An entry that is not an object, or has no parseable
+      ``kernelPublicKey``: missing entirely (``{}``), present but not a
+      string, or a string that is not **strict unpadded base64url decoding
+      to exactly 32 bytes** (the raw Ed25519 public key length). Strict
+      rules out a character outside the unpadded base64url alphabet,
+      ``=`` padding, and a non-canonical final character, each of which a
+      non-strict decoder would accept or quietly repair into bytes the
+      configuration never named. There is no reading of such an entry that
+      resolves to key material the loader could actually trust.
+    - An entry with a parseable ``kernelPublicKey`` but no ``trustDomain``:
+      a key with no domain it is trusted for binds to nothing, so accepting
+      it silently would make every document's claimed ``trust_domain``
+      effectively unchecked for that key.
+    - The same kernel public key listed more than once: whichever domain a
+      lookup happens to land on last at build time would otherwise decide,
+      silently, which domain that key is actually trusted for.
     """
     issuers = trust_config.get("trustedIssuers") or []
-    keys: list[bytes] = []
+    entries: dict[str, _TrustedIssuer] = {}
+    domains_by_thumbprint: dict[str, list[str]] = {}
     for entry in issuers:
-        raw = entry.get("kernelPublicKey") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict):
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry {entry!r} is not an "
+                "object, every entry must be {'trustDomain': ..., "
+                "'kernelPublicKey': ...} (spec §2.1)"
+            )
+        raw = entry.get("kernelPublicKey")
         if not isinstance(raw, str):
-            continue
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry {entry!r} has no "
+                "parseable kernelPublicKey, every entry must name the raw "
+                "kernel public key it trusts (spec §2.1)"
+            )
         try:
-            keys.append(_b64url_decode(raw))
-        except (binascii.Error, ValueError):
-            continue
-    return KernelKeyMap(keys)
+            key_bytes = _strict_b64url_decode(raw)
+        except (binascii.Error, ValueError) as exc:
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry for kernelPublicKey "
+                f"{raw!r} could not be decoded as strict unpadded base64url: "
+                f"{exc} (spec §2.1)"
+            ) from exc
+        if len(key_bytes) != _ED25519_PUBLIC_KEY_BYTES:
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry for kernelPublicKey "
+                f"{raw!r} decodes to {len(key_bytes)} bytes, a raw Ed25519 "
+                f"public key is exactly {_ED25519_PUBLIC_KEY_BYTES} bytes "
+                f"(spec §2.1)"
+            )
+        domain = entry.get("trustDomain")
+        if not isinstance(domain, str):
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry for kernel public key "
+                f"{raw!r} has no trustDomain, every entry must name the "
+                "domain its key is trusted for (spec §2.1)"
+            )
+        thumbprint = kernel_key_thumbprint(key_bytes)
+        domains_by_thumbprint.setdefault(thumbprint, []).append(domain)
+        entries[thumbprint] = _TrustedIssuer(public_key=key_bytes, trust_domain=domain)
+
+    for thumbprint, domains in domains_by_thumbprint.items():
+        if len(domains) > 1:
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers lists kernel key thumbprint "
+                f"{thumbprint!r} more than once, for domains {domains!r}, "
+                "a key must be trusted for exactly one trust_domain, never "
+                "whichever domain the last entry happened to list (spec §2.1)"
+            )
+    return _TrustedIssuerMap(entries)
 
 
 def verify_a2a_message(
@@ -167,7 +313,7 @@ def verify_a2a_message(
     *,
     trust_config: dict,
     revocation: RevocationCheck,
-    requested_action: str | None = None,
+    requested_action: str | None,
     now: datetime | None = None,
     require_vaid: bool = False,
 ) -> VerifyResult:
@@ -182,9 +328,12 @@ def verify_a2a_message(
         function — the caller owns that, exactly as ``vaid_mint`` requires.
     :param requested_action: the resource/action the message is asking this
         agent to perform, checked against the leaf's own ``scope_boundary``
-        (spec §5 step 5, ``vaid_mint.document.is_in_scope``). ``None`` skips
-        that step — appropriate when the caller enforces it elsewhere, or when
-        this call is only checking standing, not a specific action.
+        (spec §5 step 5, ``vaid_mint.document.is_in_scope``). Required, with
+        no default, so that skipping this check is always a decision a
+        caller makes by name — passing ``None`` explicitly — never something
+        that happens because a caller forgot the argument. Pass ``None``
+        only when the caller enforces this check elsewhere, or when this
+        call is checking standing rather than a specific action.
     :param now: the verification instant. Defaults to the system clock;
         pass an explicit value for a reproducible verdict (replaying a vector,
         a historical decision) rather than asserting against whenever this
@@ -202,6 +351,15 @@ def verify_a2a_message(
     raise convention.
     """
     now = now or datetime.now(timezone.utc)
+
+    # Built first, before any metadata-shaped early return below, so a
+    # malformed trust_config (spec §2: duplicate key across trust domains,
+    # or an entry missing trustDomain) always raises
+    # TrustedIssuersConfigError, independent of whether this particular
+    # message happens to carry a VAID at all. A config mistake is a defect
+    # in the caller's configuration, not a property of any one request.
+    keys = _build_key_resolver(trust_config)
+
     metadata = message.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
@@ -239,23 +397,43 @@ def verify_a2a_message(
             "VAID document objects",
         )
 
-    keys = _build_key_resolver(trust_config)
-
-    # ── Step 1: signature / authenticity of the LEAF ──
+    # ── Step 1: signature / authenticity of the LEAF, including the LEAF's
+    # own trust-domain binding ──
     #
-    # Resolved and checked ahead of verify_chain_at so an unrecognised issuer
-    # (ISSUER_MISMATCH) is distinguishable from a recognised issuer whose
+    # The binding check (spec §2's trustedIssuers row pairs a trust domain
+    # with a key; §5 step 1 requires "a kernel public key this agent trusts
+    # for the claimed trust_domain") runs first, ahead of the signature
+    # check, so an unrecognised issuer or a misbound domain (ISSUER_MISMATCH)
+    # is distinguishable from a recognised, correctly-bound issuer whose
     # signature does not verify (INAUTHENTIC) — chain.py's own key-resolution
     # closure collapses both into INAUTHENTIC, which is correct for a chain
     # hop but loses a distinction §5's audit-trail note asks the extension to
     # keep for the leaf.
+    #
+    # Deliberately scoped to the LEAF alone: this check must run, and fail
+    # on the leaf's own defects, before anything about the presented chain
+    # is examined. A misbound ancestor is a step 3 concern (below); folding
+    # it in here would make the leaf's own INAUTHENTIC/ISSUER_MISMATCH
+    # outcome depend on what else happens to be present in /vaidChain, which
+    # is the exact nondeterminism this ordering exists to remove (spec §5,
+    # "the order is load-bearing").
     thumbprint = leaf.get("kernel_key_thumbprint")
     key = keys.resolve_key(thumbprint) if isinstance(thumbprint, str) else None
     if key is None:
         return _deny(
             VerifyCode.ISSUER_MISMATCH,
-            f"no trusted kernel key for thumbprint {thumbprint!r} — this issuer "
+            f"no trusted kernel key for thumbprint {thumbprint!r}, this issuer "
             "is not in trust_config.trustedIssuers",
+        )
+    bound_domain = keys.trust_domain_for(thumbprint)
+    if bound_domain != leaf.get("trust_domain"):
+        return _deny(
+            VerifyCode.ISSUER_MISMATCH,
+            f"leaf claims trust_domain {leaf.get('trust_domain')!r}, but kernel "
+            f"key thumbprint {thumbprint!r} is trusted under "
+            f"trust_config.trustedIssuers only for {bound_domain!r}: a key is "
+            "trusted for the domain it is paired with, not for any domain a "
+            "document claims",
         )
     authenticity = verify_vaid_authenticity_graded(key, leaf)
     if authenticity is not VaidVerdict.VALID:
@@ -273,6 +451,28 @@ def verify_a2a_message(
 
     # ── Steps 3 and 4: chain integrity back to a trusted root, and per-hop
     # attenuation (scope, capabilities, tenant, expiry) ──
+    #
+    # Each presented chain document's own trust-domain binding is checked
+    # first, over /vaidChain only (the leaf was already settled in step 1),
+    # and only once the leaf itself has cleared steps 1-2, so a bad leaf
+    # signature is always INAUTHENTIC on its own, never pre-empted by an
+    # unrelated wrong-domain ancestor elsewhere in the presented chain (spec
+    # §5 step 3 states this ordering explicitly).
+    for doc in chain_raw:
+        doc_thumbprint = doc.get("kernel_key_thumbprint")
+        if not isinstance(doc_thumbprint, str):
+            continue
+        doc_bound_domain = keys.trust_domain_for(doc_thumbprint)
+        if doc_bound_domain is not None and doc_bound_domain != doc.get("trust_domain"):
+            return _deny(
+                VerifyCode.ISSUER_MISMATCH,
+                f"document {doc.get('vaid_id')!r} claims trust_domain "
+                f"{doc.get('trust_domain')!r}, but kernel key thumbprint "
+                f"{doc_thumbprint!r} is trusted under trust_config.trustedIssuers "
+                f"only for {doc_bound_domain!r}: a key is trusted for the domain "
+                "it is paired with, not for any domain a document claims",
+            )
+
     bundle = PresentedBundle(chain_raw)
     chain_verdict = verify_chain_at(keys, leaf, bundle, AttestationBundle(), now)
     if chain_verdict is not ChainVerification.ATTENUATED:
