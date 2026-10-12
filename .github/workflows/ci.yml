@@ -48,15 +48,32 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
+      # ONE pip invocation, not six. This is what makes the in-repo dependency
+      # ceilings (#118) actually gate, and the difference is not cosmetic.
+      #
+      # Installed one at a time, pip resolves each command in isolation and is
+      # free to satisfy a ceiling by REPLACING a package this job already
+      # installed from the tree. With vaid-mint at 0.10.0 in the tree and
+      # vaid-a2a declaring vaid-mint<0.10, the sixth command downloaded
+      # vaid-mint 0.9.0 from PyPI, uninstalled the 0.10.0 built from this
+      # checkout, and exited 0. The job then tested a released wheel in place
+      # of the repository, and the ceiling that should have stopped the run
+      # had no effect at all.
+      #
+      # Passed together, every local path is a direct requirement in one
+      # resolution, so the same conflict is a loud ResolutionImpossible that
+      # names the two sides. A ceiling that contradicts the tree now fails the
+      # job instead of quietly rewriting the environment under it.
       - name: Install vaid-pop + vaid-mint + vaid-langchain + vaid-a2a + vaid-adk + vaid-jwt-bridge + test deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "./python/vaid-pop[test]"
-          python -m pip install "./python/vaid-mint[test]"
-          python -m pip install "./python/vaid-langchain[test]"
-          python -m pip install "./python/vaid-a2a[test]"
-          python -m pip install "./python/vaid-adk[test]"
-          python -m pip install "./python/vaid-jwt-bridge[test,service]"
+          python -m pip install \
+            "./python/vaid-pop[test]" \
+            "./python/vaid-mint[test]" \
+            "./python/vaid-langchain[test]" \
+            "./python/vaid-a2a[test]" \
+            "./python/vaid-adk[test]" \
+            "./python/vaid-jwt-bridge[test,service]"
       # Every Python package in this repository is exercised here. Three of
       # them were added late and for the same reason: before #120, #121 and
       # #111, vaid-adk, vaid-a2a and vaid-jwt-bridge each ran in no CI job at
