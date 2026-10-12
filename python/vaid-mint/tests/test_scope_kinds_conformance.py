@@ -168,3 +168,76 @@ def test_every_registered_kind_is_evaluable() -> None:
         assert entry_claimed_resource(entry) is not None, (
             f"{kind!r} has no attenuation projection"
         )
+
+
+# ── The same shape table, applied at the PRODUCER and LOCAL-VERIFIER surfaces ──
+#
+# `shape_cases` already pins the S.8 rule cross-language: all three
+# implementations read this one table, and the CI `cmp` job proves the three
+# vendored copies are byte-identical, so the RULE cannot drift. What it pinned
+# was the parse surface only, and that was the gap: Python and TypeScript both
+# applied the rule in `parse_vaid_document` and not in `mint_root`/`mint_child`
+# or `verify_vaid`, so a producer could mint a credential this very table
+# declares `unparseable` and have the local verifier call it valid.
+#
+# Driving the same cases through those two surfaces is what makes the agreement
+# cover them. A new vector would have been a second copy of this table; a new CI
+# job would have been a second copy of the `cmp` it already has.
+
+
+@pytest.mark.parametrize(
+    "case",
+    [c for c in VECTOR["shape_cases"] if c["expected_reason"] == "unparseable"],
+    ids=[
+        c["name"] for c in VECTOR["shape_cases"] if c["expected_reason"] == "unparseable"
+    ],
+)
+def test_the_mint_refuses_every_boundary_the_vector_calls_unparseable(case: dict) -> None:
+    """A producer must not be able to sign what no verifier can read."""
+    from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
+    from vaid_mint.error import MintError
+
+    mint = MintService(
+        ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(),
+        InMemoryAudit(),
+    )
+    with pytest.raises(MintError):
+        mint.mint_root(
+            VaidSeed(
+                agent_class="orchestrator",
+                version="1.0.0",
+                tenant_id="acme",
+                scope_boundary=json.loads(case["boundary_json"]),
+                capability_set=["read"],
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [c for c in VECTOR["shape_cases"] if c["expected_reason"] == "parsed"],
+    ids=[c["name"] for c in VECTOR["shape_cases"] if c["expected_reason"] == "parsed"],
+)
+def test_the_mint_accepts_every_boundary_the_vector_calls_parsed(case: dict) -> None:
+    """The positive half, and the one that keeps the gate from being written as
+    "only a prefix entry is acceptable": one of these cases is an UNRECOGNISED
+    kind, which is well formed and must mint even though it is refused at
+    verify as ``unknown_scope_kind``."""
+    from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
+    from vaid_mint.verify import parse_vaid_document
+
+    mint = MintService(
+        ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(),
+        InMemoryAudit(),
+    )
+    vaid = mint.mint_root(
+        VaidSeed(
+            agent_class="orchestrator",
+            version="1.0.0",
+            tenant_id="acme",
+            scope_boundary=json.loads(case["boundary_json"]),
+            capability_set=["read"],
+        )
+    )
+    # Minted AND parseable off the wire: the two surfaces agree.
+    assert parse_vaid_document(json.dumps(vaid)) is not None

@@ -36,9 +36,10 @@ from vaid_mint.document import (
     caps_contain,
     has_capability,
     is_in_scope,
+    is_well_formed_scope_boundary,
     scope_contains,
 )
-from vaid_mint.error import IdentityError, UnauthorizedError
+from vaid_mint.error import IdentityError, MintError, UnauthorizedError
 from vaid_mint.issuer import ReferenceIssuer
 from vaid_mint.mint_types import (
     MintChildResponse,
@@ -253,9 +254,42 @@ class MintService:
                 "cannot register a key you do not control"
             ) from exc
 
+    @staticmethod
+    def _require_well_formed_boundary(seed: VaidSeed) -> None:
+        """Refuse a seed whose ``scope_boundary`` is not a well-formed S.8
+        boundary, before anything is signed.
+
+        The SAME predicate the wire parser applies, so there is one rule and not
+        a mint-time copy of it. It is needed because Python has no
+        string-to-entry coercion: Rust's ``From<&str> for ScopeBoundaryEntry``
+        makes the v3 spelling a typed entry and TypeScript's types reject it at
+        compile time, while here ``scope_boundary=["data.acme"]`` was simply
+        carried through, signed, and accepted by ``verify_vaid``. Only
+        ``parse_vaid_document`` refused it, by which point the credential was
+        issued and the producer had been told it was fine.
+
+        A ``MintError`` and not an ``UnauthorizedError``: the seed is
+        malformed, which is a bad request, not an authority the caller was
+        denied.
+        """
+        if not is_well_formed_scope_boundary(seed.scope_boundary):
+            raise MintError(
+                "seed scope_boundary is not a well-formed S.8 boundary: each "
+                "entry must be an object carrying exactly `kind` and `value` "
+                "(ADR-0009). Since 0.10.0 a bare string is not a boundary "
+                "entry; build entries with "
+                "`vaid_mint.document.prefix_entry(\"...\")`. Refused here "
+                "rather than signed, because a document carrying this would be "
+                "rejected by every verifier that parses it off the wire."
+            )
+
     def mint_root(self, seed: VaidSeed, pop: MintPop | None = None) -> dict:
         """Mint a root/operator VAID. The authorization gate runs first; then, for
         a BYO-key seed, a valid PoP is required; otherwise generate-and-discard."""
+        # Shape before anything else: a seed that cannot produce a parseable
+        # document is refused before the authorization seam is consulted, so a
+        # malformed request is never recorded as an authorization decision.
+        self._require_well_formed_boundary(seed)
         # Root-mint authorization seam (defaults to PermitAll). First, before any
         # key work — a denied mint has no side effects.
         self._authz.authorize_root_mint(seed)
@@ -306,6 +340,12 @@ class MintService:
         live) are checked fail-closed BEFORE the PoP so a rejected delegation never
         burns a nonce. The child's expiry is clamped to the parent's at issuance and
         the issued document is checked against it (vaid#79)."""
+        # (0) Shape first, by the same predicate as mint_root: an unparseable
+        # boundary is refused before the attenuation ladder, so a malformed
+        # child is never reported as a scope escalation it was never coherent
+        # enough to attempt.
+        self._require_well_formed_boundary(seed)
+
         # (1) The parent's authority must have travelled — fail closed.
         if parent is None:
             raise UnauthorizedError(

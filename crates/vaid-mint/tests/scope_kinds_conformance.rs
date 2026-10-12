@@ -192,6 +192,81 @@ fn every_shape_case_matches_the_reference_gate() {
     }
 }
 
+/// The same shape table, applied at the DOCUMENT surface.
+///
+/// `every_shape_case_matches_the_reference_gate` above checks the rule over a
+/// bare boundary. This checks that a whole `Vaid` carrying such a boundary does
+/// not deserialize, which is what makes `verify_vaid` unreachable with one in
+/// Rust and is therefore why Rust needs no runtime well-formedness check in
+/// `mint_root`, `mint_child` or `verify_vaid`: `Vaid::scope_boundary` is
+/// `Vec<ScopeBoundaryEntry>`, the entry's fields are private, and every
+/// construction path applies `validate_scope_entry`.
+///
+/// Python and TypeScript DID need explicit gates at those surfaces, because in
+/// both a malformed boundary could be carried through the mint, signed, and
+/// accepted by the local verifier while the wire parser refused it. Their
+/// `scope_kinds` suites now drive these same cases through their mint and
+/// verify surfaces. One table, three languages, three surfaces.
+#[test]
+fn a_document_carrying_an_unparseable_shape_case_does_not_deserialize() {
+    let v = vector();
+    let template = serde_json::json!({
+        "sig_version": 4,
+        "vaid_id": "00000000-0000-4000-8000-000000000001",
+        "agent_id": "00000000-0000-4000-8000-000000000002",
+        "agent_class": "x",
+        "version": "1.0.0",
+        "tenant_id": "t",
+        "issued_at": "2026-06-04T12:00:00Z",
+        "expires_at": "2999-01-01T00:00:00Z",
+        "public_key_der": [],
+        "kernel_signature": [],
+        "parent_vaid": null,
+        "scope_boundary": [],
+        "lineage_hash": "lineage",
+        "capability_set": ["read"],
+        "trust_domain": "vaid.example",
+        "kernel_key_thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:x"
+    });
+    let mut checked = 0;
+    for case in &v.shape_cases {
+        let boundary: serde_json::Value =
+            serde_json::from_str(&case.boundary_json).expect("case is valid JSON");
+        let mut doc = template.clone();
+        doc["scope_boundary"] = boundary;
+        let text = serde_json::to_string(&doc).unwrap();
+        let parsed = serde_json::from_str::<vaid_mint::Vaid>(&text);
+        match case.expected_reason.as_str() {
+            "unparseable" => {
+                assert!(
+                    parsed.is_err(),
+                    "shape case {:?} must not deserialize as a document — {}",
+                    case.name,
+                    case.why
+                );
+                checked += 1;
+            }
+            // The positive half, which includes an UNRECOGNISED kind: well
+            // formed, so it must deserialize and be refused later at verify.
+            "parsed" => {
+                assert!(
+                    parsed.is_ok(),
+                    "shape case {:?} is well formed and must deserialize — {}",
+                    case.name,
+                    case.why
+                );
+                checked += 1;
+            }
+            other => panic!("unexpected expected_reason {other:?}"),
+        }
+    }
+    assert_eq!(
+        checked,
+        v.shape_cases.len(),
+        "every shape case must be exercised at the document surface"
+    );
+}
+
 /// The positive controls, counted. Without at least two the shape surface is
 /// satisfied by a gate that refuses every boundary, and without one of them being
 /// an UNRECOGNISED kind the parse/verify split of S.10 is untested: an

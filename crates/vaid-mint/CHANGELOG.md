@@ -23,6 +23,23 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
   exactly one kind, `prefix`, whose containment rule is ADR-0005's, unchanged: the
   typing changes the envelope and not the rule, so the segment-bounded matcher and
   every case in `scope_v1.json` are carried over as they were.
+- **No runtime well-formedness check was added to `mint_root`, `mint_child` or
+  `verify_vaid`, and that is deliberate.** `Vaid::scope_boundary` is
+  `Vec<ScopeBoundaryEntry>`, the entry's fields are private, and every
+  construction path applies `validate_scope_entry` (`prefix`, `new`,
+  `From<&str>`/`From<String>`, and `Deserialize`). A malformed boundary is
+  therefore unrepresentable rather than refused, so such a check would be
+  unreachable code and a second copy of a rule stated exactly once.
+
+  The Python and TypeScript mints DID need explicit gates at those surfaces,
+  because in both a malformed boundary could be carried through the mint, signed,
+  and accepted by the local verifier while the wire parser refused it. What is
+  added here instead is the evidence for the Rust claim:
+  `scope_kinds_conformance.rs` now drives every `shape_cases` entry through the
+  DOCUMENT surface, asserting that a `Vaid` carrying an `unparseable` boundary
+  does not deserialize and that a well-formed one (including an unrecognised
+  kind) does. If a future refactor loosens the field type or adds a constructor
+  that skips validation, those tests fail.
 - **`sig_version` moves from `3` to `4`**, and `VAID_SIG_VERSION_V3` is REMOVED
   rather than retained, as the v2 constant was before it: every use site becomes a
   compile error (or an import error), so none is missed. ADR-0008 makes

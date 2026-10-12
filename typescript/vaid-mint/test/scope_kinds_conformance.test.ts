@@ -28,9 +28,14 @@ import {
 } from '../src/document.js';
 import {
   AttenuationReason,
+  MintService,
   scopeAttenuatesWithin,
   scopeAttenuationReason,
 } from '../src/mint.js';
+import { InMemoryAudit } from '../src/audit.js';
+import { MintError } from '../src/error.js';
+import { ReferenceIssuer } from '../src/issuer.js';
+import { parseVaidDocument } from '../src/verify.js';
 
 interface ContainmentCase {
   name: string;
@@ -202,3 +207,55 @@ test('every registered kind is evaluable', () => {
     );
   }
 });
+
+// ── The same shape table, applied at the PRODUCER and LOCAL-VERIFIER surfaces ──
+//
+// The loop above pins the S.8 rule over a bare boundary, and all three
+// implementations read this one table (the CI `cmp` job proves the three
+// vendored copies are byte-identical), so the RULE cannot drift. What it pinned
+// was the parse surface only, and that was the gap: TypeScript and Python both
+// applied the rule in `parseVaidDocument` and not in `mintRoot`/`mintChild` or
+// `verifyVaid`, so a producer could mint a credential this very table declares
+// `unparseable` and have the local verifier call it valid.
+//
+// Driving the same cases through those two surfaces is what makes the agreement
+// cover them. A new vector would have been a second copy of this table; a new CI
+// job would have been a second copy of the `cmp` it already has.
+//
+// Rust needs no equivalent: its `Vaid::scope_boundary` is
+// `Vec<ScopeBoundaryEntry>` with private fields and validating constructors, so
+// a malformed boundary is unrepresentable rather than refused. Its
+// `scope_kinds_conformance.rs` drives these cases through the DOCUMENT surface
+// to pin exactly that.
+
+for (const c of VECTOR.shape_cases) {
+  test(`shape at the mint surface: ${c.name}`, async () => {
+    const service = new MintService(
+      ReferenceIssuer.ephemeral(1).assumingNothingRevoked(),
+      new InMemoryAudit(),
+    );
+    const seed = {
+      agentClass: 'orchestrator',
+      version: '1.0.0',
+      tenantId: 'acme',
+      scopeBoundary: JSON.parse(c.boundary_json) as never,
+      capabilitySet: ['read'],
+    };
+    if (c.expected_reason === 'unparseable') {
+      // A producer must not be able to sign what no verifier can read.
+      await assert.rejects(
+        service.mintRoot({ seed }),
+        (error: Error) => error instanceof MintError,
+        c.why,
+      );
+      return;
+    }
+    // The positive half, which includes an UNRECOGNISED kind: well formed, so it
+    // must mint and parse, and is refused later at verify as
+    // `unknown_scope_kind`. This is what stops the gate from being written as
+    // "only a prefix entry is acceptable", which would pass every negative case
+    // above and silently close the extension point ADR-0009 exists to open.
+    const { vaid } = await service.mintRoot({ seed });
+    assert.notEqual(parseVaidDocument(JSON.stringify(vaid)), null, c.why);
+  });
+}

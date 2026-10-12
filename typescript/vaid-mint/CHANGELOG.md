@@ -31,6 +31,28 @@ version number.
   exactly one kind, `prefix`, whose containment rule is ADR-0005's, unchanged: the
   typing changes the envelope and not the rule, so the segment-bounded matcher and
   every case in `scope_v1.json` are carried over as they were.
+- **The shape rule is enforced at the PRODUCER and the LOCAL VERIFIER too, not
+  only at the wire parser, and the checks are at RUNTIME.** `mintRoot` and
+  `mintChild` refuse a seed whose `scopeBoundary` is not a well-formed S.8
+  boundary (a `MintError`, thrown before the authorization seam and before any
+  key work), and `ReferenceIssuer.verifyVaid` denies a document whose boundary is
+  malformed. Both use the one predicate `isWellFormedScopeBoundary`, so there is
+  a single rule and no mint-time copy of it.
+
+  Runtime rather than type-level because the types are not the gate here. `tsc`
+  already rejects the pre-0.10.0 `scopeBoundary: ['data.acme']` spelling, but a
+  plain JavaScript caller gets no such gate, and neither does typed code that
+  parsed JSON and asserted a shape with `as`. Without these checks such a
+  boundary was carried through the mint, signed, and accepted by `verifyVaid`,
+  and refused only by `parseVaidDocument` off the wire.
+
+  An **absent** `scopeBoundary` is still legitimate and still normalises to `[]`
+  (unrestricted). An explicit `null` is now refused: the guard tests
+  `=== undefined` rather than using `??`, because collapsing `null` into "absent"
+  made a caller passing `null` mint the WIDEST possible boundary from a value the
+  specification calls malformed, and did so in this language only. A well-formed
+  entry of an **unrecognised kind** still mints and still parses, and is refused
+  at verify as `unknown_scope_kind` (S.10).
 - **`sig_version` moves from `3` to `4`**, and `VAID_SIG_VERSION_V3` is REMOVED
   rather than retained, as the v2 constant was before it: every use site becomes a
   compile error (or an import error), so none is missed. ADR-0008 makes

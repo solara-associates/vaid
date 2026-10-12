@@ -53,6 +53,7 @@ from vaid_mint.document import (
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
     is_expired,
+    is_well_formed_scope_boundary,
 )
 from vaid_mint.revocation import (
     InMemoryLineageStore,
@@ -457,6 +458,18 @@ class ReferenceIssuer:
         A bad signature is ``False``, never an exception.
         """
         if vaid.get("sig_version") != VAID_SIG_VERSION_V4:
+            return False
+        # S.8 shape, by the SAME predicate the wire parser applies
+        # (`parse_vaid_document`'s member table). A local verifier must never
+        # accept what the wire parser rejects: without this, a document whose
+        # `scope_boundary` is a list of bare v3 strings verified here (the
+        # signature is over whatever bytes it carries, and every other check
+        # reads members this one does not) and was then refused by
+        # `parse_vaid_document` the moment it was read back off the wire. That
+        # split let a producer mint an unparseable credential and be told it was
+        # fine. Checked before expiry for the reason the member table exists at
+        # all: a shape complaint is about the document, not about its standing.
+        if not is_well_formed_scope_boundary(vaid.get("scope_boundary")):
             return False
         # TTL is enforced as a hard reject, not merely reported: an expired VAID
         # fails verification even with a valid kernel signature.

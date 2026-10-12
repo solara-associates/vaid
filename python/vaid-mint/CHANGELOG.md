@@ -29,6 +29,27 @@ language's behavior.
   exactly one kind, `prefix`, whose containment rule is ADR-0005's, unchanged: the
   typing changes the envelope and not the rule, so the segment-bounded matcher and
   every case in `scope_v1.json` are carried over as they were.
+- **The shape rule is enforced at the PRODUCER and the LOCAL VERIFIER too, not
+  only at the wire parser.** `mint_root` and `mint_child` refuse a seed whose
+  `scope_boundary` is not a well-formed S.8 boundary (a `MintError`, raised
+  before the authorization seam and before any key work, so a refused mint signs
+  nothing and audits nothing), and `ReferenceIssuer.verify_vaid` denies a
+  document whose boundary is malformed.
+
+  This closes a split in which the two disagreed. Python has no string-to-entry
+  coercion, so the pre-0.10.0 spelling `scope_boundary=["data.acme"]` was carried
+  through the mint, signed, and accepted by `verify_vaid`, and was refused only
+  by `parse_vaid_document` once the credential was read back off the wire: a
+  producer could mint a `sig_version` 4 credential that no verifier can parse and
+  be told it was fine. All three call sites use the one predicate
+  `is_well_formed_scope_boundary`, so there is a single rule and no mint-time
+  copy of it.
+
+  An **absent** boundary is still legitimate and still means unrestricted; an
+  explicit `None` is not, and is refused. A well-formed entry of an
+  **unrecognised kind** still mints and still parses, and is refused at verify as
+  `unknown_scope_kind` (S.10): conflating S.8 with S.10 would close the extension
+  point ADR-0009 exists to open.
 - **`sig_version` moves from `3` to `4`**, and `VAID_SIG_VERSION_V3` is REMOVED
   rather than retained, as the v2 constant was before it: every use site becomes a
   compile error (or an import error), so none is missed. ADR-0008 makes

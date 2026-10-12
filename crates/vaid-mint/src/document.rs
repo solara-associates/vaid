@@ -1284,6 +1284,66 @@ mod tests {
         assert!(ScopeBoundaryEntry::new("amount", serde_json::json!(100)).is_ok());
     }
 
+    // ---- S.8 at DOCUMENT level: `verify_vaid` cannot be reached with a
+    // malformed boundary, because the document does not deserialize ----
+    //
+    // Python and TypeScript needed an explicit well-formedness gate added to
+    // `mint_root`/`mint_child` and `verify_vaid`, because in both a malformed
+    // boundary could be carried through the mint, signed, and accepted by the
+    // local verifier while `parse_vaid_document` refused it off the wire.
+    //
+    // Rust cannot reach that state, and these tests pin WHY rather than leaving
+    // it as a claim about the type system. `Vaid::scope_boundary` is
+    // `Vec<ScopeBoundaryEntry>`; the entry's fields are private; and its only
+    // construction paths are `prefix` (valid by construction), `new` and
+    // `From<&str>`/`From<String>` (which apply `validate_scope_entry`), and
+    // `Deserialize` (same predicate, see the per-entry tests above). So no
+    // runtime check was added to `mint_root`, `mint_child` or `verify_vaid`
+    // here: it would be unreachable code and a second copy of a rule that is
+    // already stated exactly once.
+    //
+    // The risk that remains is a future refactor that loosens the field type or
+    // adds a constructor that skips validation. These tests fail if that
+    // happens.
+
+    fn vaid_json_with_boundary(boundary: serde_json::Value) -> String {
+        let mut v = serde_json::to_value(doc(vec!["data.x"], vec!["read"])).unwrap();
+        v["scope_boundary"] = boundary;
+        serde_json::to_string(&v).unwrap()
+    }
+
+    // The enumeration of malformed shapes lives in `scope_kinds_v1.json` and is
+    // driven over the document surface by
+    // `tests/scope_kinds_conformance.rs::a_document_carrying_an_unparseable_shape_case_does_not_deserialize`,
+    // so the case table is stated once and all three languages read the same one.
+    // What remains here are the controls that table cannot express: that the
+    // typed form round-trips, and that an unrecognised KIND is well formed.
+
+    /// Positive control for the conformance loop: the identical construction
+    /// with typed entries round-trips. Without it, a `Vaid` that failed to
+    /// deserialize for an unrelated reason would pass that test.
+    #[test]
+    fn a_document_with_typed_entries_round_trips() {
+        let text =
+            vaid_json_with_boundary(serde_json::json!([{"kind": "prefix", "value": "data.x"}]));
+        let parsed = serde_json::from_str::<Vaid>(&text).expect("round-trips");
+        assert_eq!(parsed.scope_boundary().len(), 1);
+        assert_eq!(parsed.scope_boundary()[0].kind(), "prefix");
+    }
+
+    /// An unrecognised KIND is well formed, so the document must deserialize.
+    /// This is what stops the document-level gate from being written as "only a
+    /// prefix entry is acceptable", which would pass every test above and
+    /// silently close the extension point ADR-0009 exists to open. It is
+    /// refused at verify (S.10), which `verdict_v1` and the agreement job pin.
+    #[test]
+    fn a_document_with_an_unrecognised_kind_deserializes() {
+        let text =
+            vaid_json_with_boundary(serde_json::json!([{"kind": "amount_limit", "value": 100}]));
+        let parsed = serde_json::from_str::<Vaid>(&text).expect("deserializes");
+        assert!(!boundary_is_evaluable(parsed.scope_boundary()));
+    }
+
     /// THE SUBTLE ONE (S.10). `any()` over the entries finds the satisfied
     /// prefix and never reaches the entry it cannot read, so it returns true.
     /// An unrecognised kind can only ever NARROW what the signer meant, so an
