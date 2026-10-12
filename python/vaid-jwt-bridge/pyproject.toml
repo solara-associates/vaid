@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vaid-jwt-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Token bridge for the VAID standard: verify a full VAID delegation chain and, only on a full pass, exchange it for a short-lived standard JWT (EdDSA or ES256) a gateway can verify against a published JWKS, per docs/jwt/v1/profile.md."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,7 +34,7 @@ classifiers = [
 # itself canonicalizes a VAID document, so the digest is reproducible by a
 # third party using the same library).
 dependencies = [
-    "vaid-mint>=0.9.0,<0.10",
+    "vaid-mint>=0.10.0,<0.11",
     "jwcrypto>=1.5",
     "rfc8785>=0.1.2",
 ]

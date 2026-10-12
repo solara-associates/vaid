@@ -661,6 +661,53 @@ jobs:
       - name: TypeScript completion conformance gate (packaged firewall)
         run: node typescript/vaid-pop/dist/bin/conformance.js
 
+  unknown-scope-kind-agreement:
+    name: Unknown-scope-kind verdict agreement (Rust == Python == TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # `components` is named here and nowhere else in this file, and it is not
+      # cosmetic. rust-toolchain.toml requests rustfmt and clippy, so the first
+      # `cargo` invocation inside the repo makes rustup auto-install them ON TOP of
+      # the toolchain this action already placed, and that second install fails
+      # with "detected conflict: 'bin/cargo-clippy'". The other Rust jobs run a
+      # bare `cargo test` and happen not to trip it; this one runs cargo from a
+      # shell script under `set -e`, where the same failure is fatal to the whole
+      # script rather than to one step. Installing the components up front leaves
+      # rustup nothing to add.
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+          components: rustfmt, clippy
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install vaid-pop + vaid-mint
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./python/vaid-pop"
+          python -m pip install "./python/vaid-mint"
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      - name: Install TypeScript workspace
+        run: npm ci --prefix typescript
+      # Each language's own conformance test already checks its verdict against
+      # the vector, and all three agreeing WITH THE VECTOR implies they agree with
+      # each other. That implication is only as good as the three harnesses being
+      # equivalent, and S.10 is where they are least likely to be: Rust gets its
+      # boundary shape gate from serde, Python and TypeScript hand-roll theirs, and
+      # the whole point of the rule is a document that PARSES in all three and is
+      # then refused by a VERDICT. An implementation refusing it at parse returns
+      # `unparseable` where the others return `unknown_scope_kind` — two refusals,
+      # identical booleans, different reasons. This diffs the reasons directly.
+      - name: Unknown-scope-kind verdict agreement (ADR-0009 S.10)
+        run: bash scripts/unknown_scope_kind_agreement.sh
+
   integration-packaged-firewalls:
     name: Integration packaged firewalls (vaid-a2a, vaid-adk, vaid-jwt-bridge) + A2A vector drift
     runs-on: ubuntu-latest
@@ -703,10 +750,38 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
+      # vaid-pop and vaid-mint come from THE TREE, in the same invocation, and
+      # both halves of that matter.
+      #
+      # From the tree, because resolving them from PyPI makes this job test the
+      # wrong code. Two of these firewalls read their frozen chain out of the
+      # INSTALLED vaid_mint (`files("vaid_mint")/vectors/chain_v1.json`), so a
+      # registry-resolved vaid-mint has this tree's verifiers checking a
+      # different release's vectors. That was invisible while the tree and the
+      # registry held the same vaid-mint version, and it stopped being invisible
+      # the moment the tree moved ahead: the ceiling `>=0.10.0,<0.11` has nothing
+      # on PyPI to satisfy it until 0.10.0 publishes, so the install failed
+      # outright with "No matching distribution found". The failure was the
+      # honest form of a job that had been resolving its most important
+      # dependency from the wrong place.
+      #
+      # NOT `--no-deps`, which would paper over exactly the contradiction this
+      # install is supposed to expose, and not a separate invocation per package,
+      # for the reason the `python` job states at length.
+      #
+      # This does not weaken what the job is for. Its subject is the packaged
+      # CONSOLE ENTRY POINT rather than pytest over the tree, and that is
+      # unchanged. Proving the integrations against the PUBLISHED dependency line
+      # is the `quickstart` job's deliberate and separately pinned business.
       - name: Install the three integration packages
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./python/vaid-a2a ./python/vaid-adk ./python/vaid-jwt-bridge
+          python -m pip install \
+            ./python/vaid-pop \
+            ./python/vaid-mint \
+            ./python/vaid-a2a \
+            ./python/vaid-adk \
+            ./python/vaid-jwt-bridge
       - name: vaid-a2a packaged firewall (extension verdicts, all 12 vectors)
         run: vaid-a2a-conformance
       - name: vaid-adk packaged firewall (frozen chain verdicts, fail-closed denials)

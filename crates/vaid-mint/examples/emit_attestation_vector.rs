@@ -22,6 +22,7 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 use uuid::Uuid;
 
 use vaid_mint::attestation::{canonical_attestation_signing_bytes, ConsentAttestation};
+use vaid_mint::document::ScopeBoundaryEntry;
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::VaidId;
 
@@ -58,7 +59,7 @@ fn main() {
         chrono::DateTime::parse_from_rfc3339("2026-06-05T12:00:00Z")
             .unwrap()
             .with_timezone(&chrono::Utc),
-        vec!["data.aifactory.sub".to_string()],
+        vec![ScopeBoundaryEntry::prefix("data.aifactory.sub")],
         vec!["read".to_string()],
         "a.example".to_string(),
         kernel_key_thumbprint(&kernel_pub),

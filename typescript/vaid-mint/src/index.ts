@@ -36,7 +36,7 @@
  * TypeScript), NOT byte-conformant against the managed authority's VAID format.
  *
  * ```ts
- * import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
+ * import { InMemoryAudit, MintService, ReferenceIssuer, prefixEntry } from 'vaid-mint';
  *
  * const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();
  * const mint = new MintService(issuer, new InMemoryAudit());
@@ -45,7 +45,7 @@
  *     agentClass: 'orchestrator',
  *     version: '1.0.0',
  *     tenantId: 'acme',
- *     scopeBoundary: ['data.acme'],
+ *     scopeBoundary: [prefixEntry('data.acme')],
  *     capabilitySet: ['read'],
  *   },
  * });
@@ -74,7 +74,16 @@ export {
   parseRfc3339,
   hasConformingTimestamps,
   isInScope,
-  VAID_SIG_VERSION_V3,
+  VAID_SIG_VERSION_V4,
+  RECOGNISED_SCOPE_KINDS,
+  SCOPE_KIND_PREFIX,
+  boundaryIsEvaluable,
+  entryClaimedResource,
+  entryIsEvaluable,
+  isWellFormedScopeBoundary,
+  isWellFormedScopeEntry,
+  prefixEntry,
+  type ScopeBoundaryEntry,
   type AgentClass,
   type AgentId,
   type Rfc3339Utc,
@@ -105,6 +114,8 @@ export {
   // all: Python exported it, Rust kept it crate-private, and this package
   // defined it as `export` in the module but never re-exported it here.
   scopeAttenuatesWithin,
+  scopeAttenuationReason,
+  AttenuationReason,
   // Expiry containment (vaid#79), both forms: over a parent document, and over two
   // bare timestamps — the form the mint needs before the child's document exists,
   // and the form `chain_expiry_v1.json` pins as a predicate.

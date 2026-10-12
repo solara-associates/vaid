@@ -18,7 +18,7 @@
 //! `attestation_v1` are untouched and are NOT re-frozen by this file's existence.
 
 use serde::Deserialize;
-use vaid_mint::scope_contains;
+use vaid_mint::{entry_claimed_resource, scope_contains, ScopeBoundaryEntry};
 
 const VECTOR_JSON: &str = include_str!("vectors/scope_v1.json");
 
@@ -35,7 +35,7 @@ struct Rule {
 
 #[derive(Deserialize)]
 struct Case {
-    boundary: Vec<String>,
+    boundary: Vec<ScopeBoundaryEntry>,
     resource: String,
     expected: bool,
     why: String,
@@ -79,7 +79,10 @@ fn the_vector_pins_cases_where_bare_prefix_matching_disagreed() {
         .iter()
         .filter(|c| !c.boundary.is_empty())
         .filter(|c| {
-            let old = c.boundary.iter().any(|s| c.resource.starts_with(s));
+            let old = c
+                .boundary
+                .iter()
+                .any(|e| entry_claimed_resource(e).is_some_and(|p| c.resource.starts_with(p)));
             old != c.expected
         })
         .count();

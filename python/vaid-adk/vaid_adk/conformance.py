@@ -53,6 +53,7 @@ from datetime import datetime
 from importlib.resources import files
 from typing import Callable
 
+from vaid_mint.document import entry_claimed_resource
 from vaid_mint.revocation import InMemoryRevocationList
 
 from vaid_adk import (
@@ -127,7 +128,13 @@ def _base(root: dict, mid: dict, leaf: dict, key: bytes) -> dict:
         "presentation": VaidPresentation(leaf=leaf, chain=(root, mid)),
         "keys": _trusted(leaf["trust_domain"], key),
         "revocation": _vouching(),
-        "requested_resource": leaf["scope_boundary"][0],
+        # Since ADR-0009 a boundary entry is a typed ``{kind, value}`` object,
+        # and ``requested_resource`` is a RESOURCE string. ``entry_claimed_resource``
+        # is vaid-mint's own projection from the one to the other, reused here so
+        # this firewall cannot branch on ``kind`` differently from the matcher it
+        # is testing. Indexing ``[0]`` and passing the dict through fed a dict to
+        # ``str.startswith`` inside ``scope_contains``.
+        "requested_resource": entry_claimed_resource(leaf["scope_boundary"][0]),
         "requested_capability": leaf["capability_set"][0],
     }
 

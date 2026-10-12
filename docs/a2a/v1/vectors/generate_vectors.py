@@ -29,6 +29,7 @@ from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
+    prefix_entry,
 )
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 
@@ -108,7 +109,13 @@ def sign(
         expires_at=expires_at,
         public_key_der=AGENT_PUBLIC_KEY_DER,
         parent_vaid=parent_vaid,
-        scope_boundary=scope,
+        # ``scope`` is written as bare strings at every call site below and
+        # typed HERE, once. Since ADR-0009 a boundary entry is
+        # ``{"kind", "value"}``, and v4 defines exactly one kind, so every
+        # entry in these vectors is a ``prefix``. Naming the kind in one place
+        # keeps the case table readable and leaves exactly one line to change
+        # when a vector first needs a different kind.
+        scope_boundary=[prefix_entry(value) for value in scope],
         lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
         capability_set=caps,
         trust_domain=trust_domain,

@@ -24,8 +24,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { scopeAttenuatesWithin } from '../src/mint.js';
+import { AttenuationReason, scopeAttenuatesWithin, scopeAttenuationReason } from '../src/mint.js';
 import { RevocationStatus } from '../src/revocation.js';
+import type { ScopeBoundaryEntry } from '../src/document.js';
 import {
   isVerdictValid,
   VaidVerdict,
@@ -39,8 +40,8 @@ interface VerdictCase {
   surface: 'standing' | 'attenuation';
   document_json?: string;
   revocation?: string;
-  parent_scope?: string[];
-  child_scope?: string[];
+  parent_scope?: ScopeBoundaryEntry[];
+  child_scope?: ScopeBoundaryEntry[];
   expected_valid: boolean;
   expected_reason: string;
 }
@@ -74,8 +75,17 @@ function evaluate(c: VerdictCase): { reason: string; valid: boolean } {
     );
     return { reason: verdict, valid: isVerdictValid(verdict) };
   }
+  const att = scopeAttenuationReason(c.parent_scope!, c.child_scope!);
   const ok = scopeAttenuatesWithin(c.parent_scope!, c.child_scope!);
-  return { reason: ok ? 'attenuated' : 'scope_escalation', valid: ok };
+  // The bool is DERIVED from the reason in the library. Asserted here so a build
+  // whose two answers disagree cannot pass: one rule with two readers is how the
+  // readers drift.
+  assert.equal(
+    ok,
+    att === AttenuationReason.Attenuated,
+    'the attenuation boolean and the attenuation reason disagree',
+  );
+  return { reason: att, valid: ok };
 }
 
 // THE ASSERTION. Both the reason and the boolean, per case.

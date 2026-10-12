@@ -1,11 +1,11 @@
 {
   "_comment": "Mint conformance vector (v1). Load-bearing. `input` is a real UNSIGNED VAID document (snake_case; the Rust `Vaid` has no serde rename), with `kernel_signature` empty. A conforming mint MUST produce `digest_sha256_hex` from `input` by nulling `kernel_signature`, canonicalizing per JCS (RFC 8785), and SHA-256; and (given the kernel seed) reproduce `ed25519.signature_hex` byte-for-byte. `input.lineage_hash` MUST equal sha256_hex(parent_vaid==null ? 'GENESIS:{agent_id}' : '{parent_vaid}:{agent_id}'), and `input.vaid_id` MUST equal `input.agent_id`. v3 (ADR-0004) adds `trust_domain` and `kernel_key_thumbprint`: the thumbprint MUST equal the RFC 9278 URI over the RFC 7638 JWK thumbprint of `ed25519.kernel_public_key_hex`, so a conforming verifier can check the document commits to the key that signed it. `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this vector publishes its own kernel private seed, so anyone can sign documents under it — a real trust domain here would be a published forgery generator for that deployment. RFC 2606 reserves `.example`, and a conforming verifier SHOULD refuse to bind a trust bundle to a special-use name. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
-  "digest_sha256_hex": "eef6c92fed497f5a2fc9abfc781b74da62bd54b8c66a2fcb6e7915d2d95d22f0",
+  "digest_sha256_hex": "9d353fa8929b6993470b086ac1d286d2d3c790eff7b989f12259dae137829982",
   "ed25519": {
     "_comment": "Deterministic kernel key (same RFC 8032 seed as operator_pop_v1.json). Any conforming mint derives the same kernel public key and produces the same signature over digest_sha256_hex.",
     "kernel_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
     "kernel_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
-    "signature_hex": "d45db8dfd9a58c67bd00e2f4af46ee6e4e4c55d262a451cbeab8876682ec11eac63ba326065a109a3666beca680e9f699dfeaa95c0dc8c59461f20765f297002"
+    "signature_hex": "2a5c21ccb96f75eed87e85de06676c8417e5f0dc2c0304b737f3c4e1dab79026413d5c107a2964dab40dd9fa721eb70328dd7e1172f717ee9a81aaeead79bf05"
   },
   "input": {
     "agent_class": "child",
@@ -54,9 +54,12 @@
       31
     ],
     "scope_boundary": [
-      "data.aifactory.sub"
+      {
+        "kind": "prefix",
+        "value": "data.aifactory.sub"
+      }
     ],
-    "sig_version": 3,
+    "sig_version": 4,
     "tenant_id": "aifactory",
     "trust_domain": "vaid.example",
     "vaid_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",

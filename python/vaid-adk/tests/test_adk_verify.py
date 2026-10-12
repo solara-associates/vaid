@@ -20,6 +20,7 @@ from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
+    prefix_entry,
 )
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import InMemoryRevocationList
@@ -55,7 +56,7 @@ def _doc(
         expires_at=expires_at,
         public_key_der=list(range(32)),
         parent_vaid=parent_vaid,
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
         capability_set=caps,
         trust_domain="vaid.example",
@@ -80,7 +81,7 @@ def _child(parent: dict, scope: list[str], caps: list[str], expires_at: str = "2
         expires_at=expires_at,
         public_key_der=list(range(32)),
         parent_vaid=parent["vaid_id"],
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         lineage_hash=compute_lineage_hash(parent["vaid_id"], agent_id),
         capability_set=caps,
         trust_domain="vaid.example",
@@ -91,6 +92,111 @@ def _child(parent: dict, scope: list[str], caps: list[str], expires_at: str = "2
 
 def _vouching_revocation() -> InMemoryRevocationList:
     return InMemoryRevocationList.assume_nothing_revoked()
+
+
+def _root_with_boundary(boundary: list[dict], caps: list[str]) -> dict:
+    """A root carrying ``boundary`` verbatim and authentically signed over it.
+    Separate from :func:`_root`, which types bare strings as ``prefix`` entries;
+    these tests need an entry of a kind this verifier does NOT recognise."""
+    agent_id = str(uuid.uuid4())
+    unsigned = build_unsigned_vaid_document(
+        vaid_id=agent_id,
+        agent_id=agent_id,
+        agent_class="test",
+        version="1.0.0",
+        tenant_id="acme",
+        issued_at="2026-06-01T00:00:00Z",
+        expires_at="2999-01-01T00:00:00Z",
+        public_key_der=list(range(32)),
+        parent_vaid=None,
+        scope_boundary=boundary,
+        lineage_hash=compute_lineage_hash(None, agent_id),
+        capability_set=caps,
+        trust_domain="vaid.example",
+        kernel_key_thumbprint=_THUMBPRINT,
+    )
+    return _sign(unsigned)
+
+
+#: An entry of a kind this verifier does not implement, shaped like the amount
+#: limit ADR-0009 names as the motivating future kind — so the case is an entry
+#: that NARROWS authority, not a nonsense one.
+_FUTURE_KIND_ENTRY = {"kind": "amount_limit", "value": 100}
+
+
+def test_unknown_scope_kind_is_refused_with_no_requested_resource() -> None:
+    """ADR-0009 S.10, and the case that makes the check load-bearing.
+
+    Authentic, unexpired, a root (no attenuation runs over it) and no
+    ``requested_resource``, so the leaf's own scope is never consulted. Every
+    other gate has nothing to say, and without an explicit evaluability step
+    this is ALLOWED while carrying a constraint the verifier could not read."""
+    root = _root_with_boundary([_FUTURE_KIND_ENTRY], ["read"])
+    result = verify_presentation(
+        VaidPresentation(leaf=root),
+        keys=_KEYS,
+        revocation=_vouching_revocation(),
+        requested_resource=None,
+        requested_capability=None,
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
+
+
+def test_unknown_scope_kind_is_not_reported_as_inauthentic() -> None:
+    """A verdict over an AUTHENTIC document, not a signature or parse failure
+    (ADR-0009 decision 3): calling a correctly signed future-version credential
+    forged is false and unactionable."""
+    root = _root_with_boundary([_FUTURE_KIND_ENTRY], ["read"])
+    result = verify_presentation(
+        VaidPresentation(leaf=root),
+        keys=_KEYS,
+        revocation=_vouching_revocation(),
+        requested_resource="data.orders",
+        requested_capability="read",
+        now=NOW,
+    )
+    assert result.code is not VerifyCode.INAUTHENTIC
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
+
+
+def test_one_unreadable_entry_refuses_a_boundary_that_also_matches() -> None:
+    """S.10 refuses the WHOLE boundary (ADR-0009 decision 4). The readable
+    ``prefix`` entry here does contain the requested resource, so a union
+    implemented as "at least one entry matched" would allow the call without
+    ever reaching the entry it cannot evaluate."""
+    root = _root_with_boundary(
+        [prefix_entry("data.orders"), _FUTURE_KIND_ENTRY], ["read"]
+    )
+    result = verify_presentation(
+        VaidPresentation(leaf=root),
+        keys=_KEYS,
+        revocation=_vouching_revocation(),
+        requested_resource="data.orders",
+        requested_capability="read",
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
+
+
+def test_unknown_scope_kind_in_a_presented_ancestor_is_refused() -> None:
+    """The check covers the presented chain, not only the leaf. An ancestor
+    whose boundary cannot be read bounds nothing this verifier can compute, so
+    no child is provably within it."""
+    root = _root_with_boundary([_FUTURE_KIND_ENTRY], ["read"])
+    child = _child(root, ["data.orders"], ["read"])
+    result = verify_presentation(
+        VaidPresentation(leaf=child, chain=(root,)),
+        keys=_KEYS,
+        revocation=_vouching_revocation(),
+        requested_resource="data.orders",
+        requested_capability="read",
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
 
 
 def test_allowed_tool_call_within_scope_and_capability() -> None:

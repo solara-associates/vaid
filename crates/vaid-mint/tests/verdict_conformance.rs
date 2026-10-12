@@ -35,7 +35,8 @@ use std::collections::BTreeSet;
 
 use serde::Deserialize;
 use vaid_mint::{
-    scope_attenuates_within, verify_vaid_standing_from_json, RevocationStatus, VaidVerdict,
+    scope_attenuates_within, scope_attenuation_reason, verify_vaid_standing_from_json,
+    AttenuationReason, RevocationStatus, ScopeBoundaryEntry, VaidVerdict,
 };
 
 const VECTOR_JSON: &str = include_str!("vectors/verdict_v1.json");
@@ -65,9 +66,9 @@ struct Case {
     #[serde(default)]
     revocation: Option<String>,
     #[serde(default)]
-    parent_scope: Option<Vec<String>>,
+    parent_scope: Option<Vec<ScopeBoundaryEntry>>,
     #[serde(default)]
-    child_scope: Option<Vec<String>>,
+    child_scope: Option<Vec<ScopeBoundaryEntry>>,
     expected_valid: bool,
     expected_reason: String,
 }
@@ -118,9 +119,23 @@ fn evaluate(case: &Case, kernel_pk: &[u8]) -> (String, bool) {
                 .child_scope
                 .as_ref()
                 .expect("an attenuation case carries child_scope");
+            let reason = scope_attenuation_reason(parent, child);
             let ok = scope_attenuates_within(parent, child);
+            // The bool is DERIVED from the reason in the library. Asserted here
+            // so a build whose two answers disagree cannot pass: one rule with
+            // two readers is how the readers drift.
+            assert_eq!(
+                ok,
+                reason == AttenuationReason::Attenuated,
+                "the attenuation boolean and the attenuation reason disagree"
+            );
             (
-                if ok { "attenuated" } else { "scope_escalation" }.to_string(),
+                match reason {
+                    AttenuationReason::Attenuated => "attenuated",
+                    AttenuationReason::ScopeEscalation => "scope_escalation",
+                    AttenuationReason::UnknownScopeKind => "unknown_scope_kind",
+                }
+                .to_string(),
                 ok,
             )
         }

@@ -127,13 +127,17 @@ pub use chain::{
     KernelKeyResolver, PresentedBundle, SingleKernelKey,
 };
 pub use document::{
-    canonical_vaid_signing_bytes, caps_contain, compute_lineage_hash, has_duplicate_member_names,
-    scope_contains, AgentClass, AgentId, PresentedUuid, TenantId, Vaid, VaidId, SCOPE_SEPARATORS,
-    VAID_SIG_VERSION_V3,
+    boundary_is_evaluable, canonical_vaid_signing_bytes, caps_contain, compute_lineage_hash,
+    entry_claimed_resource, has_duplicate_member_names, scope_contains, AgentClass, AgentId,
+    PresentedUuid, ScopeBoundaryEntry, TenantId, Vaid, VaidId, RECOGNISED_SCOPE_KINDS,
+    SCOPE_KIND_PREFIX, SCOPE_SEPARATORS, VAID_SIG_VERSION_V4,
 };
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
-pub use mint::{scope_attenuates_within, MintService, MINT_POP_FRESHNESS_SECS};
+pub use mint::{
+    scope_attenuates_within, scope_attenuation_reason, AttenuationReason, MintService,
+    MINT_POP_FRESHNESS_SECS,
+};
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{
     assemble_lineage, InMemoryLineageStore, InMemoryRevocationList, LineageAssembly,

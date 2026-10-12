@@ -58,8 +58,13 @@ def test_the_packaged_firewall_passes_against_every_bundled_vector() -> None:
 
     # A predicate vector must still carry content, so "no digest" cannot become a
     # way to ship an empty vector past the firewall.
+    # `cases` for most predicate vectors; a vector with several named surfaces
+    # carries none, so count across all of them rather than report the one file
+    # whose shape is different as empty.
+    case_keys = ("cases", "containment_cases", "attenuation_cases", "shape_cases")
     for name in (n for n in covered if "digest_sha256_hex" not in result[n]):
-        assert result[name].get("cases"), (
+        counted = sum(len(result[name].get(k) or []) for k in case_keys)
+        assert counted, (
             f"{name} has neither a digest nor any cases — it asserts nothing"
         )
 

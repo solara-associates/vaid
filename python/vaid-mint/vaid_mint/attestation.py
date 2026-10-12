@@ -113,7 +113,7 @@ def build_unsigned_attestation(
     child_tenant_id: str,
     issued_at: str,
     expires_at: str,
-    scope_boundary: list[str],
+    scope_boundary: list[dict],
     capability_set: list[str],
     trust_domain: str,
     kernel_key_thumbprint: str,

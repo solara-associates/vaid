@@ -35,6 +35,7 @@ use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::revocation::{
     assemble_lineage, LineageAssembly, LineageResolver, ParentResolution, MAX_LINEAGE_DEPTH,
 };
+use vaid_mint::ScopeBoundaryEntry;
 use vaid_mint::{
     canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid, VaidId,
 };
@@ -113,7 +114,10 @@ impl LocalMint {
             (0u8..32).collect(),
             Vec::new(),
             parent_vaid,
-            scope.iter().map(|s| s.to_string()).collect(),
+            scope
+                .iter()
+                .map(|s| ScopeBoundaryEntry::prefix(*s))
+                .collect(),
             compute_lineage_hash(parent_vaid, &agent_id),
             caps.iter().map(|c| c.to_string()).collect(),
             trust_domain.to_string(),

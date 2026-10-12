@@ -24,9 +24,16 @@ use uuid::Uuid;
 
 use vaid_mint::issuer_identity::kernel_key_thumbprint;
 use vaid_mint::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
-    VaidId, VAID_SIG_VERSION_V3,
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, ScopeBoundaryEntry,
+    TenantId, Vaid, VaidId, VAID_SIG_VERSION_V4,
 };
+
+/// The instant the chain verdict is asserted AT, and it is NORMATIVE: a
+/// conforming implementation evaluates this chain at exactly this instant and
+/// not at its own clock. Added with vaid#79, which made chain verification
+/// refuse a chain with a lapsed ancestor; before it, the verdict was asserted
+/// against whatever the clock said and these documents expired on 2026-06-05.
+const VERIFICATION_INSTANT: &str = "2026-06-04T18:00:00Z";
 
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -45,7 +52,7 @@ struct Hop {
     agent_uuid: &'static str,
     agent_class: &'static str,
     parent_uuid: Option<&'static str>,
-    scope_boundary: Vec<String>,
+    scope_boundary: Vec<ScopeBoundaryEntry>,
     capability_set: Vec<String>,
 }
 
@@ -80,7 +87,7 @@ fn main() {
             agent_uuid: ROOT_UUID,
             agent_class: "orchestrator",
             parent_uuid: None,
-            scope_boundary: vec!["data.aifactory".to_string()],
+            scope_boundary: vec![ScopeBoundaryEntry::prefix("data.aifactory")],
             capability_set: vec!["read".to_string(), "write".to_string()],
         },
         Hop {
@@ -88,7 +95,7 @@ fn main() {
             agent_uuid: MID_UUID,
             agent_class: "planner",
             parent_uuid: Some(ROOT_UUID),
-            scope_boundary: vec!["data.aifactory.sub".to_string()],
+            scope_boundary: vec![ScopeBoundaryEntry::prefix("data.aifactory.sub")],
             capability_set: vec!["read".to_string()],
         },
         Hop {
@@ -96,7 +103,7 @@ fn main() {
             agent_uuid: LEAF_UUID,
             agent_class: "worker",
             parent_uuid: Some(MID_UUID),
-            scope_boundary: vec!["data.aifactory.sub.task".to_string()],
+            scope_boundary: vec![ScopeBoundaryEntry::prefix("data.aifactory.sub.task")],
             capability_set: vec!["read".to_string()],
         },
     ];
@@ -147,7 +154,7 @@ fn main() {
             "digest_sha256_hex": to_hex(&digest),
             "signature_hex": to_hex(signature.as_ref()),
             "document": {
-                "sig_version": VAID_SIG_VERSION_V3,
+                "sig_version": VAID_SIG_VERSION_V4,
                 "vaid_id": hop.agent_uuid,
                 "agent_id": hop.agent_uuid,
                 "agent_class": hop.agent_class,
@@ -181,6 +188,7 @@ fn main() {
         "expected": {
             "assembled_lineage": [ROOT_UUID, MID_UUID, LEAF_UUID],
             "verification": "attenuated",
+            "verification_instant": VERIFICATION_INSTANT,
         },
     });
     let contract_digest = {
@@ -192,27 +200,7 @@ fn main() {
     };
 
     let vector = serde_json::json!({
-        "_comment": "Chain-presentation conformance vector (v1), per ADR-0003 §3. ADDITIVE: it \
-                     introduces no new signed field and no new encoding rule inside signed bytes. \
-                     `mint_v1.json` and `mint_pop_v1.json` are untouched and are NOT re-frozen by \
-                     this vector's existence. Each entry of `chain` is an ordinary v3 VAID document, \
-                     UNSIGNED (`kernel_signature` empty); a conforming implementation MUST reproduce \
-                     each `digest_sha256_hex` by nulling `kernel_signature`, canonicalizing per JCS \
-                     (RFC 8785) and SHA-256, and MUST reproduce each `signature_hex` from the kernel \
-                     seed. What this vector pins BEYOND mint_v1 is the walk: presented with these \
-                     three documents (the leaf plus the two ancestors as a detached bundle), a \
-                     conforming verifier MUST assemble exactly `expected.assembled_lineage` — \
-                     ORDERED ROOT FIRST, LEAF LAST — and MUST reach `expected.verification`. \
-                     Authority narrows strictly at every hop in BOTH dimensions (scope by prefix \
-                     extension, capabilities by removal), and `tenant_id` and `trust_domain` are \
-                     constant across the chain, because cross-tenant delegation is denied at mint. \
-                     Revocation and expiry are NOT consulted by chain verification and are not \
-                     represented here. `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this \
-                     vector publishes its own kernel private seed, so anyone can sign documents \
-                     under it — a real trust domain here would be a published forgery generator for \
-                     that deployment. RFC 2606 reserves `.example`. Any drift is a break. \
-                     SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against \
-                     the closed VAID format.",
+        "_comment": "Chain-presentation conformance vector (v1), per ADR-0003 §3. ADDITIVE: it introduces no new signed field and no new encoding rule inside signed bytes. `mint_v1.json` and `mint_pop_v1.json` are untouched and are NOT re-frozen by this vector's existence. Each entry of `chain` is an ordinary v3 VAID document, UNSIGNED (`kernel_signature` empty); a conforming implementation MUST reproduce each `digest_sha256_hex` by nulling `kernel_signature`, canonicalizing per JCS (RFC 8785) and SHA-256, and MUST reproduce each `signature_hex` from the kernel seed. What this vector pins BEYOND mint_v1 is the walk: presented with these three documents (the leaf plus the two ancestors as a detached bundle), a conforming verifier MUST assemble exactly `expected.assembled_lineage` — ORDERED ROOT FIRST, LEAF LAST — and MUST reach `expected.verification`. Authority narrows strictly at every hop in BOTH dimensions (scope by prefix extension, capabilities by removal), and `tenant_id` and `trust_domain` are constant across the chain, because cross-tenant delegation is denied at mint. Revocation is NOT consulted by chain verification and is not represented here. EXPIRY NOW IS: since vaid#79, a chain with a lapsed ancestor is `expired` and a child outliving its parent is `not_attenuated`. This vector is a positive control for that rule — all three documents share one expiry, so containment holds with equality — and it is asserted at `expected.verification_instant`, without which the verdict below would be false. The negative cases live in `chain_expiry_v1.json`. `trust_domain` is `vaid.example`, RESERVED BY DESIGN: this vector publishes its own kernel private seed, so anyone can sign documents under it — a real trust domain here would be a published forgery generator for that deployment. RFC 2606 reserves `.example`. Any drift is a break. SELF-CONSISTENT within this repo only (Decision B) — NOT conformant against the closed VAID format.",
         "ed25519": {
             "_comment": "Deterministic kernel key (same RFC 8032 seed as mint_v1.json and \
                          operator_pop_v1.json). EVERY hop is signed by this ONE key: the chain is \
@@ -224,13 +212,10 @@ fn main() {
         "digest_sha256_hex": contract_digest,
         "chain": chain_json,
         "expected": {
-            "_comment": "`assembled_lineage` is the output of assembling the leaf's ancestry \
-                         against a bundle holding the other two documents: root first, leaf last. \
-                         `verification` is the verdict of full chain verification — authenticate \
-                         every document, pin each hop against the signed `parent_vaid`, then check \
-                         containment at every hop.",
+            "_comment": "`assembled_lineage` is the output of assembling the leaf's ancestry against a bundle holding the other two documents: root first, leaf last. `verification` is the verdict of full chain verification — authenticate every document, pin each hop against the signed `parent_vaid`, then check containment at every hop. `verification_instant` is the instant the verdict is asserted AT, and it is normative: a conforming implementation MUST evaluate this chain at exactly this instant, not at its own clock. It was added in the same change that made chain verification refuse a chain with a lapsed ancestor (vaid#79). Before that, the verdict below was asserted against whatever the clock said, and these three documents expired on 2026-06-05 — so from that date on, this vector was pinning ATTENUATED over a chain whose every ancestor was dead, and every implementation passed. The instant is inside `digest_sha256_hex` because it is part of the contract: the verdict does not mean anything without it. No document changed, no signed byte moved, no per-hop digest or signature moved, and `sig_version` is untouched; only the top-level contract digest, which covers this expectation, does.",
             "assembled_lineage": [ROOT_UUID, MID_UUID, LEAF_UUID],
             "verification": "attenuated",
+            "verification_instant": VERIFICATION_INSTANT,
         },
     });
 

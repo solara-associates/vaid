@@ -39,7 +39,8 @@
 use ring::signature::{UnparsedPublicKey, ED25519};
 
 use crate::document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, Vaid, VAID_SIG_VERSION_V3,
+    boundary_is_evaluable, canonical_vaid_signing_bytes, compute_lineage_hash, Vaid,
+    VAID_SIG_VERSION_V4,
 };
 
 /// Verify a VAID document's **authenticity** against an issuer's kernel **public**
@@ -166,6 +167,21 @@ pub enum VaidVerdict {
     /// [`Expired`](VaidVerdict::Expired) — the more serious reason wins, because
     /// "expired" invites a renewal that would hand a forger a fresh document.
     Expired,
+    /// Authentic and unexpired, and its `scope_boundary` carries a boundary kind
+    /// this implementation does not recognise (spec S.10, ADR-0009). Fails
+    /// closed.
+    ///
+    /// **Not** [`Unparseable`](VaidVerdict::Unparseable): the entry's shape is
+    /// well formed and only its `kind` is unknown, so the document parses and its
+    /// signature verifies. Collapsing the two would report an authentic,
+    /// correctly signed, future-version credential as malformed bytes, which is
+    /// the wrong accusation and one a holder cannot act on.
+    ///
+    /// This is the verdict that makes a future boundary kind an ADDITIVE change:
+    /// because an old verifier refuses a kind it has never heard of, a kind that
+    /// NARROWS authority cannot be silently dropped by the verifiers that most
+    /// need it.
+    UnknownScopeKind,
     /// Authentic and unexpired, but some VAID in its lineage is revoked (R.4.4).
     Revoked,
     /// Standing could not be determined: the revocation store could not be
@@ -195,6 +211,7 @@ impl VaidVerdict {
         VaidVerdict::LineageInconsistent,
         VaidVerdict::Inauthentic,
         VaidVerdict::Expired,
+        VaidVerdict::UnknownScopeKind,
         VaidVerdict::Revoked,
         VaidVerdict::Indeterminate,
     ];
@@ -225,6 +242,7 @@ impl VaidVerdict {
             VaidVerdict::LineageInconsistent => "lineage_inconsistent",
             VaidVerdict::Inauthentic => "inauthentic",
             VaidVerdict::Expired => "expired",
+            VaidVerdict::UnknownScopeKind => "unknown_scope_kind",
             VaidVerdict::Revoked => "revoked",
             VaidVerdict::Indeterminate => "indeterminate",
         }
@@ -245,6 +263,7 @@ impl VaidVerdict {
             "lineage_inconsistent" => VaidVerdict::LineageInconsistent,
             "inauthentic" => VaidVerdict::Inauthentic,
             "expired" => VaidVerdict::Expired,
+            "unknown_scope_kind" => VaidVerdict::UnknownScopeKind,
             "revoked" => VaidVerdict::Revoked,
             "indeterminate" => VaidVerdict::Indeterminate,
             _ => return None,
@@ -272,7 +291,7 @@ impl std::fmt::Display for VaidVerdict {
 /// [`Revoked`](VaidVerdict::Revoked) or [`Indeterminate`](VaidVerdict::Indeterminate):
 /// authenticity is not standing. Use [`verify_vaid_standing`] for that.
 pub fn verify_vaid_authenticity_graded(kernel_public_key: &[u8], vaid: &Vaid) -> VaidVerdict {
-    if vaid.sig_version() != VAID_SIG_VERSION_V3 {
+    if vaid.sig_version() != VAID_SIG_VERSION_V4 {
         return VaidVerdict::UnsupportedSigVersion;
     }
     if !crate::issuer_identity::is_valid_trust_domain(vaid.trust_domain()) {
@@ -332,6 +351,17 @@ pub fn verify_vaid_standing(
     }
     if vaid.is_expired() {
         return VaidVerdict::Expired;
+    }
+    // S.10, placed HERE deliberately. After the signature, because a
+    // content-level complaint about bytes that have not been authenticated is
+    // meaningless and the right answer there is `Inauthentic`. After expiry,
+    // because expiry is the cheaper and more actionable fact where both hold.
+    // Before revocation, because a credential that can never be used should not
+    // cost a lookup, and because revocation is the one input that can be
+    // unavailable. Inserting it here changes no pre-existing verdict: no
+    // document in any existing vector carries an unrecognised kind.
+    if !boundary_is_evaluable(vaid.scope_boundary()) {
+        return VaidVerdict::UnknownScopeKind;
     }
     match revocation {
         RevocationStatus::NotRevoked => VaidVerdict::Valid,

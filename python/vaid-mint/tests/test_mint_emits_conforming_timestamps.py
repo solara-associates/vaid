@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 
+from vaid_mint.document import prefix_entry
 from vaid_mint import (
     InMemoryAudit,
     MintService,
@@ -42,7 +43,7 @@ def _mint_one() -> dict:
             agent_class="conformance",
             version="1.0.0",
             tenant_id="acme",
-            scope_boundary=["data.acme"],
+            scope_boundary=[prefix_entry("data.acme")],
             capability_set=["read"],
         )
     )

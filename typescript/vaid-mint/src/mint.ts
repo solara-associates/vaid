@@ -26,11 +26,15 @@ import {
   hasCapability,
   isExpired,
   isInScope,
+  isWellFormedScopeBoundary,
   parseRfc3339,
+  boundaryIsEvaluable,
+  entryClaimedResource,
   scopeContains,
+  type ScopeBoundaryEntry,
   type Vaid,
 } from './document.js';
-import { IdentityError, UnauthorizedError } from './error.js';
+import { IdentityError, MintError, UnauthorizedError } from './error.js';
 import type { VaidIssuer } from './issuer.js';
 import {
   buildMintPopPayload,
@@ -48,6 +52,51 @@ import {
 export const MINT_POP_FRESHNESS_SECS = 300;
 
 /**
+ * Refuse a seed whose `scopeBoundary` is not a well-formed S.8 boundary, before
+ * anything is signed.
+ *
+ * The SAME predicate the wire parser applies, so there is one rule rather than a
+ * mint-time copy of it.
+ *
+ * **This is a runtime check in a typed codebase on purpose.** `VaidSeed` types
+ * the field as `ScopeBoundaryEntry[]`, so `tsc` already rejects the pre-0.10.0
+ * `scopeBoundary: ['data.acme']` spelling. A plain JavaScript caller gets no such
+ * gate, and neither does typed code that parsed JSON and asserted a shape with
+ * `as`. Without this the bare list was carried through, signed, and accepted by
+ * `verifyVaid`, and only `parseVaidDocument` refused it, by which point the
+ * credential was issued and the producer had been told it was fine.
+ *
+ * A `MintError` and not an `UnauthorizedError`: the seed is malformed, which is
+ * a bad request, not an authority the caller was denied.
+ */
+function requireWellFormedBoundary(seed: VaidSeed): void {
+  // `scopeBoundary` is OPTIONAL on `VaidSeed`, and an ABSENT one is legitimate:
+  // it normalises to `[]`, the unrestricted boundary (E.7). So `undefined` is
+  // allowed through.
+  //
+  // `null` is NOT, and the difference is why this is an `=== undefined` test
+  // rather than `??`. `null` is not a value the declared type admits, the wire
+  // form refuses it (`scope_kinds_v1.json`'s "boundary that is null is not a
+  // document"), and Python refuses it here too because its seed default is a
+  // real `[]` and `is_well_formed_scope_boundary(None)` is false. Collapsing
+  // `null` into "absent" with `??` would make a JavaScript caller passing
+  // `null` mint an UNRESTRICTED boundary, which is the widest possible reading
+  // of a value the specification calls malformed, and it would do it in one
+  // language only.
+  const boundary = seed.scopeBoundary === undefined ? [] : seed.scopeBoundary;
+  if (!isWellFormedScopeBoundary(boundary as unknown)) {
+    throw new MintError(
+      'seed scopeBoundary is not a well-formed S.8 boundary: each entry must ' +
+        'be an object carrying exactly `kind` and `value` (ADR-0009). Since ' +
+        '0.10.0 a bare string is not a boundary entry; build entries with ' +
+        "`prefixEntry('...')`. Refused here rather than signed, because a " +
+        'document carrying this would be rejected by every verifier that ' +
+        'parses it off the wire.',
+    );
+  }
+}
+
+/**
  * Scope attenuation: is every entry of `childScope` within `parent`'s scope? Uses
  * ONLY {@link isInScope} — the single scope matcher.
  *
@@ -57,8 +106,31 @@ export const MINT_POP_FRESHNESS_SECS = 300;
  * the parent. Fail closed: an empty child scope is permitted ONLY when the parent
  * is itself unrestricted (empty).
  */
-export function scopeAttenuates(parent: Vaid, childScope: readonly string[]): boolean {
+export function scopeAttenuates(
+  parent: Vaid,
+  childScope: readonly ScopeBoundaryEntry[],
+): boolean {
   return scopeAttenuatesWithin(parent.scope_boundary, childScope);
+}
+
+/**
+ * Why a child boundary does or does not attenuate its parent's.
+ *
+ * Three outcomes and not two, for the reason `verdict_v1.json` states for the
+ * standing surface: three implementations that refuse the same delegation for
+ * three different reasons agree on every boolean and disagree about what happened.
+ */
+export enum AttenuationReason {
+  /** Every entry of the child's boundary is within the parent's. */
+  Attenuated = 'attenuated',
+  /** The child names authority the parent does not hold. */
+  ScopeEscalation = 'scope_escalation',
+  /**
+   * One side carries a boundary kind this implementation cannot evaluate (spec
+   * S.10), so containment cannot be computed at all. NOT an escalation: the
+   * verifier is not saying the delegation is wider, it is saying it cannot tell.
+   */
+  UnknownScopeKind = 'unknown_scope_kind',
 }
 
 /**
@@ -70,14 +142,43 @@ export function scopeAttenuates(parent: Vaid, childScope: readonly string[]): bo
  * detached case is how the guard would be lost in one of them.
  */
 export function scopeAttenuatesWithin(
-  parentScope: readonly string[],
-  childScope: readonly string[],
+  parentScope: readonly ScopeBoundaryEntry[],
+  childScope: readonly ScopeBoundaryEntry[],
 ): boolean {
-  if (childScope.length === 0) {
-    // Child wants ⊤; allowed only if the parent is also ⊤.
-    return parentScope.length === 0;
+  return (
+    scopeAttenuationReason(parentScope, childScope) === AttenuationReason.Attenuated
+  );
+}
+
+/**
+ * THE attenuation rule. {@link scopeAttenuatesWithin} is `=== Attenuated` over
+ * this, so the bool and the reason cannot drift.
+ *
+ * **Both sides are checked for evaluability, not just the child.** An unreadable
+ * CHILD boundary cannot be shown to be within anything. An unreadable PARENT
+ * boundary bounds nothing this implementation can compute, so no child is provably
+ * within it. An implementation guarding only its input loses the second direction,
+ * and a boundary that is unreadable on BOTH sides is the case an equality
+ * short-circuit reports as attenuated while reading neither side.
+ */
+export function scopeAttenuationReason(
+  parentScope: readonly ScopeBoundaryEntry[],
+  childScope: readonly ScopeBoundaryEntry[],
+): AttenuationReason {
+  if (!boundaryIsEvaluable(parentScope) || !boundaryIsEvaluable(childScope)) {
+    return AttenuationReason.UnknownScopeKind;
   }
-  return childScope.every((s) => scopeContains(parentScope, s));
+  const attenuates =
+    childScope.length === 0
+      ? // Child wants ⊤; allowed only if the parent is also ⊤.
+        parentScope.length === 0
+      : childScope.every((entry) => {
+          const resource = entryClaimedResource(entry);
+          return resource !== null && scopeContains(parentScope, resource);
+        });
+  return attenuates
+    ? AttenuationReason.Attenuated
+    : AttenuationReason.ScopeEscalation;
 }
 
 /**
@@ -274,6 +375,11 @@ export class MintService {
   async mintRoot(request: MintVaidRequest): Promise<MintVaidResponse> {
     const seed = request.seed;
 
+    // Shape before anything else: a seed that cannot produce a parseable
+    // document is refused before the authorization seam is consulted, so a
+    // malformed request is never recorded as an authorization decision.
+    requireWellFormedBoundary(seed);
+
     // Root-mint authorization seam (defaults to PermitAll). Runs first, before
     // any key work or nonce consumption, so a denied mint has no side effects.
     await this.#authz.authorizeRootMint(seed);
@@ -329,6 +435,12 @@ export class MintService {
     request: MintVaidRequest,
     parent: Vaid | null | undefined,
   ): Promise<MintVaidResponse> {
+    // (0) Shape first, by the same predicate as mintRoot: an unparseable
+    // boundary is refused before the attenuation ladder, so a malformed child
+    // is never reported as a scope escalation it was never coherent enough to
+    // attempt.
+    requireWellFormedBoundary(request.seed);
+
     // (1) The parent's authority must have travelled — fail closed.
     if (!parent) {
       throw new UnauthorizedError(
@@ -486,7 +598,7 @@ function seedAttributes(seed: VaidSeed): {
   version: string;
   tenantId: string;
   parentVaid: string | null;
-  scopeBoundary: string[];
+  scopeBoundary: ScopeBoundaryEntry[];
   capabilitySet: string[];
 } {
   return {

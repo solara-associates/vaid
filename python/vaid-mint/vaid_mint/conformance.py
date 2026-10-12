@@ -51,9 +51,14 @@ from vaid_mint.chain import (
     verify_chain_at,
 )
 from vaid_mint.document import (
+    RECOGNISED_SCOPE_KINDS,
     SCOPE_SEPARATORS,
+    boundary_is_evaluable,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
+    entry_claimed_resource,
+    is_well_formed_scope_boundary,
+    prefix_entry,
     scope_contains,
 )
 from vaid_mint.mint_types import VaidSeed, build_mint_pop_payload
@@ -159,7 +164,7 @@ def check_mint_pop(v: dict) -> None:
             version="1.0.0",
             tenant_id="aifactory",
             parent_vaid=None,
-            scope_boundary=["data.aifactory"],
+            scope_boundary=[prefix_entry("data.aifactory")],
             capability_set=["read"],
             public_key_der=registered,
         ),
@@ -382,7 +387,11 @@ def check_scope(v: dict) -> None:
             positives += 1
         else:
             negatives += 1
-        if boundary and any(resource.startswith(s) for s in boundary) != expected:
+        old = any(
+            (p := entry_claimed_resource(e)) is not None and resource.startswith(p)
+            for e in boundary
+        )
+        if boundary and old != expected:
             disagreements += 1
 
     if not positives or not negatives:
@@ -398,6 +407,110 @@ def check_scope(v: dict) -> None:
     if declared != frozen:
         raise ConformanceError(
             f"separator set mismatch: implementation {declared!r} != vector {frozen!r}"
+        )
+
+
+def check_scope_kinds(v: dict) -> None:
+    """``scope_kinds_v1.json`` — the typed boundary (spec S.8 to S.12, ADR-0009).
+
+    Three surfaces in one file, because they share ONE recognised-kind registry
+    and splitting them is how the registry acquires two readers that disagree:
+    containment over a typed boundary, attenuation over two of them, and
+    parse-level acceptance of boundary bytes.
+
+    The declared ``rule.kinds`` is checked against
+    :data:`~vaid_mint.document.RECOGNISED_SCOPE_KINDS` directly, so a kind added
+    to the code without being added to the specification fails here, and so does
+    the reverse.
+    """
+    from vaid_mint.mint import (
+        AttenuationReason,
+        scope_attenuates_within,
+        scope_attenuation_reason,
+    )
+
+    declared = v.get("rule", {}).get("kinds")
+    if declared is None:
+        raise ConformanceError("scope-kinds vector declares no `rule.kinds`")
+    built = list(RECOGNISED_SCOPE_KINDS)
+    if declared != built:
+        raise ConformanceError(
+            f"recognised scope kinds disagree: vector declares {declared!r}, this "
+            f"build recognises {built!r} — a kind in one and not the other is a "
+            "fail-closed rule that fails open in whichever direction the gap runs"
+        )
+    if v["rule"].get("entry_members") != ["kind", "value"]:
+        raise ConformanceError("S.8 fixes the entry member set at exactly kind and value")
+
+    cases = v.get("containment_cases") or []
+    if not cases:
+        raise ConformanceError("scope-kinds vector carries no containment_cases")
+    for case in cases:
+        name = case["name"]
+        boundary = case["boundary"]
+        if not is_well_formed_scope_boundary(boundary):
+            raise ConformanceError(f"containment case {name!r} boundary is not well formed")
+        got = scope_contains(boundary, case["resource"])
+        if got != case["expected"]:
+            raise ConformanceError(
+                f"containment case {name!r}: expected {case['expected']} got {got}"
+            )
+        # The REASON, not merely the boolean: a refusal and an inability to
+        # evaluate are different accusations that agree on every boolean.
+        if not boundary_is_evaluable(boundary):
+            reason = "unknown_scope_kind"
+        else:
+            reason = "contained" if got else "not_contained"
+        if reason != case["expected_reason"]:
+            raise ConformanceError(
+                f"containment case {name!r}: reason {reason!r} != frozen "
+                f"{case['expected_reason']!r}"
+            )
+
+    cases = v.get("attenuation_cases") or []
+    if not cases:
+        raise ConformanceError("scope-kinds vector carries no attenuation_cases")
+    for case in cases:
+        name = case["name"]
+        parent, child = case["parent_scope"], case["child_scope"]
+        att = scope_attenuation_reason(parent, child)
+        ok = scope_attenuates_within(parent, child)
+        if ok != (att is AttenuationReason.ATTENUATED):
+            raise ConformanceError(
+                f"attenuation case {name!r}: the boolean and the reason disagree"
+            )
+        if ok != case["expected_valid"] or att.value != case["expected_reason"]:
+            raise ConformanceError(
+                f"attenuation case {name!r}: got ({ok}, {att.value!r}), frozen "
+                f"({case['expected_valid']}, {case['expected_reason']!r})"
+            )
+
+    cases = v.get("shape_cases") or []
+    if not cases:
+        raise ConformanceError("scope-kinds vector carries no shape_cases")
+    parsed_controls = 0
+    for case in cases:
+        name = case["name"]
+        # Every case's bytes are themselves well-formed JSON, asserted here, so
+        # what is under test is the SHAPE gate and never the JSON parser.
+        try:
+            value = json.loads(case["boundary_json"])
+        except json.JSONDecodeError as exc:
+            raise ConformanceError(
+                f"shape case {name!r} is not valid JSON ({exc}) — it would be "
+                "testing the parser rather than the shape gate"
+            ) from exc
+        reason = "parsed" if is_well_formed_scope_boundary(value) else "unparseable"
+        if reason != case["expected_reason"]:
+            raise ConformanceError(
+                f"shape case {name!r}: {reason!r} != frozen {case['expected_reason']!r}"
+            )
+        if reason == "parsed":
+            parsed_controls += 1
+    if parsed_controls < 2:
+        raise ConformanceError(
+            "the shape surface needs at least two positive controls, one of them an "
+            "unrecognised kind — without them, refusing every boundary passes every case"
         )
 
 
@@ -474,7 +587,11 @@ def check_verdict(v: dict) -> None:
     BLOCKERs. A green firewall over a vector that asserts nothing is the
     masked-green defect this package keeps finding.
     """
-    from vaid_mint.mint import scope_attenuates_within
+    from vaid_mint.mint import (
+        AttenuationReason,
+        scope_attenuates_within,
+        scope_attenuation_reason,
+    )
     from vaid_mint.revocation import RevocationStatus
     from vaid_mint.verify import VaidVerdict, verify_vaid_standing_from_json
 
@@ -509,8 +626,18 @@ def check_verdict(v: dict) -> None:
             )
             reason, valid = verdict.code, verdict.is_valid()
         elif surface == "attenuation":
-            ok = scope_attenuates_within(c.get("parent_scope", []), c.get("child_scope", []))
-            reason, valid = ("attenuated" if ok else "scope_escalation"), ok
+            parent = c.get("parent_scope", [])
+            child = c.get("child_scope", [])
+            att = scope_attenuation_reason(parent, child)
+            ok = scope_attenuates_within(parent, child)
+            # The bool is DERIVED from the reason in the library; asserted here so
+            # a build whose two answers disagree cannot pass.
+            if ok != (att is AttenuationReason.ATTENUATED):
+                raise ConformanceError(
+                    f"verdict case {name!r}: the attenuation boolean and the "
+                    "attenuation reason disagree"
+                )
+            reason, valid = att.value, ok
         else:
             raise ConformanceError(f"verdict case {name!r} names unknown surface {surface!r}")
 
@@ -594,6 +721,7 @@ VECTOR_CHECKS = {
     "scope_v1.json": [check_scope],
     "roundtrip_v1.json": [check_roundtrip],
     "verdict_v1.json": [check_verdict],
+    "scope_kinds_v1.json": [check_scope_kinds],
 }
 
 
@@ -686,10 +814,15 @@ def main() -> int:
         # report. Say what it DID check rather than printing a blank, so the
         # output still evidences that this vector was looked at.
         vector = result[name]
+        # `cases` for most predicate vectors; a vector with several named surfaces
+        # carries none, so count across all of them rather than print a blank for
+        # the one file whose shape is different.
+        case_keys = ("cases", "containment_cases", "attenuation_cases", "shape_cases")
+        counted = sum(len(vector.get(k) or []) for k in case_keys)
         if "digest_sha256_hex" in vector:
             detail = vector["digest_sha256_hex"]
-        elif "cases" in vector:
-            detail = f"{len(vector['cases'])} case(s) — predicate vector, no digest"
+        elif counted:
+            detail = f"{counted} case(s) — predicate vector, no digest"
         else:
             detail = "(no digest)"
         print(f"  {name:22} {detail}")

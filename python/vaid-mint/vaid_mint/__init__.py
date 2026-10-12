@@ -36,14 +36,27 @@ The block below is executed by ``tests/test_docstring_examples.py``, which parse
 it out of this docstring and runs it. It cannot go stale without that test going
 red.
 
+**Since 0.10.0 each ``scope_boundary`` entry is a typed object**, built with
+:func:`~vaid_mint.document.prefix_entry` (ADR-0009). The pre-0.10.0 spelling
+``scope_boundary=["data.acme"]`` is worth naming because of HOW it fails: Python
+has no string-to-entry coercion (Rust's ``From<&str> for ScopeBoundaryEntry``
+has no Python equivalent), so the bare list is accepted by ``mint_root`` and by
+:meth:`~vaid_mint.issuer.ReferenceIssuer.verify_vaid`, which both work on the
+in-memory document, and is then refused by
+:func:`~vaid_mint.verify.parse_vaid_document` the moment the credential is read
+back off the wire. It produces a ``sig_version`` 4 document that no verifier can
+parse, with nothing failing at the point the mistake is made.
+
 Usage::
 
     from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
+    from vaid_mint import prefix_entry
 
     issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
     mint = MintService(issuer, InMemoryAudit())
     vaid = mint.mint_root(VaidSeed(agent_class="orchestrator", version="1.0.0",
-                                   tenant_id="acme", scope_boundary=["data.acme"],
+                                   tenant_id="acme",
+                                   scope_boundary=[prefix_entry("data.acme")],
                                    capability_set=["read"]))
     assert issuer.verify_vaid(vaid)
 """
@@ -68,7 +81,15 @@ from vaid_mint.chain import (
 )
 from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
 from vaid_mint.document import (
-    VAID_SIG_VERSION_V3,
+    VAID_SIG_VERSION_V4,
+    RECOGNISED_SCOPE_KINDS,
+    SCOPE_KIND_PREFIX,
+    boundary_is_evaluable,
+    entry_claimed_resource,
+    entry_is_evaluable,
+    is_well_formed_scope_boundary,
+    is_well_formed_scope_entry,
+    prefix_entry,
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
@@ -85,6 +106,8 @@ from vaid_mint.mint import (
     caps_attenuate,
     scope_attenuates,
     scope_attenuates_within,
+    scope_attenuation_reason,
+    AttenuationReason,
     tenant_attenuates,
 )
 from vaid_mint.mint_types import (
@@ -130,9 +153,19 @@ __all__ = [
     "has_capability",
     "scope_attenuates",
     "scope_attenuates_within",
+    "scope_attenuation_reason",
+    "AttenuationReason",
     "caps_attenuate",
     "tenant_attenuates",
-    "VAID_SIG_VERSION_V3",
+    "VAID_SIG_VERSION_V4",
+    "RECOGNISED_SCOPE_KINDS",
+    "SCOPE_KIND_PREFIX",
+    "boundary_is_evaluable",
+    "entry_claimed_resource",
+    "entry_is_evaluable",
+    "is_well_formed_scope_boundary",
+    "is_well_formed_scope_entry",
+    "prefix_entry",
     "MINT_POP_FRESHNESS_SECS",
     "DEFAULT_VAID_TTL_HOURS",
     "RevocationCheck",
@@ -177,4 +210,4 @@ __all__ = [
     "AuditError",
 ]
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"

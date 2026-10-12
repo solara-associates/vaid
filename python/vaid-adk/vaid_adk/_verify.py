@@ -27,7 +27,12 @@ from vaid_mint.chain import (
     PresentedBundle,
     verify_chain_at,
 )
-from vaid_mint.document import has_capability, is_expired_at, is_in_scope
+from vaid_mint.document import (
+    boundary_is_evaluable,
+    has_capability,
+    is_expired_at,
+    is_in_scope,
+)
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import RevocationCheck, RevocationStatus, assemble_lineage
 from vaid_mint.verify import VaidVerdict, verify_vaid_authenticity_graded
@@ -47,6 +52,7 @@ class VerifyCode(enum.Enum):
     LINEAGE_INCONSISTENT = "lineage_inconsistent"
     INAUTHENTIC = "inauthentic"
     EXPIRED = "expired"
+    UNKNOWN_SCOPE_KIND = "unknown_scope_kind"
     UNVERIFIABLE = "unverifiable"
     NOT_ATTENUATED = "not_attenuated"
     CONSENT_EXPIRED = "consent_expired"
@@ -432,6 +438,38 @@ def verify_presentation(
     # leaf's own expiry (only ancestors), so it is checked here.
     if is_expired_at(leaf, now):
         return _deny(VerifyCode.EXPIRED, "leaf VAID has passed its own expires_at")
+
+    # Step 2a: every presented boundary is one this verifier can read.
+    #
+    # ADR-0009 S.10. A `scope_boundary` entry carries a `kind`, and an entry
+    # whose kind this verifier does not recognise refuses the WHOLE boundary
+    # and so the whole call, because an unrecognised kind can only ever NARROW
+    # what the signer granted; reading past it would grant authority the signer
+    # withheld.
+    #
+    # Ordered as vaid_mint.verify.verify_vaid_standing orders it: after
+    # authenticity (a content complaint about unauthenticated bytes is
+    # meaningless), after expiry (the cheaper, more actionable fact where both
+    # hold), before revocation (a credential that can never be used should not
+    # cost a lookup).
+    #
+    # Before the chain steps and over the ancestors too, for the reason a
+    # chain check cannot cover: attenuation refuses an unreadable boundary on
+    # either side, but it only runs where there IS a parent. A ROOT leaf with
+    # an unknown kind would otherwise reach step 5 unchecked and, when
+    # `requested_resource` is None, be ALLOWED. Where attenuation does refuse
+    # it, it says `not_attenuated`, which names the wrong fault: the boundary
+    # was never read, so nothing was established about whether it attenuates.
+    for doc in (leaf, *presentation.chain):
+        boundary = doc.get("scope_boundary")
+        if not isinstance(boundary, list) or not boundary_is_evaluable(boundary):
+            return _deny(
+                VerifyCode.UNKNOWN_SCOPE_KIND,
+                f"document {doc.get('vaid_id')!r} carries a scope_boundary entry "
+                "of a kind this verifier does not recognise: refused rather than "
+                "evaluated from the entries it could read, because an "
+                "unrecognised kind can only narrow the authority granted",
+            )
 
     # Steps 3/4: chain integrity back to a trusted root, and per-hop
     # attenuation (scope, capabilities, tenant, expiry).

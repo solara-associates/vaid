@@ -21,6 +21,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import { hasConformingTimestamps } from '../src/document.js';
@@ -42,7 +43,7 @@ async function mintOne() {
       agentClass: 'conformance',
       version: '1.0.0',
       tenantId: 'acme',
-      scopeBoundary: ['data.acme'],
+      scopeBoundary: [prefixEntry('data.acme')],
       capabilitySet: ['read'],
     },
   });

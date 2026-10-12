@@ -27,7 +27,6 @@
 //!   it is empty, and a child presented against it resolves to
 //!   [`RevocationStatus::Unavailable`] rather than being mistaken for a root.
 
-
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, SubsecRound, Utc};
@@ -35,13 +34,14 @@ use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 
 use crate::document::{
-    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, TenantId, Vaid,
-    VaidId, VAID_SIG_VERSION_V3,
+    canonical_vaid_signing_bytes, compute_lineage_hash, AgentClass, AgentId, ScopeBoundaryEntry,
+    TenantId, Vaid, VaidId, VAID_SIG_VERSION_V4,
 };
 use crate::error::{MintError, MintResult};
 use crate::revocation::{
-    assemble_lineage, InMemoryLineageStore, InMemoryRevocationList, LineageAssembly, LineageResolver,
-    LineageStore, ParentResolution, RevocationBackend, RevocationCheck, RevocationStatus,
+    assemble_lineage, InMemoryLineageStore, InMemoryRevocationList, LineageAssembly,
+    LineageResolver, LineageStore, ParentResolution, RevocationBackend, RevocationCheck,
+    RevocationStatus,
 };
 
 /// The default issuance TTL, in hours, when a caller does not supply one. Short
@@ -104,7 +104,7 @@ pub trait VaidIssuer: Send + Sync {
         version: String,
         tenant_id: TenantId,
         parent_vaid: Option<VaidId>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
         public_key_der: Vec<u8>,
         not_after: Option<&str>,
@@ -120,7 +120,7 @@ pub trait VaidIssuer: Send + Sync {
         version: String,
         tenant_id: TenantId,
         parent_vaid: Option<VaidId>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
         not_after: Option<&str>,
     ) -> MintResult<Vaid>;
@@ -333,7 +333,6 @@ impl ReferenceIssuer {
         self
     }
 
-
     /// The kernel public key (raw 32 bytes) a verifier binds this issuer's VAIDs
     /// against.
     pub fn kernel_public_key(&self) -> &[u8] {
@@ -376,7 +375,7 @@ impl ReferenceIssuer {
         child_trust_domain: String,
         child_tenant_id: String,
         expires_at: DateTime<Utc>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
     ) -> crate::attestation::ConsentAttestation {
         // `issued_at` is the issuing instant, as it is for a minted document.
@@ -451,7 +450,7 @@ impl ReferenceIssuer {
         version: String,
         tenant_id: TenantId,
         parent_vaid: Option<VaidId>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
         public_key_der: Vec<u8>,
         not_after: Option<&str>,
@@ -539,7 +538,7 @@ impl VaidIssuer for ReferenceIssuer {
         version: String,
         tenant_id: TenantId,
         parent_vaid: Option<VaidId>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
         public_key_der: Vec<u8>,
         not_after: Option<&str>,
@@ -562,7 +561,7 @@ impl VaidIssuer for ReferenceIssuer {
         version: String,
         tenant_id: TenantId,
         parent_vaid: Option<VaidId>,
-        scope_boundary: Vec<String>,
+        scope_boundary: Vec<ScopeBoundaryEntry>,
         capability_set: Vec<String>,
         not_after: Option<&str>,
     ) -> MintResult<Vaid> {
@@ -586,7 +585,7 @@ impl VaidIssuer for ReferenceIssuer {
     }
 
     fn verify_vaid(&self, vaid: &Vaid) -> bool {
-        if vaid.sig_version() != VAID_SIG_VERSION_V3 {
+        if vaid.sig_version() != VAID_SIG_VERSION_V4 {
             return false;
         }
         // TTL is now enforced as a hard reject, not merely reported: an expired
@@ -637,7 +636,7 @@ mod tests {
             "a freshly issued VAID must verify"
         );
         assert_eq!(vaid.parent_vaid(), None);
-        assert_eq!(vaid.sig_version(), VAID_SIG_VERSION_V3);
+        assert_eq!(vaid.sig_version(), VAID_SIG_VERSION_V4);
     }
 
     #[test]
@@ -657,7 +656,10 @@ mod tests {
         // Re-serialize, widen the scope, deserialize — the signature no longer
         // covers the document.
         let mut val = serde_json::to_value(&vaid).unwrap();
-        val["scope_boundary"] = serde_json::json!(["data.x", "data.everything"]);
+        val["scope_boundary"] = serde_json::json!([
+            { "kind": "prefix", "value": "data.x" },
+            { "kind": "prefix", "value": "data.everything" }
+        ]);
         let forged: Vaid = serde_json::from_value(val).unwrap();
         assert!(
             !issuer.verify_vaid(&forged),
@@ -793,7 +795,10 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(issuer.revocation_status(&vaid), RevocationStatus::NotRevoked);
+        assert_eq!(
+            issuer.revocation_status(&vaid),
+            RevocationStatus::NotRevoked
+        );
         assert!(issuer.verify_vaid(&vaid));
         // And `revoke` still reaches the store the opt-in installed.
         issuer.revoke(vaid.vaid_id());

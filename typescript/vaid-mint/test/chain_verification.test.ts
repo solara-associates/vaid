@@ -26,6 +26,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { prefixEntry } from '../src/document.js';
 import { test } from 'node:test';
 
 import { ed25519PublicKey, ed25519Sign, type VaidId } from 'vaid-pop';
@@ -90,7 +91,7 @@ class LocalMint {
       expiresAt: '2999-01-01T00:00:00Z' as Vaid['expires_at'],
       publicKeyDer: Array.from({ length: 32 }, (_, i) => i),
       parentVaid,
-      scopeBoundary: scope,
+      scopeBoundary: scope.map(prefixEntry),
       lineageHash: computeLineageHash(parentVaid, agentId),
       capabilitySet: caps,
       // RFC 2606 reserved, matching the frozen vector's reasoning: a suite that

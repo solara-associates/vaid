@@ -18,7 +18,7 @@
 
 import type { Rfc3339Utc, TenantId, VaidId } from 'vaid-pop';
 
-import type { AgentClass, Vaid } from './document.js';
+import type { AgentClass, ScopeBoundaryEntry, Vaid } from './document.js';
 
 /** Requested attributes for a mint. */
 export interface VaidSeed {
@@ -28,7 +28,7 @@ export interface VaidSeed {
   /** Optional parent VAID (delegation lineage). `null` for root agents. */
   parentVaid?: VaidId | null;
   /** Data domains / resource namespaces this agent may operate within. */
-  scopeBoundary?: string[];
+  scopeBoundary?: ScopeBoundaryEntry[];
   /** Explicit capability grants at spawn — no ambient authority. */
   capabilitySet?: string[];
   /**
@@ -109,7 +109,7 @@ export interface MintPopPayload {
   agentClass: AgentClass;
   version: string;
   parentVaid: VaidId | null;
-  scopeBoundary: string[];
+  scopeBoundary: ScopeBoundaryEntry[];
   capabilitySet: string[];
   nonce: string;
   issuedAt: Rfc3339Utc;

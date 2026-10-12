@@ -35,6 +35,7 @@ from importlib.resources import files
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from vaid_mint.document import prefix_entry
 from vaid_mint.conformance import ConformanceError, check_mint_pop
 from vaid_mint.mint_types import VaidSeed, build_mint_pop_payload
 from vaid_pop import canonical_request_signing_bytes, verify_signed_payload
@@ -84,7 +85,7 @@ def test_payload_constructor_reproduces_the_frozen_payload() -> None:
             version="1.0.0",
             tenant_id="aifactory",
             parent_vaid=None,
-            scope_boundary=["data.aifactory"],
+            scope_boundary=[prefix_entry("data.aifactory")],
             capability_set=["read"],
             public_key_der=registered,
         ),

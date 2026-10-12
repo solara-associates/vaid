@@ -8,10 +8,19 @@
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import {
+  boundaryIsEvaluable,
+  entryClaimedResource,
+  isInScope,
+  isWellFormedScopeBoundary,
+  prefixEntry,
+} from '../src/document.js';
 import { test } from 'node:test';
 
 import {
   ed25519PublicKey,
+  ed25519Sign,
   randomEd25519Seed,
   signPayload,
   utcWholeSecondRfc3339,
@@ -19,18 +28,25 @@ import {
 
 import {
   buildMintPopPayload,
+  buildUnsignedVaidDocument,
+  canonicalVaidSigningBytes,
+  computeLineageHash,
   DenyAll,
   IdentityError,
   InMemoryAudit,
   MINT_POP_FRESHNESS_SECS,
+  MintError,
   MintService,
+  parseVaidDocument,
   ReferenceIssuer,
   UnauthorizedError,
+  verifyVaidAuthenticity,
   type MintPop,
   type MintVaidRequest,
   type Vaid,
   type VaidSeed,
 } from '../src/index.js';
+import { kernelKeyThumbprint } from '../src/issuerIdentity.js';
 
 function fixture(): { service: MintService; audit: InMemoryAudit; issuer: ReferenceIssuer } {
   const audit = new InMemoryAudit();
@@ -54,7 +70,7 @@ function byoSeed(publicKey: Uint8Array): VaidSeed {
     version: '1.0.0',
     tenantId: 'acme',
     parentVaid: null,
-    scopeBoundary: ['data.x'],
+    scopeBoundary: [prefixEntry('data.x')],
     capabilitySet: ['read'],
     publicKeyDer: publicKey,
   };
@@ -82,12 +98,12 @@ test('root generate-and-discard mints and audits', async () => {
       agentClass: 'researcher',
       version: '1.0.0',
       tenantId: 'acme',
-      scopeBoundary: ['data.governance'],
+      scopeBoundary: [prefixEntry('data.governance')],
       capabilitySet: ['read.documents'],
     },
   });
   assert.equal(vaid.agent_class, 'researcher');
-  assert.deepEqual(vaid.scope_boundary, ['data.governance']);
+  assert.deepEqual(vaid.scope_boundary, [prefixEntry('data.governance')]);
   assert.equal(vaid.parent_vaid, null);
   assert.equal(audit.length, 1);
   assert.equal(audit.entries()[0].eventType, 'vaid_minted');
@@ -170,7 +186,7 @@ function parentDoc(tenant: string, scope: string[], caps: string[]): Vaid {
     version: '1.0.0',
     tenantId: tenant,
     parentVaid: null,
-    scopeBoundary: scope,
+    scopeBoundary: scope.map(prefixEntry),
     capabilitySet: caps,
   });
 }
@@ -181,7 +197,7 @@ function childSeed(parent: Vaid, scope: string[], caps: string[], childPub: Uint
     version: '1.0.0',
     tenantId: parent.tenant_id,
     parentVaid: parent.vaid_id,
-    scopeBoundary: scope,
+    scopeBoundary: scope.map(prefixEntry),
     capabilitySet: caps,
     publicKeyDer: childPub,
   };
@@ -328,7 +344,7 @@ test('end-to-end: a minted child verifies against its issuer and is contained by
       agentClass: 'parent',
       version: '1.0.0',
       tenantId: 'aifactory',
-      scopeBoundary: ['data.aifactory'],
+      scopeBoundary: [prefixEntry('data.aifactory')],
       capabilitySet: ['read', 'write'],
     },
   });
@@ -338,7 +354,12 @@ test('end-to-end: a minted child verifies against its issuer and is contained by
   );
 
   assert.equal(issuer.verifyVaid(child), true, 'a minted child must verify against the issuer');
-  assert.ok(child.scope_boundary.every((s) => parent.scope_boundary.some((p) => s.startsWith(p))));
+  assert.ok(
+    child.scope_boundary.every((e) => {
+      const r = entryClaimedResource(e);
+      return r !== null && isInScope(parent, r);
+    }),
+  );
   assert.ok(child.capability_set.every((c) => parent.capability_set.includes(c)));
 });
 
@@ -409,7 +430,7 @@ test('delegation works across a second boundary', async () => {
       version: '1.0.0',
       tenantId: 'acme',
       parentVaid: null,
-      scopeBoundary: ['data.x'],
+      scopeBoundary: [prefixEntry('data.x')],
       capabilitySet: ['read'],
     },
   });
@@ -508,7 +529,7 @@ test('the root path is unclamped', async () => {
       version: '1.0.0',
       tenantId: 'acme',
       parentVaid: null,
-      scopeBoundary: ['data.x'],
+      scopeBoundary: [prefixEntry('data.x')],
       capabilitySet: ['read'],
     },
   });
@@ -566,7 +587,7 @@ test('a root mint is never bounded by a parent it does not have', async () => {
       version: '1.0.0',
       tenantId: 'acme',
       parentVaid: null,
-      scopeBoundary: ['data.x'],
+      scopeBoundary: [prefixEntry('data.x')],
       capabilitySet: ['read'],
     },
   });
@@ -589,4 +610,193 @@ test('the clamp is recorded in the audit trail', async () => {
   assert.equal(entry.details.expiry_bounded_by_parent, true);
   assert.equal(entry.details.expires_at, parent.expires_at);
   assert.equal(entry.details.parent_expires_at, parent.expires_at);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// S.8 well-formedness: the producer refuses what the wire parser would
+// ════════════════════════════════════════════════════════════════════════════
+//
+// These exist because the two disagreed. A malformed boundary was carried
+// through the mint, signed, and accepted by `verifyVaid`, and refused only by
+// `parseVaidDocument` once the credential was read back off the wire, so a
+// producer could mint an unparseable credential and be told it was fine.
+//
+// The checks are RUNTIME checks in a typed codebase on purpose. `VaidSeed`
+// types `scopeBoundary` as `ScopeBoundaryEntry[]`, so `tsc` already rejects the
+// pre-0.10.0 `['data.acme']` spelling. A plain JavaScript caller gets no such
+// gate, and neither does typed code that parsed JSON and asserted a shape with
+// `as`. That is what these casts simulate, and it is the only way a malformed
+// boundary arrives. Every case uses the SAME predicate the wire parser uses
+// (`isWellFormedScopeBoundary`), so there is one rule and not a mint-time copy.
+
+/** The malformed shapes S.8 names, each a separate reason to refuse. */
+const MALFORMED_BOUNDARIES: ReadonlyArray<readonly [string, unknown]> = [
+  ['bare-v3-string', ['data.acme']],
+  ['missing-value', [{ kind: 'prefix' }]],
+  ['missing-kind', [{ value: 'data.acme' }]],
+  ['extra-member', [{ kind: 'prefix', value: 'data.acme', max: 5 }]],
+  ['empty-kind', [{ kind: '', value: 'data.acme' }]],
+  ['prefix-value-not-a-string', [{ kind: 'prefix', value: 100 }]],
+  ['one-good-one-bare', [prefixEntry('data.acme'), 'data.other']],
+  ['boundary-not-a-list', 'data.acme'],
+];
+
+for (const [label, boundary] of MALFORMED_BOUNDARIES) {
+  test(`mintRoot refuses a malformed scope_boundary (${label})`, async () => {
+    const { service } = fixture();
+    await assert.rejects(
+      service.mintRoot({
+        seed: {
+          agentClass: 'orchestrator',
+          version: '1.0.0',
+          tenantId: 'acme',
+          scopeBoundary: boundary as never,
+          capabilitySet: ['read'],
+        },
+      }),
+      (error: Error) => error instanceof MintError && /well-formed S\.8 boundary/.test(error.message),
+    );
+  });
+
+  test(`mintChild refuses a malformed scope_boundary (${label})`, async () => {
+    const { service } = fixture();
+    const { vaid: parent } = await service.mintRoot({
+      seed: {
+        agentClass: 'orchestrator',
+        version: '1.0.0',
+        tenantId: 'acme',
+        scopeBoundary: [prefixEntry('data.acme')],
+        capabilitySet: ['read'],
+      },
+    });
+    const holder = holderKeypair();
+    await assert.rejects(
+      service.mintChild(
+        {
+          seed: {
+            agentClass: 'child',
+            version: '1.0.0',
+            tenantId: 'acme',
+            parentVaid: parent.vaid_id,
+            scopeBoundary: boundary as never,
+            capabilitySet: ['read'],
+            publicKeyDer: holder.publicKey,
+          },
+        },
+        parent,
+      ),
+      (error: Error) => error instanceof MintError,
+    );
+  });
+}
+
+test('a mintRoot refused for shape signs nothing and records nothing', async () => {
+  const { service, audit } = fixture();
+  await assert.rejects(
+    service.mintRoot({
+      seed: {
+        agentClass: 'orchestrator',
+        version: '1.0.0',
+        tenantId: 'acme',
+        scopeBoundary: ['data.acme'] as never,
+        capabilitySet: ['read'],
+      },
+    }),
+    (error: Error) => error instanceof MintError,
+  );
+  assert.equal(audit.isEmpty(), true, 'a shape-refused mint must not audit');
+});
+
+/** A fixed kernel seed, so these tests hold the signing key. */
+const SIGNING_SEED = new Uint8Array(32).fill(0x5a);
+
+/**
+ * An authentically signed document carrying `boundary` verbatim. Signed over its
+ * own bytes, so a denial cannot be a signature failure in disguise.
+ */
+function handBuilt(issuer: ReferenceIssuer, boundary: unknown): Vaid {
+  const id = randomUUID();
+  const unsigned = buildUnsignedVaidDocument({
+    vaidId: id,
+    agentId: id,
+    agentClass: 'hand-built',
+    version: '1.0.0',
+    tenantId: 'acme',
+    issuedAt: '2026-06-04T12:00:00Z',
+    expiresAt: '2999-01-01T00:00:00Z',
+    publicKeyDer: [],
+    parentVaid: null,
+    scopeBoundary: boundary as never,
+    lineageHash: computeLineageHash(null, id),
+    capabilitySet: ['read'],
+    trustDomain: 'vaid.example',
+    kernelKeyThumbprint: kernelKeyThumbprint(issuer.kernelPublicKey()),
+  });
+  const signature = ed25519Sign(canonicalVaidSigningBytes(unsigned), SIGNING_SEED);
+  return { ...unsigned, kernel_signature: Array.from(signature) } as Vaid;
+}
+
+for (const [label, boundary] of MALFORMED_BOUNDARIES) {
+  test(`verifyVaid denies a malformed scope_boundary (${label})`, () => {
+    const issuer = ReferenceIssuer.fromSeed(SIGNING_SEED, 1).assumingNothingRevoked();
+    const signed = handBuilt(issuer, boundary);
+    // The signature really is valid over these bytes. Without this the test
+    // would pass for the wrong reason on any future change.
+    assert.equal(verifyVaidAuthenticity(issuer.kernelPublicKey(), signed), true);
+    // And the wire parser rejects it, which is the behaviour verifyVaid must now
+    // agree with rather than contradict.
+    assert.equal(parseVaidDocument(JSON.stringify(signed)), null);
+    assert.equal(issuer.verifyVaid(signed), false);
+  });
+}
+
+test('verifyVaid accepts the same hand-built document with typed entries', () => {
+  const issuer = ReferenceIssuer.fromSeed(SIGNING_SEED, 1).assumingNothingRevoked();
+  const signed = handBuilt(issuer, [prefixEntry('data.acme')]);
+  assert.equal(issuer.verifyVaid(signed), true);
+  assert.notEqual(parseVaidDocument(JSON.stringify(signed)), null);
+});
+
+test('well-formed entries mint, verify and parse', async () => {
+  const { service, audit, issuer } = fixture();
+  const { vaid } = await service.mintRoot({
+    seed: {
+      agentClass: 'orchestrator',
+      version: '1.0.0',
+      tenantId: 'acme',
+      scopeBoundary: [prefixEntry('data.acme')],
+      capabilitySet: ['read'],
+    },
+  });
+  assert.equal(isWellFormedScopeBoundary(vaid.scope_boundary), true);
+  assert.equal(issuer.verifyVaid(vaid), true);
+  // The property the split used to break: what verifies locally also parses off
+  // the wire.
+  assert.notEqual(parseVaidDocument(JSON.stringify(vaid)), null);
+  assert.equal(audit.isEmpty(), false);
+});
+
+/**
+ * S.8 (shape) is not S.10 (recognised kinds), and conflating them would break
+ * extensibility. `{ kind: 'amount_limit', value: 100 }` is WELL FORMED and its
+ * kind is simply unknown here, so it must mint and parse; it is refused at
+ * VERIFY as `unknown_scope_kind`.
+ *
+ * This is the test that stops the new shape gate from being written as "only a
+ * prefix entry is acceptable", which would pass every other test in this
+ * section and silently close the extension point ADR-0009 exists to open.
+ */
+test('an unrecognised kind still mints and parses', async () => {
+  const { service } = fixture();
+  const { vaid } = await service.mintRoot({
+    seed: {
+      agentClass: 'orchestrator',
+      version: '1.0.0',
+      tenantId: 'acme',
+      scopeBoundary: [{ kind: 'amount_limit', value: 100 }] as never,
+      capabilitySet: ['read'],
+    },
+  });
+  assert.notEqual(parseVaidDocument(JSON.stringify(vaid)), null);
+  assert.equal(boundaryIsEvaluable(vaid.scope_boundary), false);
 });

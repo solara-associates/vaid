@@ -6,6 +6,54 @@ here. This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0
 This package versions **independently** of `vaid-mint`; a shared version
 number between them is a coincidence, not a guarantee.
 
+## [0.2.0]
+
+> **Read this before upgrading. This release follows `vaid-mint` 0.10.0's
+> BREAKING WIRE CHANGE and requires `sig_version` 4.** A `scope_boundary` entry
+> is now a typed `{kind, value}` object rather than a bare string, so a v3
+> credential cannot be exchanged here, and the `vaid` claim of an issued JWT now
+> carries objects rather than strings in `scope_boundary`. A relying party
+> reading that claim must be updated with the bridge. There is no
+> dual-acceptance path and deliberately none to add. Taken pre-1.0 on purpose.
+> See `docs/adr/0009-typed-extensible-scope-boundary.md`.
+
+- Requires `vaid-mint>=0.10.0,<0.11`. Typed `scope_boundary` entries are
+  constructed with `vaid_mint.document.prefix_entry`; `prefix` is the only kind
+  v4 defines and its containment rule is ADR-0005's, unchanged.
+- **New denial `DenialReason.UNKNOWN_SCOPE_KIND` (ADR-0009 S.10), and it closes
+  the fail-open that mattered most.** `exchange()` now issues nothing when the
+  leaf or a presented document carries a `scope_boundary` entry of a kind it does
+  not recognise. The bridge authorises no specific resource, so there was no
+  later containment check to fail closed, and `build_vaid_claim` copies
+  `scope_boundary` verbatim into the issued token: without this step the bridge
+  would mint a signed, audience-scoped JWT asserting a boundary it could not
+  evaluate and hand it to a relying party even less likely to recognise the kind,
+  laundering a narrowing constraint through a token that looks fully verified.
+  Specified as step 2a in `docs/jwt/v1/profile.md` §2.
+- The refusal is reported over an **authentic** document, never as `inauthentic`.
+  An entry of an unknown kind is well formed and only its `kind` is unknown.
+- `build_vaid_claim` now copies each boundary entry rather than only the list.
+  Entries are objects since ADR-0009, so the previous `list(...)` aliased every
+  entry and let a caller editing the returned claim reach into the verified leaf.
+  It was a true snapshot while entries were strings.
+- Every GHSA-hfjh-v2x2-r58v fix is unchanged: leaf and per-document trust-domain
+  binding, `issuer_mismatch`, and strict unpadded base64url key decoding.
+
+- **`FROZEN_CHAIN_SHA256` in the packaged firewall moves to `416b3240...`**, from
+  `daa5c6cf...`. The frozen `chain_v1` chain was re-frozen at `sig_version` 4, so
+  each hop's `scope_boundary` went from `["data.aifactory"]` to
+  `[{"kind": "prefix", "value": "data.aifactory"}]` and the canonical bytes of all
+  three documents moved. The canonicalization itself did not change.
+
+  The new literal was derived rather than transcribed from a failing run:
+  re-deriving it by the documented rule reproduces the previous value byte for
+  byte when pointed at the v3 chain, and the same derivation over the v4 chain
+  gives the new one. A third party recomputing the audit digest over the same
+  three documents still agrees with the bridge; it is the documents that moved.
+- The `vaid-mint` dependency ceiling moves to `>=0.10.0,<0.11`. The previous
+  `<0.10` was correct and was doing its job: it said this package does not work
+  with a typed boundary, which was true until this release.
+
 ## [0.1.0] — released 2026-10-12
 
 Security fix: a trusted kernel key now vouches only for the trust domain it is

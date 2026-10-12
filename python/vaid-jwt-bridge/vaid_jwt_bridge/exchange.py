@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from vaid_mint.attestation import AttestationBundle
 from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain_at
-from vaid_mint.document import is_expired_at
+from vaid_mint.document import boundary_is_evaluable, is_expired_at
 from vaid_mint.revocation import RevocationCheck, RevocationStatus, assemble_lineage
 from vaid_mint.verify import VaidVerdict, verify_vaid_authenticity_graded
 
@@ -52,6 +52,7 @@ class DenialReason(enum.Enum):
     LINEAGE_INCONSISTENT = "lineage_inconsistent"
     INAUTHENTIC = "inauthentic"
     LEAF_EXPIRED = "leaf_expired"
+    UNKNOWN_SCOPE_KIND = "unknown_scope_kind"
     CHAIN_UNVERIFIABLE = "chain_unverifiable"
     CHAIN_NOT_ATTENUATED = "chain_not_attenuated"
     CHAIN_EXPIRED = "chain_expired"
@@ -221,6 +222,39 @@ def exchange(
     # check it (only ancestors), so it is checked here.
     if is_expired_at(leaf, now):
         return _deny(DenialReason.LEAF_EXPIRED, "leaf VAID has passed its own expires_at")
+
+    # Step 2a (ADR-0009 S.10): every presented boundary is one this bridge can
+    # read.
+    #
+    # A `scope_boundary` entry carries a `kind`, and an entry whose kind this
+    # bridge does not recognise refuses the WHOLE boundary and so the whole
+    # exchange, because an unrecognised kind can only ever NARROW what the
+    # signer granted.
+    #
+    # The stake is higher here than in a verifier that answers one request.
+    # `build_vaid_claim` copies `scope_boundary` verbatim into the issued JWT's
+    # `vaid` claim, and the bridge authorises no specific resource, so there is
+    # no later containment check to fail closed. Without this step the bridge
+    # would mint a signed, audience-scoped token asserting a boundary it could
+    # not evaluate, and hand it to a relying party even less likely to
+    # recognise the kind. The narrowing constraint would then have been
+    # laundered through a token that looks fully verified.
+    #
+    # Ordered as vaid_mint.verify.verify_vaid_standing orders it: after
+    # authenticity, after expiry, before revocation. Over the ancestors as well
+    # as the leaf, because attenuation only runs where there is a parent, so a
+    # ROOT leaf would otherwise pass unchecked.
+    for doc in (leaf, *request.chain):
+        boundary = doc.get("scope_boundary")
+        if not isinstance(boundary, list) or not boundary_is_evaluable(boundary):
+            return _deny(
+                DenialReason.UNKNOWN_SCOPE_KIND,
+                f"document {doc.get('vaid_id')!r} carries a scope_boundary entry "
+                "of a kind this bridge does not recognise: no token is issued, "
+                "because an unrecognised kind can only narrow the authority "
+                "granted and the issued claim would assert a boundary that was "
+                "never evaluated",
+            )
 
     # Steps 3/4 (profile SS2.3/SS2.4): chain integrity and attenuation back to
     # a trusted root.

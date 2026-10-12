@@ -58,9 +58,11 @@ import {
   canonicalVaidSigningBytes,
   computeLineageHash,
   isExpired,
-  VAID_SIG_VERSION_V3,
+  isWellFormedScopeBoundary,
+  VAID_SIG_VERSION_V4,
   type AgentClass,
   type Vaid,
+  type ScopeBoundaryEntry,
 } from './document.js';
 import {
   assembleLineage,
@@ -89,7 +91,7 @@ export interface IssueAttributes {
   version: string;
   tenantId: TenantId;
   parentVaid: VaidId | null;
-  scopeBoundary: readonly string[];
+  scopeBoundary: readonly ScopeBoundaryEntry[];
   capabilitySet: readonly string[];
 }
 
@@ -340,7 +342,7 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
      * not exist here (R.4.6).
      */
     expiresAt: string;
-    scopeBoundary: readonly string[];
+    scopeBoundary: readonly ScopeBoundaryEntry[];
     capabilitySet: readonly string[];
   }): ConsentAttestation {
     const unsigned = buildUnsignedAttestation({
@@ -481,7 +483,20 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
   }
 
   verifyVaid(vaid: Vaid): boolean {
-    if (vaid.sig_version !== VAID_SIG_VERSION_V3) return false;
+    if (vaid.sig_version !== VAID_SIG_VERSION_V4) return false;
+    // S.8 shape, by the SAME predicate the wire parser applies
+    // (`parseVaidDocument`'s member table). A local verifier must never accept
+    // what the wire parser rejects: without this, a document whose
+    // `scope_boundary` holds bare v3 strings verified here (the signature is
+    // over whatever bytes it carries) and was then refused by
+    // `parseVaidDocument` the moment it was read back off the wire, so a
+    // producer could mint an unparseable credential and be told it was fine.
+    //
+    // The cast is deliberate. `Vaid` TYPES this field as ScopeBoundaryEntry[],
+    // so TypeScript believes the check is unnecessary; a plain JavaScript
+    // caller, or JSON crossing a boundary with an `as` on it, is exactly how a
+    // malformed boundary arrives. The types are not the gate here.
+    if (!isWellFormedScopeBoundary(vaid.scope_boundary as unknown)) return false;
     // TTL is enforced as a hard reject, not merely reported: an expired VAID
     // fails verification even with a valid kernel signature.
     if (isExpired(vaid)) return false;

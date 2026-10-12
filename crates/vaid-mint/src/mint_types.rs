@@ -12,7 +12,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::document::{Vaid, VaidId};
+use crate::document::{ScopeBoundaryEntry, Vaid, VaidId};
 
 /// Requested attributes for a mint. Serialized camelCase, matching the repo's
 /// wire convention.
@@ -27,7 +27,7 @@ pub struct VaidSeed {
     pub parent_vaid: Option<VaidId>,
     /// Data domains / resource namespaces this agent may operate within.
     #[serde(default)]
-    pub scope_boundary: Vec<String>,
+    pub scope_boundary: Vec<ScopeBoundaryEntry>,
     /// Explicit capability grants at spawn — no ambient authority.
     #[serde(default)]
     pub capability_set: Vec<String>,
@@ -82,7 +82,7 @@ pub struct MintPopPayload {
     pub agent_class: String,
     pub version: String,
     pub parent_vaid: Option<VaidId>,
-    pub scope_boundary: Vec<String>,
+    pub scope_boundary: Vec<ScopeBoundaryEntry>,
     pub capability_set: Vec<String>,
     pub nonce: String,
     pub issued_at: DateTime<Utc>,
@@ -154,7 +154,7 @@ mod tests {
                 version: "1.0.0".into(),
                 tenant_id: "acme".into(),
                 parent_vaid: None,
-                scope_boundary: vec!["data.governance.*".into()],
+                scope_boundary: vec![ScopeBoundaryEntry::prefix("data.governance")],
                 capability_set: vec!["read.documents".into()],
                 public_key_der: None,
             },

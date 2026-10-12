@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from importlib.resources import files
 
+from vaid_mint.document import entry_claimed_resource
 from vaid_mint.document import SCOPE_SEPARATORS, scope_contains
 
 VECTOR = json.loads(files("vaid_mint").joinpath("vectors/scope_v1.json").read_text())
@@ -48,7 +49,11 @@ def test_the_vector_pins_cases_where_bare_prefix_matching_disagreed() -> None:
         c
         for c in VECTOR["cases"]
         if c["boundary"]
-        and any(c["resource"].startswith(s) for s in c["boundary"]) != c["expected"]
+        and any(
+            (p := entry_claimed_resource(e)) is not None and c["resource"].startswith(p)
+            for e in c["boundary"]
+        )
+        != c["expected"]
     ]
     assert len(disagreements) >= 5, (
         "the vector must pin the sibling-capture regression class; only "

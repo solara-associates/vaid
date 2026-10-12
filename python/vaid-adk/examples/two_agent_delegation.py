@@ -20,7 +20,13 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as gtypes
 
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
+from vaid_mint import (
+    InMemoryAudit,
+    MintService,
+    ReferenceIssuer,
+    VaidSeed,
+    prefix_entry,
+)
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
 from vaid_mint.revocation import InMemoryRevocationList
 from vaid_pop import canonical_request_signing_bytes
@@ -114,7 +120,7 @@ async def main() -> None:
             agent_class="coordinator",
             version="1.0.0",
             tenant_id="acme",
-            scope_boundary=["data.orders", "data.payments"],
+            scope_boundary=[prefix_entry("data.orders"), prefix_entry("data.payments")],
             capability_set=["read", "write"],
         )
     )
@@ -126,7 +132,7 @@ async def main() -> None:
         version="1.0.0",
         tenant_id="acme",
         parent_vaid=root["vaid_id"],
-        scope_boundary=["data.orders"],  # attenuated: no data.payments
+        scope_boundary=[prefix_entry("data.orders")],  # attenuated: no data.payments
         capability_set=["read"],  # attenuated: no write
         public_key_der=worker_public,
     )

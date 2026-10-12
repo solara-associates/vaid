@@ -21,7 +21,7 @@ class VaidSeed:
     version: str
     tenant_id: str
     parent_vaid: str | None = None
-    scope_boundary: list[str] = field(default_factory=list)
+    scope_boundary: list[dict] = field(default_factory=list)
     capability_set: list[str] = field(default_factory=list)
     # Holder-supplied Ed25519 public key (BYO-key), as raw bytes. ``None`` = the
     # generate-and-discard path (root only; no PoP applies).

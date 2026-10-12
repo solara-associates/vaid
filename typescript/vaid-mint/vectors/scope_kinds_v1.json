@@ -1,0 +1,222 @@
+{
+  "_comment": "Typed-scope-boundary conformance vector (v1), per spec docs/spec/scope.md revision 2 S.8-S.12. ADDITIVE AS A FILE, NOT AS A CONTRACT: the file is new, but the wire form it pins REPLACES the bare-string form that scope_v1.json pinned, which is why scope_v1.json is re-issued in the same change rather than left standing. Two surfaces, kept in one file because they share one recognised-kind registry and splitting them is how the registry gets two readers that disagree: (A) containment of a resource within a typed boundary, the matcher surface; (B) parse-level acceptance of boundary bytes, the shape surface. Each case asserts a REASON and not merely a boolean, following verdict_v1.json: three implementations that reject the same boundary for three different reasons agree on every boolean and disagree about what happened. CARRIES NO DIGEST AND NO SIGNATURE: every case is a verdict over given bytes, never bytes over a given input.",
+  "rule": {
+    "kinds": [
+      "prefix"
+    ],
+    "entry_members": [
+      "kind",
+      "value"
+    ],
+    "statement": "A scope_boundary is a JSON array of boundary entries. An entry is a JSON object with EXACTLY the members kind (a non-empty string) and value (a type fixed by the kind). v1 recognises exactly one kind, prefix, whose value MUST be a JSON string and whose containment rule is S.3 unchanged. An empty array is unrestricted. A verifier MUST reject a boundary carrying a kind it does not recognise, and MUST NOT infer containment from an entry it cannot evaluate.",
+    "recognition_is_a_registry": "The set of recognised kinds MUST be stated in exactly one place per implementation and consulted by both the matcher and the standing verdict. kinds above is checked against that registry directly, so a kind added to the code without being added to the spec fails this vector, and so does the reverse.",
+    "shape_faults_are_parse_faults": "A boundary that is not an array of well-formed entries makes the document UNPARSEABLE (verdict_v1.json reason unparseable). This is the same class as E.5 and E.7: the member set and the member types are fixed by sig_version. A bare string entry is one instance of it and gets no special reason.",
+    "unknown_kind_is_not_a_parse_fault": "An entry whose shape is well formed but whose kind is unrecognised PARSES, and is then refused at verify with reason unknown_scope_kind. The two faults are different accusations: one says these bytes are not a document, the other says this document commits to authority I cannot evaluate. A verifier that collapsed them would report an authentic future-version credential as malformed."
+  },
+  "containment_cases": [
+    {
+      "name": "control: valid prefix contains itself",
+      "boundary": [{ "kind": "prefix", "value": "data.governance" }],
+      "resource": "data.governance",
+      "expected": true,
+      "expected_reason": "contained",
+      "why": "THE CONTROL for the typed form. Without it an implementation that denies every typed boundary passes every refusal case below."
+    },
+    {
+      "name": "valid prefix contains a dot-separated child",
+      "boundary": [{ "kind": "prefix", "value": "data.governance" }],
+      "resource": "data.governance.reports",
+      "expected": true,
+      "expected_reason": "contained",
+      "why": "S.3 clause 3, carried over unchanged. The typing changes the envelope, not the rule."
+    },
+    {
+      "name": "valid prefix contains a slash-separated child",
+      "boundary": [{ "kind": "prefix", "value": "orders/123/" }],
+      "resource": "orders/123/lines/4",
+      "expected": true,
+      "expected_reason": "contained",
+      "why": "S.3 clause 2, trailing separator. Also the spec's own worked example of the typed form."
+    },
+    {
+      "name": "REGRESSION: hyphenated sibling is not contained",
+      "boundary": [{ "kind": "prefix", "value": "data.governance" }],
+      "resource": "data.governance-secret",
+      "expected": false,
+      "expected_reason": "not_contained",
+      "why": "The ADR-0005 defect, re-asserted through the typed envelope. A rewrite of the matcher's input type is exactly when a restored bare-prefix match would go unnoticed."
+    },
+    {
+      "name": "empty array is unrestricted",
+      "boundary": [],
+      "resource": "anything.at.all",
+      "expected": true,
+      "expected_reason": "contained",
+      "why": "The top encoding is unchanged by the typing: [] still means unrestricted, and is still not the same as an entry whose value is empty."
+    },
+    {
+      "name": "union across two prefix entries",
+      "boundary": [
+        { "kind": "prefix", "value": "t/research" },
+        { "kind": "prefix", "value": "t/legal" }
+      ],
+      "resource": "t/legal/case/9",
+      "expected": true,
+      "expected_reason": "contained",
+      "why": "Two disjoint resource trees in one boundary. Carried because it is the case a single-object scope_boundary could not express, and the case that fixes union as the within-kind quantifier."
+    },
+    {
+      "name": "unknown kind contains nothing",
+      "boundary": [{ "kind": "amount", "value": 100 }],
+      "resource": "anything.at.all",
+      "expected": false,
+      "expected_reason": "unknown_scope_kind",
+      "why": "FAIL CLOSED. The matcher is reachable over a bare boundary that never passed document verify (a consent attestation's), so the refusal must live in the matcher and not only in the standing verdict."
+    },
+    {
+      "name": "unknown kind alongside a satisfied prefix still refuses",
+      "boundary": [
+        { "kind": "prefix", "value": "data.governance" },
+        { "kind": "amount", "value": 100 }
+      ],
+      "resource": "data.governance.reports",
+      "expected": false,
+      "expected_reason": "unknown_scope_kind",
+      "why": "THE SUBTLE ONE. Union within a kind makes at-least-one-matched the natural implementation, and that implementation returns true here by finding the prefix entry and never reaching the one it cannot read. An unrecognised kind can only ever NARROW what the signer meant, so an unreadable entry must refuse the whole boundary rather than be skipped over."
+    }
+  ],
+  "attenuation_cases": [
+    {
+      "name": "control: child prefix within parent prefix",
+      "parent_scope": [{ "kind": "prefix", "value": "data.acme" }],
+      "child_scope": [{ "kind": "prefix", "value": "data.acme.reports" }],
+      "expected_valid": true,
+      "expected_reason": "attenuated",
+      "why": "THE CONTROL for the attenuation surface under the typed form."
+    },
+    {
+      "name": "escalation: child names a resource outside the parent",
+      "parent_scope": [{ "kind": "prefix", "value": "data.acme" }],
+      "child_scope": [{ "kind": "prefix", "value": "data.other" }],
+      "expected_valid": false,
+      "expected_reason": "scope_escalation",
+      "why": "The plain case, carried through the typed envelope."
+    },
+    {
+      "name": "escalation: sibling capture by bare prefix",
+      "parent_scope": [{ "kind": "prefix", "value": "data.acme" }],
+      "child_scope": [{ "kind": "prefix", "value": "data.acme-secret" }],
+      "expected_valid": false,
+      "expected_reason": "scope_escalation",
+      "why": "ADR-0005 through the attenuation call path rather than the matcher call path. The two reach the rule differently and a regression must fail both."
+    },
+    {
+      "name": "escalation: empty child under a restricted parent",
+      "parent_scope": [{ "kind": "prefix", "value": "data.acme" }],
+      "child_scope": [],
+      "expected_valid": false,
+      "expected_reason": "scope_escalation",
+      "why": "The empty-child guard survives the typing. An empty array still means unrestricted, so a naive all() over zero entries is still vacuously true and still mints an unrestricted child under a restricted parent."
+    },
+    {
+      "name": "control: empty child under an unrestricted parent",
+      "parent_scope": [],
+      "child_scope": [],
+      "expected_valid": true,
+      "expected_reason": "attenuated",
+      "why": "The guard must not overfire, or reject-every-empty-child passes the case above."
+    },
+    {
+      "name": "unknown kind in the CHILD is refused",
+      "parent_scope": [{ "kind": "prefix", "value": "data.acme" }],
+      "child_scope": [{ "kind": "amount", "value": 100 }],
+      "expected_valid": false,
+      "expected_reason": "unknown_scope_kind",
+      "why": "A child claiming authority of a kind the verifier cannot read cannot be shown to be within its parent. Refused as undecidable, NOT as an escalation: the verifier is not accusing the delegation of being wider, it is saying it cannot tell."
+    },
+    {
+      "name": "unknown kind in the PARENT is refused",
+      "parent_scope": [{ "kind": "amount", "value": 100 }],
+      "child_scope": [{ "kind": "prefix", "value": "data.acme" }],
+      "expected_valid": false,
+      "expected_reason": "unknown_scope_kind",
+      "why": "The other direction, and the one an implementation guarding only its input loses. A parent boundary the verifier cannot read bounds nothing it can compute, so no child is provably within it."
+    },
+    {
+      "name": "unknown kind in BOTH is refused, not cancelled",
+      "parent_scope": [{ "kind": "amount", "value": 100 }],
+      "child_scope": [{ "kind": "amount", "value": 100 }],
+      "expected_valid": false,
+      "expected_reason": "unknown_scope_kind",
+      "why": "Byte-equal boundaries. An implementation short-circuiting on equality reports attenuated here while reading neither side, which is two defects cancelling into a green."
+    }
+  ],
+  "shape_cases": [
+    {
+      "name": "bare legacy string entry is not a document",
+      "boundary_json": "[\"data.governance\"]",
+      "expected_reason": "unparseable",
+      "why": "The pre-0.10 wire form. Refused with no legacy acceptance and no dedicated reason: under ADR-0008 1a two accepted sig_version values must require the same members, so the bare form is not a weaker document to be tolerated, it is a different one."
+    },
+    {
+      "name": "mixed bare string and typed entry is not a document",
+      "boundary_json": "[{\"kind\":\"prefix\",\"value\":\"a\"},\"b\"]",
+      "expected_reason": "unparseable",
+      "why": "A per-entry fallback would accept this. The shape gate is over the ARRAY, so one bad entry is a bad boundary."
+    },
+    {
+      "name": "entry missing value is not a document",
+      "boundary_json": "[{\"kind\":\"prefix\"}]",
+      "expected_reason": "unparseable",
+      "why": "Both members are required. An absent value is indistinguishable from an empty one once defaulted, and an empty prefix value contains every resource."
+    },
+    {
+      "name": "entry missing kind is not a document",
+      "boundary_json": "[{\"value\":\"a\"}]",
+      "expected_reason": "unparseable",
+      "why": "A boundary with no kind cannot be refused as an unknown kind either, so it must be refused earlier. Without this case an implementation defaulting the kind to prefix passes everything."
+    },
+    {
+      "name": "entry with an extra member is not a document",
+      "boundary_json": "[{\"kind\":\"prefix\",\"value\":\"a\",\"max\":5}]",
+      "expected_reason": "unparseable",
+      "why": "THE REASON CONDITIONS MUST BE KINDS. ADR-0006 preserves an unknown member at DOCUMENT level, where no predicate reads it. Inside a boundary entry every member is part of the authority the entry states, so a verifier ignoring max would compute a boundary the signer did not mean. Closed by refusing extra members, which is what forces a future condition to arrive as a kind an old verifier rejects rather than a member it ignores."
+    },
+    {
+      "name": "prefix value of the wrong type is not a document",
+      "boundary_json": "[{\"kind\":\"prefix\",\"value\":5}]",
+      "expected_reason": "unparseable",
+      "why": "For a RECOGNISED kind the value type is fixed and checked at parse. Contrast the unknown-kind cases, whose value is never inspected: a v1 verifier does not know what type a v2 kind's value should be, and guessing is how it would reject an authentic future document for the wrong reason."
+    },
+    {
+      "name": "empty kind string is not a document",
+      "boundary_json": "[{\"kind\":\"\",\"value\":\"a\"}]",
+      "expected_reason": "unparseable",
+      "why": "kind must be a NON-EMPTY string. An empty kind is not an unrecognised kind, it is an absent one wearing the right type."
+    },
+    {
+      "name": "boundary that is an object rather than an array is not a document",
+      "boundary_json": "{\"kind\":\"prefix\",\"value\":\"a\"}",
+      "expected_reason": "unparseable",
+      "why": "scope_boundary stays a LIST. Carried because a single-object form was the main alternative considered and is the shape a reader of the new form is most likely to produce by hand."
+    },
+    {
+      "name": "boundary that is null is not a document",
+      "boundary_json": "null",
+      "expected_reason": "unparseable",
+      "why": "E.6: an empty collection is [] and never null, and here the distinction is semantic as well as syntactic because [] means unrestricted."
+    },
+    {
+      "name": "control: well-formed typed boundary parses",
+      "boundary_json": "[{\"kind\":\"prefix\",\"value\":\"data.governance\"}]",
+      "expected_reason": "parsed",
+      "why": "The positive control on the shape gate. Without it, reject-every-boundary passes every case above."
+    },
+    {
+      "name": "control: unknown kind PARSES and is refused later",
+      "boundary_json": "[{\"kind\":\"amount\",\"value\":100}]",
+      "expected_reason": "parsed",
+      "why": "The second positive control, and the one that makes the parse/verify split observable. An implementation refusing an unknown kind at parse reports unparseable for an authentic future-version credential, and no boolean anywhere else in the suite would differ."
+    }
+  ]
+}

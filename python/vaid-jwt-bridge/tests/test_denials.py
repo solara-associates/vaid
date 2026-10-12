@@ -31,7 +31,12 @@ from vaid_jwt_bridge import (
     exchange,
 )
 from vaid_mint import ReferenceIssuer, VaidSeed
-from vaid_mint.document import build_unsigned_vaid_document, canonical_vaid_signing_bytes, compute_lineage_hash
+from vaid_mint.document import (
+    build_unsigned_vaid_document,
+    canonical_vaid_signing_bytes,
+    compute_lineage_hash,
+    prefix_entry,
+)
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
 from vaid_mint.revocation import InMemoryRevocationList
@@ -62,7 +67,7 @@ class LocalMint:
             expires_at="2999-01-01T00:00:00Z",
             public_key_der=list(range(32)),
             parent_vaid=parent_vaid,
-            scope_boundary=scope,
+            scope_boundary=[prefix_entry(v) for v in scope],
             lineage_hash=compute_lineage_hash(parent_vaid, agent_id),
             capability_set=caps,
             trust_domain=trust_domain,
@@ -74,6 +79,115 @@ class LocalMint:
 
 def _vid(n: int) -> str:
     return str(uuid.UUID(int=n))
+
+
+#: An entry of a kind this bridge does not implement, shaped like the amount
+#: limit ADR-0009 names as the motivating future kind, so the case is an entry
+#: that NARROWS authority rather than a nonsense one.
+_FUTURE_KIND_ENTRY = {"kind": "amount_limit", "value": 100}
+
+
+def _root_with_boundary(kernel_key, issuer, boundary: list[dict]) -> dict:
+    """An authentic ROOT carrying ``boundary`` verbatim, signed by the kernel
+    key the ``trusted_keys`` fixture trusts.
+
+    Built with ``build_unsigned_vaid_document`` rather than through
+    ``MintService`` for the reason this module's docstring gives about
+    ``LocalMint``: mint refuses an unreadable boundary at mint time, which is
+    correct and is not the behaviour under test. The question here is what the
+    BRIDGE does with an adversarially-shaped but authentically-signed document
+    it is handed."""
+    agent_id = str(uuid.uuid4())
+    unsigned = build_unsigned_vaid_document(
+        vaid_id=agent_id,
+        agent_id=agent_id,
+        agent_class="test",
+        version="1.0.0",
+        tenant_id="acme",
+        issued_at="2026-01-01T00:00:00Z",
+        expires_at="2999-01-01T00:00:00Z",
+        public_key_der=list(range(32)),
+        parent_vaid=None,
+        scope_boundary=boundary,
+        lineage_hash=compute_lineage_hash(None, agent_id),
+        capability_set=["read"],
+        trust_domain="vaid.example",
+        kernel_key_thumbprint=kernel_key_thumbprint(issuer.kernel_public_key()),
+    )
+    signature = kernel_key.sign(canonical_vaid_signing_bytes(unsigned))
+    return {**unsigned, "kernel_signature": list(signature)}
+
+
+def test_unknown_scope_kind_issues_nothing(
+    kernel_key, issuer, trusted_keys, vouching_revocation, eddsa_signer, verification_now
+):
+    """ADR-0009 S.10 at the bridge, where the stake is highest.
+
+    The bridge authorises no specific resource, so there is no containment
+    check to fail closed later, and ``build_vaid_claim`` copies
+    ``scope_boundary`` verbatim into the issued token. Without an explicit
+    evaluability step the bridge would mint a signed, audience-scoped JWT
+    asserting a boundary it could not evaluate, and hand it to a relying party
+    even less likely to recognise the kind: the narrowing constraint laundered
+    through a token that looks fully verified."""
+    leaf = _root_with_boundary(kernel_key, issuer, [_FUTURE_KIND_ENTRY])
+
+    result = exchange(
+        ExchangeRequest(leaf=leaf, chain=(), audience="aud"),
+        keys=trusted_keys,
+        revocation=vouching_revocation,
+        issuer="https://bridge.example.com",
+        signer=eddsa_signer,
+        now=verification_now,
+    )
+
+    assert isinstance(result, Denied)
+    assert result.reason == DenialReason.UNKNOWN_SCOPE_KIND
+    assert not hasattr(result, "access_token")
+
+
+def test_unknown_scope_kind_is_not_reported_as_inauthentic(
+    kernel_key, issuer, trusted_keys, vouching_revocation, eddsa_signer, verification_now
+):
+    """A verdict over an AUTHENTIC document (ADR-0009 decision 3), not a
+    signature failure. Calling a correctly signed future-version credential
+    forged is false, and it is the answer a missing enum member produces."""
+    leaf = _root_with_boundary(kernel_key, issuer, [_FUTURE_KIND_ENTRY])
+
+    result = exchange(
+        ExchangeRequest(leaf=leaf, chain=(), audience="aud"),
+        keys=trusted_keys,
+        revocation=vouching_revocation,
+        issuer="https://bridge.example.com",
+        signer=eddsa_signer,
+        now=verification_now,
+    )
+
+    assert isinstance(result, Denied)
+    assert result.reason != DenialReason.INAUTHENTIC
+    assert result.reason == DenialReason.UNKNOWN_SCOPE_KIND
+
+
+def test_one_unreadable_entry_refuses_a_boundary_that_also_matches(
+    kernel_key, issuer, trusted_keys, vouching_revocation, eddsa_signer, verification_now
+):
+    """S.10 refuses the WHOLE boundary (ADR-0009 decision 4), even when a
+    readable ``prefix`` entry sits alongside the one that cannot be read."""
+    leaf = _root_with_boundary(
+        kernel_key, issuer, [prefix_entry("data.acme"), _FUTURE_KIND_ENTRY]
+    )
+
+    result = exchange(
+        ExchangeRequest(leaf=leaf, chain=(), audience="aud"),
+        keys=trusted_keys,
+        revocation=vouching_revocation,
+        issuer="https://bridge.example.com",
+        signer=eddsa_signer,
+        now=verification_now,
+    )
+
+    assert isinstance(result, Denied)
+    assert result.reason == DenialReason.UNKNOWN_SCOPE_KIND
 
 
 def test_expired_leaf_issues_nothing(
@@ -293,7 +407,13 @@ def test_tampered_leaf_signature_is_inauthentic(
 ):
     root, child, leaf = three_hop_chain
     tampered = dict(leaf)
-    tampered["scope_boundary"] = list(leaf["scope_boundary"]) + ["data.acme.everything"]
+    # A WIDER but still well-formed boundary. The point of this test is that
+    # the signature no longer covers the bytes, so the tamper has to leave a
+    # document that is otherwise valid: a bare string here would be a
+    # malformed entry under ADR-0009 and would test parsing, not authenticity.
+    tampered["scope_boundary"] = list(leaf["scope_boundary"]) + [
+        prefix_entry("data.acme.everything")
+    ]
 
     result = exchange(
         ExchangeRequest(leaf=tampered, chain=(root, child), audience="aud"),

@@ -19,7 +19,12 @@ from vaid_adk import (
     VaidAuthPlugin,
     VaidPresentation,
 )
-from vaid_mint.document import build_unsigned_vaid_document, canonical_vaid_signing_bytes, compute_lineage_hash
+from vaid_mint.document import (
+    build_unsigned_vaid_document,
+    canonical_vaid_signing_bytes,
+    compute_lineage_hash,
+    prefix_entry,
+)
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import InMemoryRevocationList
 
@@ -55,7 +60,7 @@ def _root_vaid(scope: list[str], caps: list[str]) -> dict:
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=None,
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         lineage_hash=compute_lineage_hash(None, agent_id),
         capability_set=caps,
         trust_domain="vaid.example",

@@ -162,7 +162,7 @@ honest defaults of a self-hostable reference mint. See the sections below for
 where each is enforced in code.
 
 ```python
-from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
+from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed, prefix_entry
 
 # `assuming_nothing_revoked()` is the pre-0.9.0 default, asked for BY NAME. Since
 # 0.9.0 a bare issuer's revocation store is ABSENT: it reports UNAVAILABLE and
@@ -173,7 +173,7 @@ issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked(
 mint = MintService(issuer, InMemoryAudit())
 root = mint.mint_root(VaidSeed(
     agent_class="orchestrator", version="1.0.0", tenant_id="acme",
-    scope_boundary=["data.acme"], capability_set=["read", "write"],
+    scope_boundary=[prefix_entry("data.acme")], capability_set=["read", "write"],
 ))
 assert issuer.verify_vaid(root)
 ```

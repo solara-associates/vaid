@@ -47,9 +47,15 @@ import {
 import {
   canonicalVaidSigningBytes,
   computeLineageHash,
+  RECOGNISED_SCOPE_KINDS,
   SCOPE_SEPARATORS,
   scopeContains,
   type Vaid,
+  boundaryIsEvaluable,
+  entryClaimedResource,
+  isWellFormedScopeBoundary,
+  prefixEntry,
+  type ScopeBoundaryEntry,
 } from './document.js';
 import {
   AttestationBundle,
@@ -58,7 +64,12 @@ import {
   type ConsentAttestation,
 } from './attestation.js';
 import { PresentedBundle, SingleKernelKey, verifyChainAt } from './chain.js';
-import { expiryAttenuatesWithin, scopeAttenuatesWithin } from './mint.js';
+import {
+  AttenuationReason,
+  expiryAttenuatesWithin,
+  scopeAttenuatesWithin,
+  scopeAttenuationReason,
+} from './mint.js';
 import { RevocationStatus } from './revocation.js';
 import {
   isVerdictValid,
@@ -266,7 +277,7 @@ export function checkMintPop(v: MintPopVector): void {
       version: '1.0.0',
       tenantId: 'aifactory',
       parentVaid: null,
-      scopeBoundary: ['data.aifactory'],
+      scopeBoundary: [prefixEntry('data.aifactory')],
       capabilitySet: ['read'],
       publicKeyDer: registered,
     },
@@ -507,7 +518,39 @@ export function checkRoundtrip(v: RoundtripVector): void {
 /** A scope-containment vector: a predicate table, with no digest and no signature. */
 interface ScopeVector {
   rule: { separators: string[] };
-  cases: { boundary: string[]; resource: string; expected: boolean; why: string }[];
+  cases: {
+    boundary: ScopeBoundaryEntry[];
+    resource: string;
+    expected: boolean;
+    why: string;
+  }[];
+}
+
+/** The typed-boundary vector: three surfaces over one recognised-kind registry. */
+interface ScopeKindsVector {
+  rule: { kinds: string[]; entry_members: string[] };
+  containment_cases: {
+    name: string;
+    boundary: ScopeBoundaryEntry[];
+    resource: string;
+    expected: boolean;
+    expected_reason: string;
+    why: string;
+  }[];
+  attenuation_cases: {
+    name: string;
+    parent_scope: ScopeBoundaryEntry[];
+    child_scope: ScopeBoundaryEntry[];
+    expected_valid: boolean;
+    expected_reason: string;
+    why: string;
+  }[];
+  shape_cases: {
+    name: string;
+    boundary_json: string;
+    expected_reason: string;
+    why: string;
+  }[];
 }
 
 /**
@@ -542,7 +585,10 @@ export function checkScope(v: ScopeVector): void {
   const disagreements = v.cases.filter(
     (c) =>
       c.boundary.length > 0 &&
-      c.boundary.some((s) => c.resource.startsWith(s)) !== c.expected,
+      c.boundary.some((e) => {
+        const p = entryClaimedResource(e);
+        return p !== null && c.resource.startsWith(p);
+      }) !== c.expected,
   ).length;
   if (disagreements < 5) {
     throw new ConformanceError(
@@ -559,6 +605,114 @@ export function checkScope(v: ScopeVector): void {
   }
 }
 
+
+/**
+ * Check the typed-boundary vector (spec S.8 to S.12, ADR-0009).
+ *
+ * Three surfaces in one file, because they share ONE recognised-kind registry and
+ * splitting them is how the registry acquires two readers that disagree:
+ * containment over a typed boundary, attenuation over two of them, and
+ * parse-level acceptance of boundary bytes.
+ *
+ * The declared `rule.kinds` is checked against {@link RECOGNISED_SCOPE_KINDS}
+ * directly, so a kind added to the code without being added to the specification
+ * fails here, and so does the reverse.
+ */
+export function checkScopeKinds(v: ScopeKindsVector): void {
+  const declared = v.rule?.kinds;
+  if (declared === undefined) {
+    throw new ConformanceError('scope-kinds vector declares no `rule.kinds`');
+  }
+  const built = [...RECOGNISED_SCOPE_KINDS];
+  if (JSON.stringify(declared) !== JSON.stringify(built)) {
+    throw new ConformanceError(
+      `recognised scope kinds disagree: vector declares ${JSON.stringify(declared)}, ` +
+        `this build recognises ${JSON.stringify(built)} — a kind in one and not the ` +
+        'other is a fail-closed rule that fails open in whichever direction the gap runs',
+    );
+  }
+  if (JSON.stringify(v.rule.entry_members) !== JSON.stringify(['kind', 'value'])) {
+    throw new ConformanceError('S.8 fixes the entry member set at exactly kind and value');
+  }
+
+  if (!v.containment_cases?.length) {
+    throw new ConformanceError('scope-kinds vector carries no containment_cases');
+  }
+  for (const c of v.containment_cases) {
+    if (!isWellFormedScopeBoundary(c.boundary)) {
+      throw new ConformanceError(`containment case "${c.name}" boundary is not well formed`);
+    }
+    const got = scopeContains(c.boundary, c.resource);
+    if (got !== c.expected) {
+      throw new ConformanceError(
+        `containment case "${c.name}": expected ${c.expected} got ${got} — ${c.why}`,
+      );
+    }
+    // The REASON, not merely the boolean: a refusal and an inability to evaluate
+    // are different accusations that agree on every boolean.
+    const reason = !boundaryIsEvaluable(c.boundary)
+      ? 'unknown_scope_kind'
+      : got
+        ? 'contained'
+        : 'not_contained';
+    if (reason !== c.expected_reason) {
+      throw new ConformanceError(
+        `containment case "${c.name}": reason "${reason}" != frozen "${c.expected_reason}"`,
+      );
+    }
+  }
+
+  if (!v.attenuation_cases?.length) {
+    throw new ConformanceError('scope-kinds vector carries no attenuation_cases');
+  }
+  for (const c of v.attenuation_cases) {
+    const att = scopeAttenuationReason(c.parent_scope, c.child_scope);
+    const ok = scopeAttenuatesWithin(c.parent_scope, c.child_scope);
+    if (ok !== (att === AttenuationReason.Attenuated)) {
+      throw new ConformanceError(
+        `attenuation case "${c.name}": the boolean and the reason disagree`,
+      );
+    }
+    if (ok !== c.expected_valid || (att as string) !== c.expected_reason) {
+      throw new ConformanceError(
+        `attenuation case "${c.name}": got (${ok}, "${att}"), frozen ` +
+          `(${c.expected_valid}, "${c.expected_reason}")`,
+      );
+    }
+  }
+
+  if (!v.shape_cases?.length) {
+    throw new ConformanceError('scope-kinds vector carries no shape_cases');
+  }
+  let parsedControls = 0;
+  for (const c of v.shape_cases) {
+    // Every case's bytes are themselves well-formed JSON, asserted here, so what
+    // is under test is the SHAPE gate and never the JSON parser.
+    let value: unknown;
+    try {
+      value = JSON.parse(c.boundary_json);
+    } catch (e) {
+      throw new ConformanceError(
+        `shape case "${c.name}" is not valid JSON (${String(e)}) — it would be ` +
+          'testing the parser rather than the shape gate',
+      );
+    }
+    const reason = isWellFormedScopeBoundary(value) ? 'parsed' : 'unparseable';
+    if (reason !== c.expected_reason) {
+      throw new ConformanceError(
+        `shape case "${c.name}": "${reason}" != frozen "${c.expected_reason}"`,
+      );
+    }
+    if (reason === 'parsed') parsedControls += 1;
+  }
+  if (parsedControls < 2) {
+    throw new ConformanceError(
+      'the shape surface needs at least two positive controls, one of them an ' +
+        'unrecognised kind — without them, refusing every boundary passes every case',
+    );
+  }
+}
+
 /** A graded-verdict vector: predicate cases over two surfaces, no digest. */
 interface VerdictVector {
   reasons: { standing: string[]; attenuation: string[] };
@@ -569,8 +723,8 @@ interface VerdictVector {
     surface: 'standing' | 'attenuation';
     document_json?: string;
     revocation?: string;
-    parent_scope?: string[];
-    child_scope?: string[];
+    parent_scope?: ScopeBoundaryEntry[];
+    child_scope?: ScopeBoundaryEntry[];
     expected_valid: boolean;
     expected_reason: string;
   }[];
@@ -631,8 +785,19 @@ export function checkVerdict(v: VerdictVector): void {
       reason = verdict;
       valid = isVerdictValid(verdict);
     } else if (c.surface === 'attenuation') {
-      const ok = scopeAttenuatesWithin(c.parent_scope ?? [], c.child_scope ?? []);
-      reason = ok ? 'attenuated' : 'scope_escalation';
+      const parent = c.parent_scope ?? [];
+      const child = c.child_scope ?? [];
+      const att = scopeAttenuationReason(parent, child);
+      const ok = scopeAttenuatesWithin(parent, child);
+      // The bool is DERIVED from the reason in the library; asserted here so a
+      // build whose two answers disagree cannot pass.
+      if (ok !== (att === AttenuationReason.Attenuated)) {
+        throw new ConformanceError(
+          `verdict case "${c.name}": the attenuation boolean and the attenuation ` +
+            'reason disagree',
+        );
+      }
+      reason = att;
       valid = ok;
     } else {
       throw new ConformanceError(
@@ -729,6 +894,7 @@ export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
   'chain_expiry_v1.json': (v: ChainExpiryVector) => checkChainExpiry(v),
   'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
   'scope_v1.json': (v: ScopeVector) => checkScope(v),
+  'scope_kinds_v1.json': (v: ScopeKindsVector) => checkScopeKinds(v),
   'roundtrip_v1.json': (v: RoundtripVector) => checkRoundtrip(v),
   'verdict_v1.json': (v: VerdictVector) => checkVerdict(v),
 } as Record<string, (v: never) => void>;
@@ -809,7 +975,15 @@ interface VectorSummary {
 /** One output line's worth of evidence that this vector was actually checked. */
 function describeVector(v: VectorSummary): string {
   if (v.digest_sha256_hex !== undefined) return v.digest_sha256_hex;
-  if (v.cases !== undefined) return `${v.cases.length} case(s) — predicate vector, no digest`;
+  // `cases` for most predicate vectors; a vector with several named surfaces
+  // carries none, so count across all of them rather than print a bare "checked"
+  // for the one file whose shape is different.
+  const row = v as unknown as Record<string, unknown>;
+  const counted = ['cases', 'containment_cases', 'attenuation_cases', 'shape_cases'].reduce(
+    (total, k) => total + ((row[k] as unknown[] | undefined)?.length ?? 0),
+    0,
+  );
+  if (counted > 0) return `${counted} case(s) — predicate vector, no digest`;
   return 'checked';
 }
 

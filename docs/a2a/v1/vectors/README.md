@@ -39,6 +39,7 @@ use, not a new taxonomy:
 | `expired` | the leaf (or an ancestor) has passed its own `expires_at` |
 | `revoked` | some VAID in the lineage is revoked (R.4.4) |
 | `out_of_scope` | the chain attenuates correctly, but the requested action is outside the leaf's own `scope_boundary` |
+| `unknown_scope_kind` | some presented document carries a `scope_boundary` entry of a `kind` this verifier does not recognise, so the boundary is refused rather than evaluated from the entries it could read (ADR-0009 S.10) |
 | `issuer_mismatch` | the document's issuer is not trusted **for the trust domain it claims**: either the signing kernel key is not in the verifier's `trust_config` at all (vector `06`), or it is in it but bound to a different `trustDomain` than the document claims (vector `12`) |
 
 ## The test key

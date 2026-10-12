@@ -82,7 +82,20 @@ from vaid_jwt_bridge.keys import JwcryptoSigner
 #: value, and a literal rather than a re-derivation so the check can actually
 #: fail. If this moves, either the frozen chain moved or the canonicalization
 #: did; both are wire-contract changes and neither is a conformance pass.
-FROZEN_CHAIN_SHA256 = "daa5c6cf4b3d2d3692c53d3f781a9fc19c6ca1f011149c49639b6d5a865bdd8b"
+#:
+#: **It moved once, at vaid-mint 0.10.0, and this is that move.** The frozen
+#: chain was re-frozen at ``sig_version`` 4: each hop's ``scope_boundary`` went
+#: from ``["data.aifactory"]`` to ``[{"kind": "prefix", "value":
+#: "data.aifactory"}]`` (ADR-0009), so the canonical bytes of all three
+#: documents changed and the digest over them changed with it. The
+#: canonicalization did NOT change.
+#:
+#: The new value was derived, not transcribed from a failing run: re-deriving it
+#: by the documented rule (SHA-256 over ``rfc8785.dumps`` of the three
+#: signature-reattached documents, root first) reproduces the PREVIOUS frozen
+#: value, ``daa5c6cf...``, byte for byte when pointed at the v3 chain. The same
+#: derivation over the v4 chain gives the literal below.
+FROZEN_CHAIN_SHA256 = "416b32406657a728ef2ed668909248689870ea75c0ea6a961bd54db008291eea"
 
 #: The bridge's own JWT-signing key for this firewall: a fixed seed, never
 #: randomness, so `kid` and the published JWKS are identical on every run. This

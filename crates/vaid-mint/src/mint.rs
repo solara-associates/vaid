@@ -24,7 +24,7 @@ use vaid_pop::vaid_pop::verify_signed_payload;
 
 use crate::audit::AuditSink;
 use crate::authz::{AuthorizationGate, PermitAll};
-use crate::document::{AgentClass, TenantId, Vaid};
+use crate::document::{AgentClass, ScopeBoundaryEntry, TenantId, Vaid};
 use crate::error::{MintError, MintResult};
 use crate::issuer::VaidIssuer;
 use crate::mint_types::{MintPop, MintVaidRequest, MintVaidResponse, VaidSeed};
@@ -42,7 +42,7 @@ pub const MINT_POP_FRESHNESS_SECS: i64 = 300;
 /// would mint an unrestricted child under a *restricted* parent — broader than
 /// the parent. Fail closed: an empty child scope is permitted ONLY when the
 /// parent is itself unrestricted (empty).
-pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
+pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[ScopeBoundaryEntry]) -> bool {
     scope_attenuates_within(parent.scope_boundary(), child_scope)
 }
 
@@ -59,14 +59,66 @@ pub(crate) fn scope_attenuates(parent: &Vaid, child_scope: &[String]) -> bool {
 /// cannot have checked — and the Python and TypeScript twins have both exported
 /// their equivalent all along, so this also removes an asymmetry rather than
 /// creating one.
-pub fn scope_attenuates_within(parent_scope: &[String], child_scope: &[String]) -> bool {
-    if child_scope.is_empty() {
+pub fn scope_attenuates_within(
+    parent_scope: &[ScopeBoundaryEntry],
+    child_scope: &[ScopeBoundaryEntry],
+) -> bool {
+    scope_attenuation_reason(parent_scope, child_scope) == AttenuationReason::Attenuated
+}
+
+/// Why a child boundary does or does not attenuate its parent's.
+///
+/// Three outcomes and not two, for the reason `verdict_v1.json` states for the
+/// standing surface: three implementations that refuse the same delegation for
+/// three different reasons agree on every boolean and disagree about what
+/// happened. A refusal is also a different accusation in each case, and a caller
+/// is entitled to tell them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttenuationReason {
+    /// Every entry of the child's boundary is within the parent's.
+    Attenuated,
+    /// The child names authority the parent does not hold.
+    ScopeEscalation,
+    /// One side carries a boundary kind this implementation cannot evaluate
+    /// (spec S.10), so containment cannot be computed at all. NOT an escalation:
+    /// the verifier is not saying the delegation is wider, it is saying it
+    /// cannot tell.
+    UnknownScopeKind,
+}
+
+/// THE attenuation rule. [`scope_attenuates_within`] is `== Attenuated` over
+/// this, so the bool and the reason cannot drift.
+///
+/// # Both sides are checked for evaluability, not just the child
+///
+/// An unreadable CHILD boundary cannot be shown to be within anything. An
+/// unreadable PARENT boundary bounds nothing this implementation can compute, so
+/// no child is provably within it. An implementation guarding only its input
+/// loses the second direction, and a boundary that is unreadable on BOTH sides
+/// is the case an equality short-circuit reports as attenuated while reading
+/// neither side.
+pub fn scope_attenuation_reason(
+    parent_scope: &[ScopeBoundaryEntry],
+    child_scope: &[ScopeBoundaryEntry],
+) -> AttenuationReason {
+    if !crate::document::boundary_is_evaluable(parent_scope)
+        || !crate::document::boundary_is_evaluable(child_scope)
+    {
+        return AttenuationReason::UnknownScopeKind;
+    }
+    let attenuates = if child_scope.is_empty() {
         // Child wants ⊤; allowed only if the parent is also ⊤.
         parent_scope.is_empty()
     } else {
-        child_scope
-            .iter()
-            .all(|s| crate::document::scope_contains(parent_scope, s))
+        child_scope.iter().all(|child| {
+            crate::document::entry_claimed_resource(child)
+                .is_some_and(|resource| crate::document::scope_contains(parent_scope, resource))
+        })
+    };
+    if attenuates {
+        AttenuationReason::Attenuated
+    } else {
+        AttenuationReason::ScopeEscalation
     }
 }
 
@@ -759,7 +811,7 @@ mod tests {
             vec![],
             vec![],
             None,
-            scope.into_iter().map(String::from).collect(),
+            scope.into_iter().map(ScopeBoundaryEntry::prefix).collect(),
             "lineage".into(),
             caps.into_iter().map(String::from).collect(),
             "vaid.example".into(),
@@ -778,7 +830,7 @@ mod tests {
             version: "1.0.0".into(),
             tenant_id: parent.tenant_id().as_str().to_string(),
             parent_vaid: Some(parent.vaid_id()),
-            scope_boundary: scope.into_iter().map(String::from).collect(),
+            scope_boundary: scope.into_iter().map(ScopeBoundaryEntry::prefix).collect(),
             capability_set: caps.into_iter().map(String::from).collect(),
             public_key_der: Some(child_pub),
         }
@@ -1042,7 +1094,11 @@ mod tests {
         );
         // Containment: every child scope entry is within the parent, every child
         // cap is held by the parent.
-        assert!(child.scope_boundary().iter().all(|s| parent.is_in_scope(s)));
+        assert!(child
+            .scope_boundary()
+            .iter()
+            .all(|e| crate::document::entry_claimed_resource(e)
+                .is_some_and(|r| parent.is_in_scope(r))));
         assert!(child
             .capability_set()
             .iter()
@@ -1223,7 +1279,7 @@ mod tests {
                 version: String,
                 tenant_id: TenantId,
                 parent_vaid: Option<VaidId>,
-                scope_boundary: Vec<String>,
+                scope_boundary: Vec<ScopeBoundaryEntry>,
                 capability_set: Vec<String>,
                 public_key_der: Vec<u8>,
                 _not_after: Option<&str>,
@@ -1246,7 +1302,7 @@ mod tests {
                 version: String,
                 tenant_id: TenantId,
                 parent_vaid: Option<VaidId>,
-                scope_boundary: Vec<String>,
+                scope_boundary: Vec<ScopeBoundaryEntry>,
                 capability_set: Vec<String>,
                 _not_after: Option<&str>,
             ) -> MintResult<Vaid> {
