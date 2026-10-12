@@ -750,10 +750,38 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
+      # vaid-pop and vaid-mint come from THE TREE, in the same invocation, and
+      # both halves of that matter.
+      #
+      # From the tree, because resolving them from PyPI makes this job test the
+      # wrong code. Two of these firewalls read their frozen chain out of the
+      # INSTALLED vaid_mint (`files("vaid_mint")/vectors/chain_v1.json`), so a
+      # registry-resolved vaid-mint has this tree's verifiers checking a
+      # different release's vectors. That was invisible while the tree and the
+      # registry held the same vaid-mint version, and it stopped being invisible
+      # the moment the tree moved ahead: the ceiling `>=0.10.0,<0.11` has nothing
+      # on PyPI to satisfy it until 0.10.0 publishes, so the install failed
+      # outright with "No matching distribution found". The failure was the
+      # honest form of a job that had been resolving its most important
+      # dependency from the wrong place.
+      #
+      # NOT `--no-deps`, which would paper over exactly the contradiction this
+      # install is supposed to expose, and not a separate invocation per package,
+      # for the reason the `python` job states at length.
+      #
+      # This does not weaken what the job is for. Its subject is the packaged
+      # CONSOLE ENTRY POINT rather than pytest over the tree, and that is
+      # unchanged. Proving the integrations against the PUBLISHED dependency line
+      # is the `quickstart` job's deliberate and separately pinned business.
       - name: Install the three integration packages
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./python/vaid-a2a ./python/vaid-adk ./python/vaid-jwt-bridge
+          python -m pip install \
+            ./python/vaid-pop \
+            ./python/vaid-mint \
+            ./python/vaid-a2a \
+            ./python/vaid-adk \
+            ./python/vaid-jwt-bridge
       - name: vaid-a2a packaged firewall (extension verdicts, all 12 vectors)
         run: vaid-a2a-conformance
       - name: vaid-adk packaged firewall (frozen chain verdicts, fail-closed denials)
