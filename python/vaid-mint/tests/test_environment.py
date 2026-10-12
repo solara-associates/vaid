@@ -25,13 +25,28 @@ _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 
 def _declared_vaid_pop_floor() -> tuple[int, ...]:
-    """The ``vaid-pop>=X`` floor as actually declared to packaging."""
+    """The ``vaid-pop>=X`` floor as actually declared to packaging.
+
+    The declaration is a PEP 440 specifier SET, not a bare version:
+    ``vaid-pop>=0.2.0,<0.3`` carries a ceiling as well as a floor, because an
+    in-repo dependency with no ceiling is what
+    ``scripts/verify-dependency-bounds.mjs`` exists to refuse. So only the
+    ``>=`` clause is read here, and the rest of the set is deliberately ignored:
+    what this test pins is the FLOOR mirrored in ``conftest.MIN_VAID_POP``, and
+    a ceiling is not a floor.
+    """
     metadata = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     for dep in metadata["project"]["dependencies"]:
         normalized = dep.replace(" ", "")
-        if normalized.startswith("vaid-pop>="):
-            return _parse_version(normalized.removeprefix("vaid-pop>="))
-    raise AssertionError("vaid-mint no longer declares a vaid-pop floor")
+        if not normalized.startswith("vaid-pop"):
+            continue
+        for clause in normalized.removeprefix("vaid-pop").split(","):
+            if clause.startswith(">="):
+                return _parse_version(clause.removeprefix(">="))
+        raise AssertionError(
+            f"vaid-mint declares {dep!r}, which has no `>=` floor for conftest to mirror"
+        )
+    raise AssertionError("vaid-mint no longer declares a vaid-pop dependency")
 
 
 def test_declared_vaid_pop_floor_matches_this_conftest() -> None:

@@ -651,6 +651,16 @@ jobs:
       # every declaration-based check passed. See the script header.
       - name: Verify frozen vectors have not moved under a released version
         run: node scripts/verify-vector-freeze.mjs
+      # The only check here that looks at what a CONSUMER would resolve rather than
+      # at what this repository declares about itself. `vaid-a2a` and `vaid-adk`
+      # both carried `vaid-mint>=0.9.0` — a floor and no ceiling — while neither had
+      # been migrated to the v4 typed scope_boundary and neither is exercised by any
+      # job in this file. The breakage would have happened at `pip install` time in
+      # someone else's environment, with every check here green. See the script
+      # header for why the subject list comes from release-map.json rather than
+      # naming vaid-mint.
+      - name: Verify in-repo dependencies on in-repo packages are upper-bounded
+        run: node scripts/verify-dependency-bounds.mjs
       # ADVISORY, never fails. Every check above compares a package to ITSELF, to
       # its OWN registry, or to its OWN release tag — none can see two languages
       # disagreeing about the same package name, which is how vaid-pop came to sit
