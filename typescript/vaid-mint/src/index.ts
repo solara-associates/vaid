@@ -14,10 +14,19 @@
  * ({@link RevocationCheck}, injected via
  * {@link ReferenceIssuer.withRevocationBackend} — both durable halves at once),
  * specified in
- * `docs/spec/revocation.md` R.4 and failing closed when status is unavailable —
- * with a non-durable in-memory default, and VAID expiry (TTL) is hard-enforced at
- * verification. What stays commercial is durable, restart-surviving revocation
- * itself.
+ * `docs/spec/revocation.md` R.4 and failing closed when status is unavailable.
+ * VAID expiry (TTL) is hard-enforced at verification. What stays commercial is
+ * durable, restart-surviving revocation itself.
+ *
+ * **Since 0.9.0 a bare issuer's revocation store is absent, not vouching.** It has
+ * nothing to vouch for, so it reports `Unavailable` and
+ * {@link ReferenceIssuer.verifyVaid} fails closed on documents this issuer has just
+ * minted. That is the point: a revocation answer you could not obtain must not read
+ * as *nothing is revoked* (R.4.5). The example below therefore asks for the
+ * pre-0.9.0 fail-open posture BY NAME, with
+ * {@link ReferenceIssuer.assumingNothingRevoked} — correct for a local example, and
+ * wrong for anything that must survive a restart, which wants
+ * {@link ReferenceIssuer.withRevocationBackend} and two durable halves instead.
  *
  * Proof-of-possession reuses the `vaid-pop` primitive verbatim. Byte-identity of
  * the signed VAID document with the Rust and Python mints is locked by the
@@ -29,7 +38,7 @@
  * ```ts
  * import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
  *
- * const issuer = ReferenceIssuer.ephemeral(24);
+ * const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();
  * const mint = new MintService(issuer, new InMemoryAudit());
  * const { vaid } = await mint.mintRoot({
  *   seed: {
@@ -40,7 +49,7 @@
  *     capabilitySet: ['read'],
  *   },
  * });
- * console.assert(issuer.verifyVaid(vaid));
+ * console.assert(issuer.verifyVaid(vaid)); // true
  * ```
  */
 

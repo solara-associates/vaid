@@ -255,7 +255,7 @@ class InMemoryRevocationList:
 # wrong outage to have to diagnose from scratch.
 #
 # Until 0.7.0 that half-state was not merely *reachable*, it was the ONLY
-# reachable state: ``with_revocation_check`` injected the revoked set, and no
+# reachable state: the removed ``with_revocation_check`` injected the revoked set, and no
 # injection point for the resolver existed at all. A self-hoster following the
 # documented path built exactly the half that produces the outage.
 #

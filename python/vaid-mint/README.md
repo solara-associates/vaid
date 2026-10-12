@@ -56,8 +56,8 @@ than at deploy, and is first mistaken for a signing or clock problem.
 state cannot be reached by omitting an argument; pass `InMemoryLineageStore` as the
 second half to say "in-memory lineage, deliberately". Make the resolver durable
 first, or both in the same change — the revoked set first is the ordering that
-produces the outage. `ReferenceIssuer.with_revocation_check` replaced only one half
-and was **removed in 0.9.0** for this reason.
+produces the outage. The single-half injection point `with_revocation_check`
+replaced only the revoked set and was **removed in 0.9.0** for this reason.
 
 **Since 0.9.0 the default fails closed.** A bare `ReferenceIssuer`'s revocation store
 is *absent* — never populated, so it reports `UNAVAILABLE` and `verify_vaid` returns
@@ -94,7 +94,7 @@ class MyDurableRevocations:
 # halves are required: MyDurableLineage records every mint and resolves ancestry
 # across a restart (see `LineageStore`), and without it every CHILD VAID would fail
 # closed after a restart while every root kept verifying.
-issuer = ReferenceIssuer.ephemeral(1).with_revocation_backend(
+issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_backend(
     RevocationBackend(check=MyDurableRevocations(), lineage=MyDurableLineage())
 )
 
@@ -102,13 +102,13 @@ issuer = ReferenceIssuer.ephemeral(1).with_revocation_backend(
 # exists. Naming InMemoryLineageStore is how you say "in-memory lineage,
 # deliberately" — this issuer does not survive a restart, and nothing pretends it does.
 revocations = InMemoryRevocationList.assume_nothing_revoked()
-issuer = ReferenceIssuer.ephemeral(1).with_revocation_backend(
+issuer = ReferenceIssuer.ephemeral(1, "vaid.example").with_revocation_backend(
     RevocationBackend(check=revocations, lineage=InMemoryLineageStore())
 )
 
 # Shorthand for exactly the pre-0.9.0 posture — a vouching in-memory revoked set and
 # an in-memory lineage store. Same fail-open behaviour; the difference is the name.
-dev = ReferenceIssuer.ephemeral(1).assuming_nothing_revoked()
+dev = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
 revocations.revoke(vaid["vaid_id"])
 assert not issuer.verify_vaid(vaid)
 ```
@@ -169,7 +169,7 @@ from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
 # `verify_vaid` fails closed until revocation state is loaded (R.4.5). This is a
 # fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
 # survive a restart. For anything that must, use `with_revocation_backend`.
-issuer = ReferenceIssuer.ephemeral(24).assuming_nothing_revoked()
+issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
 mint = MintService(issuer, InMemoryAudit())
 root = mint.mint_root(VaidSeed(
     agent_class="orchestrator", version="1.0.0", tenant_id="acme",
