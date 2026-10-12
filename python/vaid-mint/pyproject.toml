@@ -34,7 +34,7 @@ classifiers = [
 # RFC 8785 JCS, byte-identical to the Rust serde_jcs path (locked by mint_v1.json).
 # Do NOT substitute another JCS library without re-proving byte-equality.
 dependencies = [
-    "vaid-pop>=0.2.0",
+    "vaid-pop>=0.2.0,<0.3",
     "cryptography>=42.0",
     "rfc8785>=0.1.2",
 ]

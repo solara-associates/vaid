@@ -52,7 +52,13 @@ message = {
 result = verify_a2a_message(
     message,
     trust_config=trust_config,
-    revocation=InMemoryRevocationList(),  # or your own RevocationCheck
+    # A plain, never-populated InMemoryRevocationList() is UNAVAILABLE by
+    # design (R.4.5/R.4.6), so this example as written DENIES EVERY REQUEST
+    # with VerifyCode.INDETERMINATE, however valid the VAID is. That is
+    # deliberate: a copy-pasted revocation seam with nothing wired to it
+    # must fail closed, never read as "nothing is revoked". See "Configuring
+    # real revocation" below for what plugging in an actual store takes.
+    revocation=InMemoryRevocationList(),
     requested_action="data.acme.orders",
     now=datetime.now(timezone.utc),
 )
@@ -63,7 +69,75 @@ else:
     ...  # result.code (a VerifyCode) and result.reason explain why
 ```
 
+**Valid requests are refused as `indeterminate` until a real
+`RevocationCheck` is configured.** This is not a bug to work around; it is
+the fail-closed default R.4.5 requires. The copy-paste path above stays
+closed on purpose, so a deployment cannot go live by accident with
+revocation silently assumed clean.
+
 See `examples/guard.py` for use as a guard in front of a request handler.
+
+### Configuring real revocation
+
+Implement `vaid_mint.revocation.RevocationCheck` against whatever actually
+tracks revoked VAIDs in your deployment (a database table, a feed, a cache
+in front of either) and pass an instance of it instead of
+`InMemoryRevocationList()`:
+
+```python
+from vaid_mint.revocation import RevocationCheck, RevocationStatus
+
+class DatabaseRevocationCheck:
+    """Minimal real RevocationCheck: ask the database once per lineage."""
+
+    def __init__(self, db):
+        self._db = db
+
+    def check_lineage(self, lineage: list[str]) -> RevocationStatus:
+        try:
+            revoked_ids = self._db.revoked_vaid_ids(lineage)
+        except Exception:
+            return RevocationStatus.UNAVAILABLE  # fail closed, not NOT_REVOKED
+        if revoked_ids:
+            return RevocationStatus.REVOKED
+        return RevocationStatus.NOT_REVOKED
+
+result = verify_a2a_message(
+    message,
+    trust_config=trust_config,
+    revocation=DatabaseRevocationCheck(db),
+    requested_action="data.acme.orders",
+    now=datetime.now(timezone.utc),
+)
+```
+
+`check_lineage` receives the full ordered lineage (root first, leaf last)
+that `verify_a2a_message` already assembled; it is never asked to resolve
+ancestry itself (R.4.1). `RevocationStatus` is three-valued on purpose: a
+database error or an unreachable feed must report `UNAVAILABLE`, never
+`NOT_REVOKED`.
+
+### Local demo only, never production
+
+`InMemoryRevocationList.assume_nothing_revoked()` exists for local demos and
+tests that have no revocation source to wire up and want to exercise the
+rest of the check (signature, expiry, chain, scope) without every call
+denying on revocation. It is **never** appropriate outside a local demo: it
+makes every lineage read as not-revoked, unconditionally, regardless of
+whether anything actually was.
+
+```python
+# LOCAL DEMO ONLY, NEVER PRODUCTION.
+from vaid_mint.revocation import InMemoryRevocationList
+
+demo_result = verify_a2a_message(
+    message,
+    trust_config=trust_config,
+    revocation=InMemoryRevocationList.assume_nothing_revoked(),
+    requested_action="data.acme.orders",
+    now=datetime.now(timezone.utc),
+)
+```
 
 ## What this checks, and in what order
 

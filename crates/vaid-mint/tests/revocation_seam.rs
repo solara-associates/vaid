@@ -233,9 +233,9 @@ fn cross_language_scenarios() {
         let issuer = ReferenceIssuer::ephemeral(1, "vaid.example")
             .unwrap()
             .with_revocation_backend(RevocationBackend::new(
-            Arc::new(InMemoryRevocationList::unavailable()),
-            Arc::new(InMemoryLineageStore::new()),
-        ));
+                Arc::new(InMemoryRevocationList::unavailable()),
+                Arc::new(InMemoryLineageStore::new()),
+            ));
         let root = issue_root(&issuer, "root");
         assert_eq!(
             issuer.revocation_status(&root),
