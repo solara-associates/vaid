@@ -88,6 +88,42 @@ They use it for opposite purposes, and must not be collapsed into one another:
 pattern (`0x42` repeated 32 times); it exists so these vectors are
 byte-reproducible, never for any purpose requiring secrecy.
 
+## Vectors 13 and 14: forward compatibility and no privilege via an unused field
+
+Requested by an outside implementer who ran the published 0.1.1 conformance
+set 12/12 clean (a2aproject/A2A#2028), as the two fixture kinds that set left
+untested. Both are signed by the same fixed `0x42` test kernel key as 01-05
+and 07-11; neither introduces a new error code.
+
+- **`13-unknown-scope-kind-future-compat.json`** — a ROOT leaf (no parent, no
+  presented chain) whose `scope_boundary` carries a `prefix` entry that
+  matches `requested_action`, plus an `amount_limit` entry of a kind this
+  verifier does not recognise. Spec §5 step 2a / ADR-0009 S.10 require the
+  WHOLE boundary refused, `unknown_scope_kind`, even though the other entry
+  would have matched on its own. It is a root deliberately: per-hop
+  attenuation (step 4) only runs where there is a parent, so a root is the
+  one shape where step 2a is the only thing standing between this boundary
+  and an ALLOW.
+- **`14-no-privilege-via-unused-field.json`** — a correctly signed, properly
+  attenuated two-hop chain carrying an extra top-level field,
+  `x_elevated_scope_boundary`, shaped like a WIDER `scope_boundary`
+  (`data.acme`) than the real one (`data.acme.orders`). The signature covers
+  the extra field (ADR-0006: an unrecognised document member is preserved,
+  not dropped, before canonicalizing), so the document is authentic, not
+  inauthentic. `requested_action` (`data.acme.customers`) is outside the
+  REAL `scope_boundary` but inside the fabricated one. The expected verdict
+  — `out_of_scope` — is exactly what this chain gets with the extra field
+  absent: nothing in spec §5's verification order ever reads a field named
+  anything but `scope_boundary` for this check, so the extra field buys the
+  holder nothing.
+
+Both are exercised against deliberately careless verifiers in
+`python/vaid-a2a/tests/test_vector_positive_controls.py` — one that ignores
+unknown scope kinds, one that unions the extra field into the scope check —
+and both careless verifiers wrongly ALLOW; only the real verifier reaches the
+vector's recorded verdict. Without that, "the vector passes the reference
+verifier" would be the only evidence either vector is discriminating at all.
+
 ## Reproducing
 
 ```sh
