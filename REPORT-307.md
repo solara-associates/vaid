@@ -550,3 +550,231 @@ the exact commit pushed, confirmed to contain `e7f174f` as an ancestor.
 - No em-dashes introduced in this follow-up's new text in
   `docs/a2a/v1/extension.md`, `python/vaid-a2a/vaid_a2a/verifier.py`,
   `python/vaid-a2a/tests/test_verifier.py`, or this report section.
+
+## Follow-up 4
+
+Reviewer Tymofii Pidlisnyi approved publishing, with two items to close
+first: the loader was still decoding `kernelPublicKey` non-strictly despite
+section 2.1 saying an undecodable key is rejected at load, and the package
+needed a version for the advisory.
+
+Head SHA: `1cb9a32c9d2de32461efd54520eaac042da3a80b`.
+
+### Item 1: strict key decoding
+
+Confirmed the reviewer's finding before changing anything.
+`_build_key_resolver` called `_b64url_decode`, which re-padded the string
+and handed it to `base64.urlsafe_b64decode`. That decoder runs without
+`validate=True`, so it **discards** every character outside the base64
+alphabet rather than rejecting it, and nothing checked the decoded length.
+Three shapes section 2.1 rejects therefore still loaded:
+
+- `""` re-padded to `""`, decoded to `b""`, and was filed under
+  `kernel_key_thumbprint(b"")` as a trusted zero-byte key.
+- `"!!!!"` had all four characters discarded, decoded to `b""`, and loaded
+  identically. Follow-up 3's own test used `"a"`, which raises only because
+  one data character is an impossible base64 length, so it never exercised
+  the discard path at all.
+- A value decoding cleanly to 31 or 33 bytes was accepted and thumbprinted
+  as if it were an Ed25519 public key, which it cannot be.
+
+`_b64url_decode` is replaced by `_strict_b64url_decode`
+(`python/vaid-a2a/vaid_a2a/verifier.py`), which rejects:
+
+- any character outside the unpadded base64url alphabet (`A`-`Z`, `a`-`z`,
+  `0`-`9`, `-`, `_`), `=` padding included, and the empty string, by
+  `fullmatch` against `[A-Za-z0-9_-]+` before any decode;
+- an impossible length (`len % 4 == 1`), which surfaces as the
+  `binascii.Error` the existing `except` clause already caught;
+- a non-canonical encoding, checked by re-encoding the decoded bytes
+  unpadded and comparing against the input. Re-encoding rather than masking
+  the final character's bits asserts the property that matters directly:
+  this string is the one and only base64url spelling of these bytes, so the
+  thumbprint an operator derives by hand from the configured text is the one
+  the loader files the key under.
+
+The loader then requires `len(key_bytes) == _ED25519_PUBLIC_KEY_BYTES` (32).
+Both failures raise `TrustedIssuersConfigError`, with the raw value and,
+for the length case, the actual byte count in the message.
+
+Six new tests in `python/vaid-a2a/tests/test_verifier.py`, each asserting
+`TrustedIssuersConfigError` with a well-formed `trustDomain` present so the
+failure can only be the key:
+
+- `test_entry_empty_string_key_raises`: `""`.
+- `test_entry_non_base64url_characters_raise`: `"!!!!"`.
+- `test_entry_key_one_byte_short_raises`: a 31-byte key.
+- `test_entry_key_one_byte_long_raises`: a 33-byte key.
+- `test_entry_not_an_object_raises`: a `trustedIssuers` element that is a
+  string and one that is a number. The loader has raised for this since
+  follow-up 3, but nothing pinned it, so a regression to `entry.get` on
+  either would have surfaced as `AttributeError` or `TypeError` rather than
+  as a configuration error. This is the missing test the reviewer asked for.
+- `test_valid_32_byte_key_still_loads`: the control. A well-formed entry
+  whose key is exactly 32 bytes in unpadded base64url still loads, and the
+  call still returns `NO_VAID`, allowed.
+
+Checked by hand against the new loader, beyond the test suite: `"a"`
+(impossible length), a correctly-sized but `=`-padded 44-character key, and
+a 43-character key whose final character carries non-zero trailing bits all
+raise; a valid 32-byte key loads and resolves its trust domain.
+
+#### Exact new section 2.1 wording
+
+`docs/a2a/v1/extension.md` section 2.1 keeps its opening paragraph, its
+`trustDomain` and duplicate-key bullets and its closing paragraph unchanged.
+The first bullet is replaced, and one bullet is added before it. Verbatim,
+the two bullets as they now read:
+
+```
+- **An entry that is not an object.** `trustedIssuers` is a list of objects
+  (§2). A string, a number or any other non-object element names neither a
+  key nor a domain, so it is rejected rather than skipped.
+- **An entry with no parseable `kernelPublicKey`.** `kernelPublicKey` MUST be
+  present, MUST be a string, and MUST be **strict unpadded base64url**
+  decoding to **exactly 32 bytes**, the length of a raw Ed25519 public key.
+  Strict means exactly three things: the value uses only the unpadded
+  base64url alphabet (`A`-`Z`, `a`-`z`, `0`-`9`, `-` and `_`), carries no
+  `=` padding, and is the canonical encoding of its bytes, so the unused low
+  bits of its final character are zero. Every other shape is a configuration
+  error: no `kernelPublicKey` field at all (`{}`), an entry that names only a
+  `trustDomain`, a non-string value, the empty string, any character outside
+  the alphabet, a padded or non-canonical encoding, and a value that decodes
+  cleanly but to any length other than 32 bytes. A loader MUST NOT use a
+  permissive base64 decoder that discards characters outside the alphabet:
+  `"!!!!"` is not a key, and a decoder that returns zero bytes for it has
+  accepted one. A thumbprint alone is not key material (§2's
+  `trustedIssuers` row), so there is no reading of any of these entries that
+  resolves to key material the loader could actually trust: each is rejected
+  outright, never silently dropped from the list.
+```
+
+### Item 2: version for the advisory
+
+`vaid-a2a` has never been published: PyPI serves nothing for the name, and
+`releaseTagFor('python', 'vaid-a2a', ...)` resolves to no tag for any
+version, the legacy bare-tag restriction added in session 306 being what
+keeps the unrelated `python-v0.1.0` and `python-v0.1.1` tags from being read
+as this package's own releases. So 0.1.0 exists only in this repository's
+history and the fixes land as 0.1.1.
+
+Three sources, exactly the three `scripts/verify-internal-versions.mjs`
+compares for every other Python package in the tree, and nothing else in
+the repository records a `vaid-a2a` version:
+
+| source | before | after |
+|---|---|---|
+| `python/vaid-a2a/pyproject.toml` `[project] version` | `0.1.0` | `0.1.1` |
+| `python/vaid-a2a/vaid_a2a/__init__.py` `__version__` | `0.1.0` | `0.1.1` |
+| `python/vaid-a2a/CHANGELOG.md` top heading | `## [Unreleased]` | `## [0.1.1]` |
+
+The CHANGELOG's existing `Unreleased` section becomes the `0.1.1` section
+unchanged except for the heading, a note that 0.1.0 was never published, and
+a new entry for this follow-up's strict decoding. The `## [0.1.0]` section
+below it is untouched. The format matches `vaid-pop` and `vaid-langchain`:
+a bare `## [x.y.z]` heading, no date.
+
+No tag was created, nothing was released and nothing was published. The
+registry-parity check classifies the result as "in flight", which is the
+state it defines for a bumped, untagged, unpublished package that is ahead
+of its registry:
+
+```
+IN FLIGHT - 1 package(s) bumped, not yet released (no tag, ahead of the registry):
+  -> [python/vaid-a2a] vaid-a2a 0.1.1 - pypi serves up to (nothing published)
+      Clears when vaid-a2a 0.1.1 is published AND tagged python-vaid-a2a-v0.1.1.
+      Until then this is NOT evidence of a release; it is evidence of an intention.
+```
+
+### Version and release-map checks
+
+Run locally, all exit 0:
+
+```
+node scripts/verify-internal-versions.mjs
+  ✓ internal version agreement - 11 package(s), each self-consistent.
+  ✓ [python/vaid-a2a] vaid-a2a 0.1.1 - 3 source(s) agree
+
+node scripts/verify-release-map.mjs
+  ✓ release map - 11 entries, each resolving to the package it names
+  ✓ every publishable package found in the tree (11) has an entry
+
+node scripts/verify-package-versions.mjs
+  ✓ self-check - parity classifier agrees with all seven fixed fixtures
+  ✓ self-check - legacy bare-tag fallback agrees with real repository history
+  ✓ scope declaration - 11 declared pair(s)
+  ✓ registry parity - 10 package(s) checked: 9 released and present, 1 in flight
+  ✓ release tag parity - every published version has a release tag.
+```
+
+Also run, unaffected and green: `verify-release-version.mjs` (9 sites all
+read 0.9.0), `verify-vector-freeze.mjs` (35 vectors unchanged, 0 not
+checked), `verify-spec-status.mjs`, `verify-claims.mjs`,
+`check-readme-drift.mjs`, and `verify-no-guarded-terms.mjs origin/main`
+(1402 added lines scanned, no guarded term). `verify-crosslang-parity.mjs`
+reports its two pre-existing advisory skews, neither involving `vaid-a2a`.
+
+### Tests
+
+Full local run across all four Python packages:
+
+```
+python/vaid-mint:      185 passed
+python/vaid-a2a:        34 passed
+python/vaid-pop:         9 passed
+python/vaid-langchain:  14 passed
+-----------------------------------
+Total:                 242 passed, 0 failed
+```
+
+(34 in `vaid-a2a` is follow-up 3's 28 plus this follow-up's 6 new tests.
+242 total is follow-up 3's 236 plus the same 6. No existing test changed,
+and `test_vectors.py` passes unchanged.)
+
+### Commit and push
+
+Commit `1cb9a32` ("fix(a2a): reviewer follow-up 4 (strict kernelPublicKey
+decoding, version 0.1.1)") on `fix/trust-domain-binding`, pushed as an
+ordinary fast-forward (`1a8be96..1cb9a32`). Confirmed via the REST API after
+the push: `GET /repos/solara-associates/vaid-ghsa-hfjh-v2x2-r58v/pulls/1`
+reports `head.sha` = `1cb9a32c9d2de32461efd54520eaac042da3a80b`, and
+`GET /git/refs/heads/fix/trust-domain-binding` reports the same SHA. PR #1
+is open against `main`.
+
+### Decisions made on Allan's behalf
+
+- **`=` padding is rejected outright**, not accepted as an alternative
+  spelling. The reviewer asked for "strict unpadded base64url" and named
+  "padding errors" as a thing to reject, and section 2's example already
+  shows an unpadded key, so a padded key is now a configuration error even
+  though it decodes to the right 32 bytes. Every fixture in the test suite
+  already encodes unpadded, so nothing in the repository relied on the
+  permissive behaviour. If a real operator's configuration file turns out to
+  carry padded keys, that is a one-line relaxation in
+  `_strict_b64url_decode` plus the matching sentence in section 2.1.
+- **Section 2.1 gained the non-object bullet** as well as the rewritten key
+  bullet. Only the key rule was asked for, but the reviewer also asked for
+  the missing non-object test, and the loader has rejected non-objects since
+  follow-up 3 while section 2.1 said nothing about them. Leaving the spec
+  silent on a rule the loader enforces and a test now pins is the exact
+  spec-versus-loader drift this series of follow-ups has been closing.
+- **The `Unreleased` heading was consumed rather than kept alongside
+  `0.1.1`.** No other package in the tree carries a standing `Unreleased`
+  section, and `verify-internal-versions.mjs` reads the first parseable
+  `## [x.y.z]` heading, so an empty `Unreleased` above it would be harmless
+  but unlike every sibling package.
+
+### Ground rules re-confirmed
+
+- Private fork only; no release, no publish, no tag. The version bump is a
+  manifest edit only, and the registry-parity check's "in flight" verdict is
+  the repository's own representation of exactly that state, so no tag or
+  publish was needed for the checks to pass.
+- No change under `docs/a2a/v1/vectors/`: no file there was read or
+  modified.
+- No `vaid_mint` core change, in any language. This follow-up touched six
+  files, all of them `docs/a2a/v1/extension.md` or inside
+  `python/vaid-a2a/`.
+- No force-push. The one push was an ordinary fast-forward.
+- No em-dashes introduced in this follow-up's new text, swept over every
+  added line in the diff.
