@@ -85,5 +85,10 @@ def test_vector(vector_path: Path) -> None:
 def test_all_vectors_covered() -> None:
     """A guard against the parametrized test silently collecting zero cases —
     the exact "ALL-PASS, a workflow not started" shape: a suite with no
-    vectors loaded would otherwise report a clean, empty pass."""
-    assert len(_vector_files()) >= 6
+    vectors loaded would otherwise report a clean, empty pass.
+
+    The floor tracks the number of vectors that actually exist. Left at a
+    stale lower number it stops being a guard against anything but total
+    absence: with 12 vectors published, a floor of 6 would let half of them
+    disappear and still report a clean pass."""
+    assert len(_vector_files()) >= 12

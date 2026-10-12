@@ -39,7 +39,7 @@ use, not a new taxonomy:
 | `expired` | the leaf (or an ancestor) has passed its own `expires_at` |
 | `revoked` | some VAID in the lineage is revoked (R.4.4) |
 | `out_of_scope` | the chain attenuates correctly, but the requested action is outside the leaf's own `scope_boundary` |
-| `issuer_mismatch` | the document is signed by a kernel key the verifier's `trust_config` does not list |
+| `issuer_mismatch` | the document's issuer is not trusted **for the trust domain it claims**: either the signing kernel key is not in the verifier's `trust_config` at all (vector `06`), or it is in it but bound to a different `trustDomain` than the document claims (vector `12`) |
 
 ## The test key
 
@@ -57,12 +57,31 @@ IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI
 which derives to thumbprint
 `urn:ietf:params:oauth:jwk-thumbprint:sha-256:nEArpjG3kYMcxbdzInyGlBEYQUw7RfAfe3Tw1fZvAA0`.
 
-Vector `06` is deliberately signed by a **second**, different test-only key
+Vectors `06` and `12` are both signed by a **second**, different test-only key
 (seed `bytes([0x99]) * 32`, public key `My6-jSfLcyOzpAHBwTtd1kvMwOEOzaHCtdEaA3eaheU`,
 thumbprint
-`urn:ietf:params:oauth:jwk-thumbprint:sha-256:wEnpSYrYOONNWTAK44zUMPY0sU44L_FJ_pXbXdkxFZs`)
-that a verifier configured with only the `01`-`05` trust config has never been
-told to trust — that is the point of the vector.
+`urn:ietf:params:oauth:jwk-thumbprint:sha-256:wEnpSYrYOONNWTAK44zUMPY0sU44L_FJ_pXbXdkxFZs`).
+They use it for opposite purposes, and must not be collapsed into one another:
+
+- In `06` that key is **not in the trust config at all**, so a verifier has
+  never been told to trust it. That is the point of the vector.
+- In `12` it **is** in the trust config, bound to a second trust domain
+  (`other.example`), and the document it signs claims `vaid.example` instead.
+  `12` is therefore the only vector whose `trust_config` lists **two**
+  issuers, and it has to be: with a single trusted issuer there is no other
+  domain for a key to be misbound against, so the defect it covers
+  (GHSA-hfjh-v2x2-r58v) is invisible. Both keys are legitimately trusted and
+  neither is compromised; a verifier that resolves a kernel key by
+  `kernel_key_thumbprint` alone finds a trusted key, verifies the signature
+  against it, and **passes** — one issuer's key vouching for another
+  issuer's identity. Refusing it requires carrying the pairing
+  `trustedIssuers` declares (spec §2.1) and comparing a document's claimed
+  `trust_domain` against the domain bound to the key that signed it, never
+  the other way round (spec §5 step 1).
+
+  Which key signs `12` and which domain it claims are both load-bearing:
+  swapping either makes the vector pass, so a verifier cannot satisfy it by
+  refusing everything. Vector `01` is the standing positive control for that.
 
 **This key is test-only.** Its private material is a fixed, published byte
 pattern (`0x42` repeated 32 times); it exists so these vectors are

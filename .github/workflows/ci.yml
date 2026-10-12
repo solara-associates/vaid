@@ -48,14 +48,19 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      - name: Install vaid-pop + vaid-mint + vaid-langchain + test deps
+      - name: Install vaid-pop + vaid-mint + vaid-langchain + vaid-a2a + test deps
         run: |
           python -m pip install --upgrade pip
           python -m pip install "./python/vaid-pop[test]"
           python -m pip install "./python/vaid-mint[test]"
           python -m pip install "./python/vaid-langchain[test]"
-      - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain)
-        run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain
+          python -m pip install "./python/vaid-a2a[test]"
+      # vaid-a2a is added here because the A2A vectors' only conformance runner
+      # is python/vaid-a2a/tests/test_vectors.py, and that package ran in no CI
+      # job at all. Adding a vector to a runner no job executes wires it to
+      # nothing: vector 12 would have been green only on a developer's machine.
+      - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain + vaid-a2a)
+        run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain python/vaid-a2a
 
   typescript:
     name: TypeScript conformance (node --test)

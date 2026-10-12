@@ -51,6 +51,12 @@ UNTRUSTED_KEY_THUMBPRINT = kernel_key_thumbprint(UNTRUSTED_PUBLIC_KEY)
 # RFC 2606 reserved domain — a vector-publishing suite must not name a
 # bindable one (matches the reasoning in verdict_v1 and test_chain_verification).
 TRUST_DOMAIN = "vaid.example"
+
+# A SECOND trust domain, for vector 12. Also under the reserved .example TLD.
+# Vectors 01-11 never name it: it exists so one vector can configure two
+# legitimately trusted issuers and show that neither one's key may vouch for
+# the other one's domain.
+OTHER_TRUST_DOMAIN = "other.example"
 TENANT = "acme"
 
 # Fixed, far-future-by-convention timestamps (see test_chain_verification.py's
@@ -367,9 +373,79 @@ def main() -> None:
             "expected_error_code": "not_attenuated",
         })
 
+    # ── 12. Trust domain not bound to the signing key (fail: ISSUER_MISMATCH) ──
+    #
+    # GHSA-hfjh-v2x2-r58v. The only vector whose trust_config lists TWO
+    # issuers, and the reason it has to: the defect is invisible with one.
+    #
+    # Both keys here are trusted. The 0x42 key is trusted for "vaid.example";
+    # the 0x99 key is trusted for "other.example". Neither is compromised and
+    # no signature is forged. The document below is signed by the 0x99 key,
+    # correctly, and claims "vaid.example" — the domain the OTHER trusted
+    # issuer's key is bound to.
+    #
+    # A verifier that resolves a kernel key by kernel_key_thumbprint alone
+    # finds the 0x99 key, checks the signature against it, and PASSES: one
+    # issuer's key vouching for another issuer's identity. Refusing it
+    # requires carrying the pairing trustedIssuers declares (spec §2.1) and
+    # comparing the claimed trust_domain against the domain bound to the key
+    # that signed the document, never the other way round (spec §5 step 1).
+    #
+    # Note which key signs this and which domain it claims: swapping either
+    # makes the vector pass, so a verifier cannot satisfy it by refusing
+    # everything. Vector 01 is the standing positive control for that.
+    two_issuer_trust_config = {
+        "trustedIssuers": [
+            {"trustDomain": TRUST_DOMAIN, "kernelPublicKey": b64url(KERNEL_PUBLIC_KEY)},
+            {
+                "trustDomain": OTHER_TRUST_DOMAIN,
+                "kernelPublicKey": b64url(UNTRUSTED_PUBLIC_KEY),
+            },
+        ]
+    }
+    misbound_root = sign(
+        _UNTRUSTED_KEY, UNTRUSTED_KEY_THUMBPRINT,
+        agent_id=vid(24), parent_vaid=None,
+        scope=["data.acme"], caps=["read"],
+        # Claims the domain the 0x42 key is bound to, while signed by 0x99.
+        trust_domain=TRUST_DOMAIN,
+    )
+    write_vector("12-trust-domain-not-bound-to-signing-key", {
+        "description": (
+            "Two legitimately trusted issuers, neither compromised. The leaf is "
+            "signed, correctly, by the kernel key trusted for 'other.example', "
+            "but claims trust_domain 'vaid.example' - the domain the OTHER "
+            "trusted issuer's key is bound to. A verifier that resolves the "
+            "kernel key by kernel_key_thumbprint alone finds a trusted key, "
+            "verifies the signature against it and passes, which is one "
+            "issuer's key vouching for another issuer's identity "
+            "(GHSA-hfjh-v2x2-r58v). A key is trusted for the trust domain "
+            "trustedIssuers pairs it with, never for a domain a document "
+            "claims, so this must be refused as issuer_mismatch - the same "
+            "code as an untrusted issuer, because in the domain it is "
+            "claiming that is exactly what it is."
+        ),
+        "trust_config": two_issuer_trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme",
+        "inputs": {"leaf": misbound_root, "chain": []},
+        "revoked_vaid_ids": [],
+        "expected_result": "fail",
+        "expected_error_code": "issuer_mismatch",
+        "note": (
+            "This leaf's kernel_key_thumbprint is " + UNTRUSTED_KEY_THUMBPRINT +
+            ", which IS in trust_config.trustedIssuers above - bound to '" +
+            OTHER_TRUST_DOMAIN + "'. Unlike vector 06, the issuer is trusted; "
+            "the mismatch is between the domain this document claims and the "
+            "domain its signing key is trusted for. The two vectors must not "
+            "be collapsed: 06 is an unknown key, 12 is a known key used "
+            "outside the one domain it was trusted for."
+        ),
+    })
+
     print(f"\nkernel public key (vectors 01-05): base64url {b64url(KERNEL_PUBLIC_KEY)}")
     print(f"  derived thumbprint: {KERNEL_KEY_THUMBPRINT}")
-    print(f"untrusted public key (vector 06):  base64url {b64url(UNTRUSTED_PUBLIC_KEY)}")
+    print(f"second key (vectors 06, 12):      base64url {b64url(UNTRUSTED_PUBLIC_KEY)}")
     print(f"  derived thumbprint: {UNTRUSTED_KEY_THUMBPRINT}")
 
 
