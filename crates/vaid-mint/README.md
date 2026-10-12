@@ -52,8 +52,9 @@ has no single-half constructor, so that state cannot be reached by
 omitting an argument; pass `InMemoryLineageStore` as the second half to
 say "in-memory lineage, deliberately". Make the resolver durable first,
 or both in the same change — the revoked set first is the ordering that
-produces the outage. `ReferenceIssuer::with_revocation_check` replaced
-only one half and was **removed in 0.9.0** for this reason.
+produces the outage. The single-half injection point
+`with_revocation_check` replaced only the revoked set and was **removed
+in 0.9.0** for this reason.
 
 **Since 0.9.0 the default fails closed.** A bare `ReferenceIssuer`'s
 revocation store is *absent* — never populated, so it reports
