@@ -167,7 +167,8 @@ impl LineageStore for FileLineageStore {
         let mut entries = self.load().unwrap_or_default();
         entries.retain(|(id, _)| *id != vaid_id);
         entries.push((vaid_id, parent));
-        fs::write(&self.path, serde_json::to_string(&entries).unwrap()).expect("write lineage.json");
+        fs::write(&self.path, serde_json::to_string(&entries).unwrap())
+            .expect("write lineage.json");
     }
 }
 
@@ -231,7 +232,11 @@ fn phase_mint(dir: &Path, break_mode: &str) {
     // one consulted once a backend is injected.
     FileRevocationList::new(dir).revoke(root_c.vaid_id());
 
-    for (name, vaid) in [("root_a", &root_a), ("child_b", &child_b), ("root_c", &root_c)] {
+    for (name, vaid) in [
+        ("root_a", &root_a),
+        ("child_b", &child_b),
+        ("root_c", &root_c),
+    ] {
         fs::write(
             dir.join(format!("{name}.json")),
             serde_json::to_string(vaid).unwrap(),
@@ -246,7 +251,8 @@ fn phase_verify(dir: &Path, break_mode: &str) -> Observations {
     let seed = fs::read(dir.join("seed.bin")).expect("read seed");
     let issuer = issuer_for(dir, &seed, break_mode);
     let load = |name: &str| -> Vaid {
-        serde_json::from_str(&fs::read_to_string(dir.join(format!("{name}.json"))).unwrap()).unwrap()
+        serde_json::from_str(&fs::read_to_string(dir.join(format!("{name}.json"))).unwrap())
+            .unwrap()
     };
     let child_b = load("child_b");
     let root_c = load("root_c");
@@ -410,7 +416,11 @@ fn mutation_two_revoked_set_vouching_when_absent_resurrects_a_revoked_vaid() {
     // not the other.
     spawn_phase("mint", &dir, "");
     fs::remove_file(dir.join("revoked.json")).expect("drop the revoked set");
-    let obs = observations_from(&spawn_phase("verify", &dir, "revocation-vouches-when-absent"));
+    let obs = observations_from(&spawn_phase(
+        "verify",
+        &dir,
+        "revocation-vouches-when-absent",
+    ));
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(
         obs,
@@ -441,7 +451,10 @@ fn an_honest_store_reports_an_absent_revoked_set_as_unavailable() {
     assert_eq!(obs.revoked_root_status, "Unavailable");
     assert!(!obs.revoked_root_verifies);
     assert_eq!(obs.child_status, "Unavailable");
-    assert!(obs.child_authentic, "still authentic — only standing failed");
+    assert!(
+        obs.child_authentic,
+        "still authentic — only standing failed"
+    );
 }
 
 /// The paired backend records into the injected store rather than the built-in
