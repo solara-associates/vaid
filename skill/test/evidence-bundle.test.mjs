@@ -16,11 +16,21 @@
  * ## Nothing here is mocked
  *
  * Every bundle below is signed with a real Ed25519 key generated in the test, the
- * delegation entries are real VAIDs from the real `vaid-mint` mint, and the live
- * kernel-key endpoint is a real `node:http` server on a loopback port. The
+ * delegation entries are real VAIDs from the real `vaid-mint` mint, and every
+ * published key source is a real `node:http` server on a loopback port. The
  * negative cases mutate a bundle that was genuinely signed, so a verifier that
  * returned "verified" for everything would fail them — which is the only thing
  * that makes the positive cases mean anything.
+ *
+ * ## The three key sources, as the tests model them
+ *
+ * The cross-check is gated on two STATIC publications — the pin in this repo and
+ * the UAB site's static asset — with the substrate's live endpoint an optional
+ * operator-only third vote. The helpers below mirror that exactly: `withBothStatic`
+ * supplies the two gating sources and nothing else, so a test that wants the live
+ * endpoint has to ask for it. No test passes `--site-key-url`'s default: the
+ * default is a reserved `.invalid` placeholder and is never fetched, which is
+ * itself asserted below rather than assumed.
  */
 
 import { test } from 'node:test';
@@ -82,23 +92,27 @@ function pinnedKeyFile(kp, { corruptThumbprint = false } = {}) {
   return { dir, path };
 }
 
-/** A real HTTP server on loopback serving the key the way the substrate would. */
-async function kernelKeyServer(body) {
+/**
+ * A real HTTP server on loopback publishing a key document.
+ *
+ * Stands in for either network publisher — the UAB site's static asset or the
+ * substrate's live endpoint — because the script reads both with the same parser.
+ * `path` only changes what the URL looks like in the output.
+ */
+async function keyServer(body, path = '/kernel-key.json') {
   const server = createServer((req, res) => {
-    if (!req.url.startsWith('/kernel/public-key')) {
-      res.writeHead(404).end();
-      return;
-    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address();
   return {
-    url: `http://127.0.0.1:${port}/kernel/public-key`,
+    url: `http://127.0.0.1:${port}${path}`,
     close: () => new Promise((r) => server.close(r)),
   };
 }
+
+const jwkBody = (kp) => ({ kty: 'OKP', crv: 'Ed25519', x: kp.rawB64u });
 
 // --- real bundles ------------------------------------------------------------
 
@@ -151,14 +165,21 @@ function makeBundle(kp, { overrides = {}, chain = [], signOver = 'hex' } = {}) {
   };
 }
 
-/** The happy path: both key sources agree, live endpoint real, pin real. */
-async function withBothSources(kp, fn, serverBody) {
+/**
+ * The happy path: the TWO STATIC publications, both real and both agreeing.
+ *
+ * The pin is a real file on disk; the site asset is a real HTTP response. The
+ * substrate's live endpoint is deliberately NOT supplied — that is the normal
+ * state for an external auditor, so it is the state the majority of these tests
+ * run in.
+ */
+async function withBothStatic(kp, fn, siteBody) {
   const pin = pinnedKeyFile(kp);
-  const server = await kernelKeyServer(serverBody ?? { kty: 'OKP', crv: 'Ed25519', x: kp.rawB64u });
+  const site = await keyServer(siteBody ?? jwkBody(kp));
   try {
-    return await fn({ pinnedKey: pin.path, kernelUrl: server.url });
+    return await fn({ pinnedKey: pin.path, siteKeyUrl: site.url });
   } finally {
-    await server.close();
+    await site.close();
     rmSync(pin.dir, { recursive: true, force: true });
   }
 }
@@ -168,7 +189,7 @@ async function withBothSources(kp, fn, serverBody) {
 test('a genuine bundle with two agreeing key sources verifies clean, exit 0', async () => {
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(bundle, opts);
     assert.equal(r.malformed, false);
     assert.equal(findingFor(r, 'shape').state, Finding.Pass);
@@ -212,7 +233,7 @@ test('with a real delegation chain and both key sources, every check passes and 
   );
 
   const bundle = makeBundle(kp, { chain: [vaid] });
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(bundle, {
       ...opts,
       trustAnchor: anchorPath,
@@ -231,7 +252,7 @@ test('a tampered content_hash FAILS, and the signature step refuses to run on it
   const bundle = makeBundle(kp);
   bundle.content_hash = bundle.content_hash.replace(/^./, (ch) => (ch === 'a' ? 'b' : 'a'));
 
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(bundle, opts);
     assert.equal(findingFor(r, 'content_hash').state, Finding.Fail);
     // A valid signature over a hash that does not describe the content would be a
@@ -246,7 +267,7 @@ test('tampering with the CONTENT — not the hash — is caught by the recomputa
   const bundle = makeBundle(kp);
   bundle.decisions[0].policy_decision = 'Deny';
 
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(bundle, opts);
     assert.equal(findingFor(r, 'content_hash').state, Finding.Fail);
     assert.equal(exitCodeFor(r), 1);
@@ -262,7 +283,7 @@ test('a tampered signature FAILS under a cross-checked key', async () => {
   sig[0] ^= 0xff;
   bundle.signature.sig_b64 = sig.toString('base64url');
 
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(bundle, opts);
     // The content is untouched, so the hash still matches: the ONLY thing wrong is
     // the signature, and the verdict must say so rather than blaming the content.
@@ -277,7 +298,7 @@ test('a signature made by a DIFFERENT key FAILS', async () => {
   const impostor = kernelKeypair();
   // Signed by the impostor, cross-checked against the real key's two sources.
   const bundle = makeBundle(impostor);
-  await withBothSources(real, async (opts) => {
+  await withBothStatic(real, async (opts) => {
     const r = await verifyBundle(bundle, opts);
     assert.equal(findingFor(r, 'content_hash').state, Finding.Pass);
     assert.equal(findingFor(r, 'signature').state, Finding.Fail);
@@ -289,7 +310,7 @@ test('both messages ASSUMPTION 1 names are accepted, and the one used is named',
   for (const signOver of ['hex', 'raw']) {
     const kp = kernelKeypair();
     const bundle = makeBundle(kp, { signOver });
-    await withBothSources(kp, async (opts) => {
+    await withBothStatic(kp, async (opts) => {
       const r = await verifyBundle(bundle, opts);
       const f = findingFor(r, 'signature');
       assert.equal(f.state, Finding.Pass, `signOver=${signOver}: ${f.detail}`);
@@ -298,64 +319,193 @@ test('both messages ASSUMPTION 1 names are accepted, and the one used is named',
   }
 });
 
-// --- 4. a missing or mismatched pinned key WARNS, never silently passes -------
+// --- 4. the key cross-check: two static publications, live endpoint optional --
+//
+// Every case below distinguishes three outcomes that a single boolean would
+// collapse: the cross-check PASSED, it FAILED, or it COULD NOT RUN. The last is
+// the one worth the most care — it is what an auditor sees today, and it must not
+// read as either of the other two.
 
-test('NO pinned key: the cross-check is NOT CHECKED and the exit code is never 0', async () => {
+test('both STATIC publications agree: PASS, and the live endpoint is named as unchecked', async () => {
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
-  const empty = mkdtempSync(join(tmpdir(), 'vaid-nopin-'));
-  const server = await kernelKeyServer({ kty: 'OKP', crv: 'Ed25519', x: kp.rawB64u });
-  try {
-    const r = await verifyBundle(bundle, {
-      kernelUrl: server.url,
-      pinnedKey: join(empty, 'does-not-exist.json'),
-    });
+  await withBothStatic(kp, async (opts) => {
+    const r = await verifyBundle(bundle, opts);
     const f = findingFor(r, 'key_crosscheck');
-    assert.equal(f.state, Finding.NotChecked);
-    assert.match(f.detail, /ONLY ONE SOURCE/);
-    // The signature was still checked — it just establishes less. Keeping those
-    // two facts apart is the point of a plural verdict.
+    assert.equal(f.state, Finding.Pass, f.detail);
+    assert.match(f.detail, /TWO INDEPENDENT STATIC PUBLICATIONS agree/);
+    // Both gating sources are named, so an auditor can see WHICH two agreed.
+    assert.match(f.detail, /pinned/);
+    assert.match(f.detail, /site/);
+    // The live endpoint was not consulted, and the output says so plainly. This
+    // is the common case now and must not be dressed up as an error: the word
+    // "EXPECTED" and the reason are both required to be there.
+    assert.match(f.detail, /live substrate endpoint was NOT checked/);
+    assert.match(f.detail, /EXPECTED/);
+    assert.match(f.detail, /Cloud Run IAM/);
+    // And the signature was verified under that cross-checked key.
     assert.equal(findingFor(r, 'signature').state, Finding.Pass);
-    assert.notEqual(exitCodeFor(r), 0);
-    assert.equal(exitCodeFor(r), 3);
+    assert.match(findingFor(r, 'signature').detail, /the cross-checked kernel key/);
+  });
+});
+
+test('the two STATIC publications DISAGREE: FAIL loudly, no signature check under either', async () => {
+  const pinnedKp = kernelKeypair();
+  const siteKp = kernelKeypair();
+  // Honestly signed by the SITE key, so a verifier that quietly preferred the
+  // site publication would report a clean pass. It must not.
+  const bundle = makeBundle(siteKp);
+  const pin = pinnedKeyFile(pinnedKp);
+  const site = await keyServer(jwkBody(siteKp));
+  try {
+    const r = await verifyBundle(bundle, { pinnedKey: pin.path, siteKeyUrl: site.url });
+    const f = findingFor(r, 'key_crosscheck');
+    assert.equal(f.state, Finding.Fail);
+    assert.match(f.detail, /SOURCES DISAGREE/);
+    assert.match(f.detail, /Refusing to pick one/);
+    assert.equal(findingFor(r, 'signature').state, Finding.NotChecked);
+    assert.equal(exitCodeFor(r), 1);
   } finally {
-    await server.close();
-    rmSync(empty, { recursive: true, force: true });
+    await site.close();
+    rmSync(pin.dir, { recursive: true, force: true });
   }
 });
 
-test('no --kernel-url: one source only, NOT CHECKED, exit 3 — not a pass', async () => {
+test('ONLY the pin is available: CROSS-CHECK INCOMPLETE — distinct from both pass and fail', async () => {
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
   const pin = pinnedKeyFile(kp);
+  const site = await keyServer(jwkBody(kp));
   try {
+    const r = await verifyBundle(bundle, { pinnedKey: pin.path, siteKeyUrl: `${site.url}` });
+    // Control: with the site reachable this same bundle PASSES. Asserted here so
+    // the incomplete case below is known to differ only by the site's absence,
+    // not by something else about the bundle.
+    assert.equal(findingFor(r, 'key_crosscheck').state, Finding.Pass);
+  } finally {
+    await site.close();
+  }
+  try {
+    // Now with no site URL at all: the default is the placeholder, never fetched.
     const r = await verifyBundle(bundle, { pinnedKey: pin.path });
     const f = findingFor(r, 'key_crosscheck');
     assert.equal(f.state, Finding.NotChecked);
-    assert.match(f.detail, /no --kernel-url was given/);
+    assert.notEqual(f.state, Finding.Pass);
+    assert.notEqual(f.state, Finding.Fail);
+    assert.match(f.detail, /CROSS-CHECK INCOMPLETE/);
+    assert.match(f.detail, /PLACEHOLDER/);
+    // The signature is still checked under the one key, and says that it is the
+    // only copy — it must not claim to be "the cross-checked key".
+    assert.equal(findingFor(r, 'signature').state, Finding.Pass);
+    assert.match(findingFor(r, 'signature').detail, /ONLY available copy/);
     assert.equal(exitCodeFor(r), 3);
   } finally {
     rmSync(pin.dir, { recursive: true, force: true });
   }
 });
 
-test('live and pinned keys DISAGREE: FAIL loudly, and no signature check under either', async () => {
-  const pinnedKp = kernelKeypair();
-  const liveKp = kernelKeypair();
-  // The bundle is honestly signed by the LIVE key, so a verifier that silently
-  // picked the live source would report a clean pass. It must not.
-  const bundle = makeBundle(liveKp);
-  const pin = pinnedKeyFile(pinnedKp);
-  const server = await kernelKeyServer({ kty: 'OKP', crv: 'Ed25519', x: liveKp.rawB64u });
+test('ONLY the site asset is available: CROSS-CHECK INCOMPLETE, exit 3', async () => {
+  const kp = kernelKeypair();
+  const bundle = makeBundle(kp);
+  const empty = mkdtempSync(join(tmpdir(), 'vaid-nopin-'));
+  const site = await keyServer(jwkBody(kp));
   try {
-    const r = await verifyBundle(bundle, { pinnedKey: pin.path, kernelUrl: server.url });
+    const r = await verifyBundle(bundle, {
+      siteKeyUrl: site.url,
+      pinnedKey: join(empty, 'does-not-exist.json'),
+    });
     const f = findingFor(r, 'key_crosscheck');
-    assert.equal(f.state, Finding.Fail);
-    assert.match(f.detail, /THE TWO SOURCES DISAGREE/);
+    assert.equal(f.state, Finding.NotChecked);
+    assert.match(f.detail, /CROSS-CHECK INCOMPLETE/);
+    // The signature was still checked — it just establishes less. Keeping those
+    // two facts apart is the point of a plural verdict.
+    assert.equal(findingFor(r, 'signature').state, Finding.Pass);
+    assert.equal(exitCodeFor(r), 3);
+  } finally {
+    await site.close();
+    rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test('the DEFAULT site-key URL is the placeholder and is never fetched', async () => {
+  const kp = kernelKeypair();
+  const bundle = makeBundle(kp);
+  const pin = pinnedKeyFile(kp);
+  try {
+    const before = Date.now();
+    const r = await verifyBundle(bundle, { pinnedKey: pin.path });
+    const f = findingFor(r, 'key_crosscheck');
+    // The placeholder host is a reserved .invalid name. If the script had tried to
+    // fetch it we would see a resolver error in the detail instead of the
+    // placeholder explanation, and the call would have cost a DNS timeout.
+    assert.match(f.detail, /uab-site-not-yet-deployed\.invalid/);
+    assert.match(f.detail, /deliberately NOT fetched/);
+    assert.doesNotMatch(f.detail, /ENOTFOUND|EAI_AGAIN|could not reach/);
+    // A DNS attempt against .invalid can take seconds; not fetching is fast. This
+    // is a weak signal on its own, which is why the absence of a resolver error
+    // above is the real assertion.
+    assert.ok(Date.now() - before < 5_000);
+    assert.equal(exitCodeFor(r), 3);
+  } finally {
+    rmSync(pin.dir, { recursive: true, force: true });
+  }
+});
+
+test('--kernel-url given and AGREEING is a third vote, and is reported as one', async () => {
+  const kp = kernelKeypair();
+  const bundle = makeBundle(kp);
+  const pin = pinnedKeyFile(kp);
+  const site = await keyServer(jwkBody(kp));
+  const live = await keyServer(jwkBody(kp), '/kernel/public-key');
+  try {
+    const r = await verifyBundle(bundle, {
+      pinnedKey: pin.path,
+      siteKeyUrl: site.url,
+      kernelUrl: live.url,
+    });
+    const f = findingFor(r, 'key_crosscheck');
+    assert.equal(f.state, Finding.Pass, f.detail);
+    assert.match(f.detail, /ALSO checked and agrees/);
+    assert.match(f.detail, /third, independent vote/);
+    assert.equal(findingFor(r, 'signature').state, Finding.Pass);
+    assert.equal(exitCodeFor(r), 3); // delegation_chain is empty — not the key's doing
+    assert.equal(findingFor(r, 'delegation').state, Finding.NotChecked);
+  } finally {
+    await live.close();
+    await site.close();
+    rmSync(pin.dir, { recursive: true, force: true });
+  }
+});
+
+test('--kernel-url DISAGREEING fails even though both static sources agreed — no majority vote', async () => {
+  const staticKp = kernelKeypair();
+  const liveKp = kernelKeypair();
+  // The two static publications agree with each other AND with the bundle's real
+  // signer, so a verifier that took the majority would report a clean pass and
+  // discard the one source that objected. Two against one must still STOP.
+  const bundle = makeBundle(staticKp);
+  const pin = pinnedKeyFile(staticKp);
+  const site = await keyServer(jwkBody(staticKp));
+  const live = await keyServer(jwkBody(liveKp), '/kernel/public-key');
+  try {
+    const r = await verifyBundle(bundle, {
+      pinnedKey: pin.path,
+      siteKeyUrl: site.url,
+      kernelUrl: live.url,
+    });
+    const f = findingFor(r, 'key_crosscheck');
+    assert.equal(f.state, Finding.Fail, f.detail);
+    assert.match(f.detail, /SOURCES DISAGREE/);
+    assert.match(f.detail, /no majority/);
+    // All three are named, so the operator can see which one is the outlier.
+    for (const id of ['pinned', 'site', 'live']) assert.match(f.detail, new RegExp(id));
+    // And crucially: no signature check, even though the key that signed the
+    // bundle was present among the sources and agreed with two of them.
     assert.equal(findingFor(r, 'signature').state, Finding.NotChecked);
     assert.equal(exitCodeFor(r), 1);
   } finally {
-    await server.close();
+    await live.close();
+    await site.close();
     rmSync(pin.dir, { recursive: true, force: true });
   }
 });
@@ -364,41 +514,67 @@ test('a pinned key filed under a thumbprint that is not its own is refused', asy
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
   const pin = pinnedKeyFile(kp, { corruptThumbprint: true });
-  const server = await kernelKeyServer({ kty: 'OKP', crv: 'Ed25519', x: kp.rawB64u });
+  const site = await keyServer(jwkBody(kp));
   try {
-    const r = await verifyBundle(bundle, { pinnedKey: pin.path, kernelUrl: server.url });
+    const r = await verifyBundle(bundle, { pinnedKey: pin.path, siteKeyUrl: site.url });
     const f = findingFor(r, 'key_crosscheck');
+    // The pin is unusable, so only the site answered: incomplete, never a pass.
     assert.equal(f.state, Finding.NotChecked);
     assert.match(f.detail, /hashes to/);
     assert.notEqual(exitCodeFor(r), 0);
   } finally {
-    await server.close();
+    await site.close();
     rmSync(pin.dir, { recursive: true, force: true });
   }
 });
 
-test('an unreachable kernel-url is NOT CHECKED with the reason, not a crash', async () => {
+test('an unreachable site-key URL is NOT CHECKED with the reason, not a crash', async () => {
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
   const pin = pinnedKeyFile(kp);
-  // Port 1 on loopback: nothing listens, so this is a real connection refusal.
+  // Port 1 on loopback: nothing listens, so this is a real connection refusal —
+  // and it must be told apart from the placeholder case above, which is a
+  // different reason for the same incomplete state.
   try {
     const r = await verifyBundle(bundle, {
       pinnedKey: pin.path,
-      kernelUrl: 'http://127.0.0.1:1/kernel/public-key',
+      siteKeyUrl: 'http://127.0.0.1:1/kernel-key.json',
     });
-    assert.equal(findingFor(r, 'key_crosscheck').state, Finding.NotChecked);
+    const f = findingFor(r, 'key_crosscheck');
+    assert.equal(f.state, Finding.NotChecked);
+    assert.match(f.detail, /could not reach/);
+    assert.doesNotMatch(f.detail, /PLACEHOLDER/);
     assert.equal(exitCodeFor(r), 3);
   } finally {
     rmSync(pin.dir, { recursive: true, force: true });
   }
 });
 
-test('NEITHER source available: the signature is NOT CHECKED, never assumed good', async () => {
+test('an unreachable operator --kernel-url does not break a complete static cross-check', async () => {
+  const kp = kernelKeypair();
+  const bundle = makeBundle(kp);
+  await withBothStatic(kp, async (opts) => {
+    const r = await verifyBundle(bundle, {
+      ...opts,
+      kernelUrl: 'http://127.0.0.1:1/kernel/public-key',
+    });
+    const f = findingFor(r, 'key_crosscheck');
+    // The two gating publications agreed. An operator's own endpoint being down
+    // is not evidence against them, so this stays a PASS with the reason noted —
+    // an unreachable third source is not a disagreeing one.
+    assert.equal(f.state, Finding.Pass, f.detail);
+    assert.match(f.detail, /live substrate endpoint was NOT checked/);
+    assert.match(f.detail, /could not reach/);
+  });
+});
+
+test('NO source available: the signature is NOT CHECKED, never assumed good', async () => {
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
   const r = await verifyBundle(bundle, { pinnedKey: '/nonexistent/pin.json' });
-  assert.equal(findingFor(r, 'key_crosscheck').state, Finding.NotChecked);
+  const f = findingFor(r, 'key_crosscheck');
+  assert.equal(f.state, Finding.NotChecked);
+  assert.match(f.detail, /NO SOURCE/);
   assert.equal(findingFor(r, 'signature').state, Finding.NotChecked);
   assert.match(findingFor(r, 'signature').detail, /not invalid; it is unchecked/);
   assert.equal(exitCodeFor(r), 3);
@@ -458,7 +634,7 @@ test('a camelCase twin of a contract field is read, and the rename is REPORTED',
     signature: { key_id: 'test-key', alg: 'ed25519', sig_b64: b64u(cryptoSign(null, utf8(hash), kp.privateKey)) },
   };
 
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(bundle, opts);
     assert.equal(r.malformed, false);
     const f = findingFor(r, 'shape');
@@ -541,7 +717,7 @@ test('an empty delegation_chain WITH a note is NOT CHECKED and quotes the note',
     signature: { key_id: 'test-key', alg: 'ed25519', sig_b64: b64u(cryptoSign(null, utf8(hash), kp.privateKey)) },
   };
 
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     const r = await verifyBundle(signed, opts);
     const f = findingFor(r, 'delegation');
     assert.equal(f.state, Finding.NotChecked);
@@ -558,7 +734,7 @@ test('a delegation entry signed by an unaccepted key is reported FAIL per entry'
     seed: { agentClass: 'agent', version: '1.0.0', tenantId: 'acme', scopeBoundary: [], capabilitySet: [] },
   });
   const bundle = makeBundle(kp, { chain: [packEnvelope(vaid)] });
-  await withBothSources(kp, async (opts) => {
+  await withBothStatic(kp, async (opts) => {
     // Default anchor = the published production key, which did not sign this VAID.
     const r = await verifyBundle(bundle, opts);
     const f = findingFor(r, 'delegation');
