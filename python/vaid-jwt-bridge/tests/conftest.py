@@ -25,10 +25,11 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
-from vaid_mint.chain import SingleKernelKey
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
 from vaid_mint.revocation import InMemoryRevocationList
 from vaid_pop import canonical_request_signing_bytes
+
+from vaid_jwt_bridge import TrustedIssuers
 
 #: Fixed 32-byte seeds — never derived from randomness — for the kernel key
 #: and every per-hop BYO key the suite mints with.
@@ -66,7 +67,7 @@ def kernel_key():
 
 @pytest.fixture
 def issuer(kernel_key):
-    return ReferenceIssuer.from_seed(KERNEL_SEED, vaid_ttl_hours=24, trust_domain="vaid.example")
+    return ReferenceIssuer.from_seed(KERNEL_SEED, vaid_ttl_hours=24, trust_domain=TRUST_DOMAIN)
 
 
 @pytest.fixture
@@ -74,10 +75,18 @@ def mint(issuer):
     return MintService(issuer, InMemoryAudit())
 
 
+#: The trust domain `issuer` stamps into every document it mints, and the one
+#: the bridge's trust anchor binds its kernel key to. Named once because those
+#: two must agree: if they do not, every document is refused ISSUER_MISMATCH,
+#: which is the point of the binding.
+TRUST_DOMAIN = "vaid.example"
+
+
 @pytest.fixture
 def trusted_keys(issuer):
-    """The bridge's trust anchor: the one kernel key it accepts."""
-    return SingleKernelKey(issuer.kernel_public_key())
+    """The bridge's trust anchor: the one kernel key it accepts, bound to the
+    one trust domain that key is trusted for (GHSA-hfjh-v2x2-r58v)."""
+    return TrustedIssuers.from_raw_keys([(TRUST_DOMAIN, issuer.kernel_public_key())])
 
 
 @pytest.fixture

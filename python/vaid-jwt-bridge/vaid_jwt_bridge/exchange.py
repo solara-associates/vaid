@@ -18,13 +18,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from vaid_mint.attestation import AttestationBundle
-from vaid_mint.chain import ChainVerification, KernelKeyResolver, PresentedBundle, verify_chain_at
+from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain_at
 from vaid_mint.document import is_expired_at
 from vaid_mint.revocation import RevocationCheck, RevocationStatus, assemble_lineage
 from vaid_mint.verify import VaidVerdict, verify_vaid_authenticity_graded
 
 from vaid_jwt_bridge.claims import build_sub_and_act, build_vaid_claim
 from vaid_jwt_bridge.keys import Signer
+from vaid_jwt_bridge.trust import TrustedIssuers, require_domain_binding
 
 #: The only ``requested_token_type`` this bridge issues (RFC 8693 SS3).
 ISSUED_TOKEN_TYPE_JWT = "urn:ietf:params:oauth:token-type:jwt"
@@ -135,7 +136,7 @@ def _parse_rfc3339_z(value: str) -> datetime:
 def exchange(
     request: ExchangeRequest,
     *,
-    keys: KernelKeyResolver,
+    keys: TrustedIssuers,
     revocation: RevocationCheck,
     issuer: str,
     signer: Signer,
@@ -146,8 +147,22 @@ def exchange(
     issue a JWT. Fails closed: any denial returns :class:`Denied` and signs
     nothing. See docs/jwt/v1/profile.md SS2-3 for the normative procedure this
     implements step for step.
+
+    ``keys`` is the bridge's trusted issuer config (profile SS1): kernel keys
+    each bound to the one trust domain it is trusted for
+    (:class:`~vaid_jwt_bridge.trust.TrustedIssuers`). A resolver that cannot
+    answer that second question raises
+    :class:`~vaid_jwt_bridge.trust.TrustedIssuersConfigError` — a defect in the
+    deployment's configuration, not a verdict about any one exchange, so it is
+    raised rather than returned as a :class:`Denied`.
     """
     now = now or datetime.now(timezone.utc)
+
+    # Checked before anything about `request`, so a resolver that cannot bind a
+    # domain to a key always raises, independent of what this particular
+    # exchange happens to carry. A configuration mistake is a property of the
+    # deployment, not of a request.
+    require_domain_binding(keys)
 
     if request.leaf is None:
         return _deny(DenialReason.NO_LEAF, "no VAID presented")
@@ -165,15 +180,37 @@ def exchange(
 
     leaf = request.leaf
 
-    # Step 1 (profile SS2.1): leaf authenticity, resolved ahead of
-    # verify_chain_at so an unrecognised issuer is distinguishable from a
-    # recognised issuer whose signature does not verify.
+    # Step 1 (profile SS2.1): the LEAF's own trust-domain binding, then its
+    # authenticity.
+    #
+    # Resolved ahead of verify_chain_at so an unrecognised or misbound issuer
+    # (ISSUER_MISMATCH) is distinguishable from a recognised, correctly-bound
+    # issuer whose signature does not verify (INAUTHENTIC) — chain.py's own
+    # key-resolution closure collapses both into INAUTHENTIC, which is right
+    # for a chain hop but loses a distinction a denial record needs.
+    #
+    # The binding check runs BEFORE the signature check, and is scoped to the
+    # LEAF alone: it must reach its verdict on the leaf's own defects before
+    # anything about the presented chain is examined. A misbound ancestor is a
+    # step 3 concern below; folding it in here would make the leaf's own
+    # INAUTHENTIC/ISSUER_MISMATCH outcome depend on what else happens to be
+    # presented alongside it, which is the exact nondeterminism this ordering
+    # exists to remove (profile SS2, extension.md SS5).
     thumbprint = leaf.get("kernel_key_thumbprint")
     key = keys.resolve_key(thumbprint) if isinstance(thumbprint, str) else None
     if key is None:
         return _deny(
             DenialReason.ISSUER_MISMATCH,
             f"no trusted kernel key for thumbprint {thumbprint!r}",
+        )
+    bound_domain = keys.trust_domain_for(thumbprint)
+    if bound_domain != leaf.get("trust_domain"):
+        return _deny(
+            DenialReason.ISSUER_MISMATCH,
+            f"leaf claims trust_domain {leaf.get('trust_domain')!r}, but kernel "
+            f"key thumbprint {thumbprint!r} is trusted only for "
+            f"{bound_domain!r}: a key is trusted for the domain it is paired "
+            "with, not for any domain a document claims",
         )
     authenticity = verify_vaid_authenticity_graded(key, leaf)
     if authenticity is not VaidVerdict.VALID:
@@ -186,8 +223,42 @@ def exchange(
         return _deny(DenialReason.LEAF_EXPIRED, "leaf VAID has passed its own expires_at")
 
     # Steps 3/4 (profile SS2.3/SS2.4): chain integrity and attenuation back to
-    # a trusted root, with trust-domain binding and consent enforced per hop
-    # inside verify_chain_at itself.
+    # a trusted root.
+    #
+    # Each presented ancestor's own trust-domain binding is checked first, by
+    # the same rule as step 1 and reporting the same reason, over the presented
+    # chain only (the leaf was already settled in step 1) and only once the
+    # leaf itself has cleared steps 1-2 — so a bad leaf signature is always
+    # INAUTHENTIC on its own, never pre-empted by an unrelated wrong-domain
+    # ancestor elsewhere in the chain.
+    #
+    # This is NOT what verify_chain_at enforces. That function requires a
+    # current, authentic consent attestation for a hop that crosses a kernel
+    # key, and binds tenant and trust domain from the PARENT DOCUMENT for a
+    # same-key hop — both checks between documents. Neither compares a
+    # document's claimed trust_domain against the domain this bridge's own
+    # trusted issuer config binds to the key that signed it, which is the
+    # check here (GHSA-hfjh-v2x2-r58v).
+    #
+    # A document whose thumbprint resolves to NO trusted key is deliberately
+    # left to verify_chain_at below, which refuses it on its own terms — there
+    # is no bound domain to compare against, so there is nothing for this
+    # check to say about it.
+    for doc in request.chain:
+        doc_thumbprint = doc.get("kernel_key_thumbprint")
+        if not isinstance(doc_thumbprint, str):
+            continue
+        doc_bound_domain = keys.trust_domain_for(doc_thumbprint)
+        if doc_bound_domain is not None and doc_bound_domain != doc.get("trust_domain"):
+            return _deny(
+                DenialReason.ISSUER_MISMATCH,
+                f"document {doc.get('vaid_id')!r} claims trust_domain "
+                f"{doc.get('trust_domain')!r}, but kernel key thumbprint "
+                f"{doc_thumbprint!r} is trusted only for {doc_bound_domain!r}: "
+                "a key is trusted for the domain it is paired with, not for "
+                "any domain a document claims",
+            )
+
     bundle = PresentedBundle(request.chain)
     chain_verdict = verify_chain_at(keys, leaf, bundle, AttestationBundle(), now)
     if chain_verdict is not ChainVerification.ATTENUATED:

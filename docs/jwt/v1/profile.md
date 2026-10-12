@@ -43,11 +43,24 @@ An exchange request supplies, conceptually (the wire shape is §6):
 - a **`RevocationCheck`** (`vaid_mint.revocation.RevocationCheck`) — required
   configuration. There is no default and no fail-open behavior; a bridge
   deployment that has not wired a revocation backend cannot issue anything.
-- **trusted issuer config** — a `KernelKeyResolver`
-  (`vaid_mint.chain.KernelKeyResolver`): the set of kernel public keys this bridge
-  deployment accepts, keyed by `kernel_key_thumbprint`. A document signed by a key
-  not in this set is untrusted, full stop — this is the bridge's trust anchor and
-  MUST NOT be populated from anything the presenter controls.
+- **trusted issuer config** — the set of kernel public keys this bridge
+  deployment accepts, keyed by `kernel_key_thumbprint`, **each bound to the one
+  trust domain that key is trusted for**. A document signed by a key not in this
+  set is untrusted, full stop; so is a document signed by a key in this set while
+  claiming a `trust_domain` other than the one that key is bound to. A key is
+  trusted for the domain it is paired with, never for a domain a document
+  asserts. This is the bridge's trust anchor and MUST NOT be populated from
+  anything the presenter controls.
+
+  A resolver that answers only "which key is this thumbprint" and cannot answer
+  "which domain is that key trusted for" is NOT sufficient, and a conforming
+  implementation MUST refuse one rather than skip the binding check for it:
+  skipping it would leave every document's claimed `trust_domain` unchecked for
+  that key. `vaid_mint.chain.KernelKeyMap` and `SingleKernelKey` are both such
+  resolvers; `vaid_jwt_bridge.TrustedIssuers` is the conforming shape, and takes
+  the VAID A2A extension's `trustedIssuers` entries (`docs/a2a/v1/extension.md`
+  section 2.1) including its strict-unpadded-base64url-to-32-bytes rule for
+  `kernelPublicKey`.
 - a **requested audience** — the intended `aud` of the issued JWT. Required; see
   §3.
 
@@ -56,22 +69,51 @@ An exchange request supplies, conceptually (the wire shape is §6):
 The bridge performs exactly the chain-verification procedure already specified for
 a VAID presentation, reusing `vaid_mint` primitives without modification:
 
-1. **Leaf authenticity** — resolve the leaf's signing key from its
-   `kernel_key_thumbprint` via the trusted issuer config; an unresolved thumbprint
-   or a failing signature denies the exchange.
+1. **Leaf trust-domain binding, then leaf authenticity** — first, the leaf's
+   claimed `trust_domain` MUST equal the trust domain its `kernel_key_thumbprint`
+   is bound to in the trusted issuer config (never the other way round, since a
+   key is trusted for the domain the config pairs it with, not for any domain a
+   document cares to claim). A thumbprint resolving to no entry, or to an entry
+   bound to a different domain, denies the exchange as `issuer_mismatch`. Only
+   once that binding holds is the leaf's signature checked, against the key that
+   same thumbprint resolved to; a failing signature denies as `inauthentic`.
+
+   The binding is checked before the signature so an unrecognised or misbound
+   issuer stays distinguishable from a recognised, correctly-bound issuer whose
+   signature does not verify. This step is scoped to the leaf alone: it MUST
+   reach its own verdict without being affected by any defect in a document
+   considered under step 3.
 2. **Leaf expiry** — the leaf's own `expires_at` has not passed
    (`vaid_mint.document.is_expired_at`).
-3. **Chain integrity and attenuation to a trusted root** —
-   `vaid_mint.chain.verify_chain_at` over the leaf and the presented bundle:
+3. **Presented documents' trust-domain binding, then chain integrity and
+   attenuation to a trusted root** — for each document presented in the chain,
+   its own binding is checked first, by the same rule as step 1 and denying with
+   the same `issuer_mismatch`. A document whose thumbprint resolves to no trusted
+   key has no bound domain to compare against and is left to the chain
+   verification below, which refuses it on its own terms. Only then does
+   `vaid_mint.chain.verify_chain_at` run over the leaf and the presented bundle:
    every presented document authentic, the chain assembles completely to a root
-   with no gap or cycle, and authority (scope, capability, tenant, expiry) is
+   with no gap or cycle, and authority (scope, capability, tenant, expiry)
    contained at every hop. Anything other than `ChainVerification.ATTENUATED`
    denies the exchange.
-4. **Trust-domain binding per issuer key** — enforced inside `verify_chain_at`
-   itself: a hop that crosses a `kernel_key_thumbprint` requires a current,
-   authentic consent attestation naming that exact `(parent, child)` pair and
-   trust domain (`vaid_mint.chain`, cross-key hop handling). A same-key hop binds
-   tenant and trust domain directly from the parent document.
+
+   **The order is deterministic, and this is why it matters in practice.** Step 1
+   runs to a final verdict on the leaf alone before step 3 examines any presented
+   document. A leaf whose own signature does not verify denies `inauthentic`
+   regardless of what else is presented, including a document that is
+   independently misbound to the wrong trust domain. Two implementations given
+   the same bad-leaf-signature-plus-misbound-document input MUST both deny
+   `inauthentic`, not one `inauthentic` and the other `issuer_mismatch`.
+4. **Per-hop consent and parent binding** — enforced inside `verify_chain_at`
+   itself, and a **different** check from steps 1 and 3: a hop that crosses a
+   `kernel_key_thumbprint` requires a current, authentic consent attestation
+   naming that exact `(parent, child)` pair and trust domain (`vaid_mint.chain`,
+   cross-key hop handling), and a same-key hop binds tenant and trust domain
+   directly from the parent document. Both relate documents to **each other**.
+   Neither compares a document's claimed `trust_domain` against the domain the
+   bridge's own trusted issuer config binds to the key that signed it, which is
+   what steps 1 and 3 do. A conforming implementation MUST NOT read this step as
+   satisfying them.
 5. **Revocation of every link** — the full lineage is assembled
    (`vaid_mint.revocation.assemble_lineage`) and checked via the configured
    `RevocationCheck.check_lineage`. `REVOKED` denies. `UNAVAILABLE` **denies** —

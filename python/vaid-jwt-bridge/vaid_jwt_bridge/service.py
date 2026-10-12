@@ -22,7 +22,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from vaid_mint.chain import KernelKeyResolver
 from vaid_mint.revocation import RevocationCheck
 
 from vaid_jwt_bridge.exchange import (
@@ -35,6 +34,7 @@ from vaid_jwt_bridge.exchange import (
     exchange,
 )
 from vaid_jwt_bridge.keys import KeyRing
+from vaid_jwt_bridge.trust import TrustedIssuers, require_domain_binding
 
 #: RFC 8693 SS2.1.
 GRANT_TYPE_TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -48,10 +48,19 @@ class BridgeConfig:
     issued JWTs with."""
 
     issuer: str
-    keys: KernelKeyResolver
+    keys: TrustedIssuers
     revocation: RevocationCheck
     keyring: KeyRing
     default_ttl_seconds: int = DEFAULT_TTL_SECONDS
+
+    def __post_init__(self) -> None:
+        # The trust anchor is validated when the deployment is configured, not
+        # at the first exchange: a resolver that cannot name the domain a key
+        # is trusted for leaves every document's claimed trust_domain
+        # unchecked for that key (GHSA-hfjh-v2x2-r58v), and a missing control
+        # must fail where an operator sees it. A BridgeConfig carrying one
+        # never comes into existence, so no app can be built from it.
+        require_domain_binding(self.keys)
 
 
 def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONResponse:

@@ -23,9 +23,14 @@ from datetime import timedelta
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vaid_jwt_bridge import DenialReason, Denied, ExchangeRequest, exchange
+from vaid_jwt_bridge import (
+    DenialReason,
+    Denied,
+    ExchangeRequest,
+    TrustedIssuers,
+    exchange,
+)
 from vaid_mint import ReferenceIssuer, VaidSeed
-from vaid_mint.chain import SingleKernelKey
 from vaid_mint.document import build_unsigned_vaid_document, canonical_vaid_signing_bytes, compute_lineage_hash
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
@@ -139,7 +144,7 @@ def test_wider_than_parent_child_issues_nothing(trusted_keys, vouching_revocatio
 
     result = exchange(
         ExchangeRequest(leaf=leaf, chain=(root,), audience="aud"),
-        keys=SingleKernelKey(local.public_key),
+        keys=TrustedIssuers.from_raw_keys([("vaid.example", local.public_key)]),
         revocation=vouching_revocation,
         issuer="https://bridge.example.com",
         signer=eddsa_signer,
@@ -155,7 +160,10 @@ def test_unknown_issuer_key_issues_nothing(
 ):
     root, child, leaf = three_hop_chain
     other_issuer = ReferenceIssuer.from_seed(OTHER_ISSUER_SEED, vaid_ttl_hours=24, trust_domain="other.example")
-    untrusted_keys = SingleKernelKey(other_issuer.kernel_public_key())  # does NOT trust our kernel key
+    # Binds only the OTHER issuer's key, so our kernel key resolves to nothing.
+    untrusted_keys = TrustedIssuers.from_raw_keys(
+        [("other.example", other_issuer.kernel_public_key())]
+    )
 
     result = exchange(
         ExchangeRequest(leaf=leaf, chain=(root, child), audience="aud"),
@@ -170,19 +178,34 @@ def test_unknown_issuer_key_issues_nothing(
     assert result.reason == DenialReason.ISSUER_MISMATCH
 
 
-def test_trust_domain_mismatch_is_not_attenuated(trusted_keys, vouching_revocation, eddsa_signer, verification_now):
-    """Same trust domain declared on both documents is required for a
-    same-key hop's tenant binding to even be meaningful; here the LEAF
-    declares a different ``trust_domain`` string than its parent while
-    sharing a kernel key — a same-key hop crossing trust domains, which
-    ``verify_chain_at`` treats as NOT_ATTENUATED (profile SS2 step 4)."""
+def test_same_key_hop_crossing_trust_domains_is_issuer_mismatch(
+    vouching_revocation, eddsa_signer, verification_now
+):
+    """A same-key hop whose LEAF declares a different ``trust_domain`` than
+    its parent, both signed by one kernel key.
+
+    This asserted ``CHAIN_NOT_ATTENUATED`` before the GHSA-hfjh-v2x2-r58v fix,
+    which is what ``verify_chain_at`` returns for it. It is now
+    ``ISSUER_MISMATCH``, and that is the stronger reading: the trust anchor
+    binds this key to exactly one domain, so the leaf claiming the other one
+    is refused at step 1, before chain verification is reached at all. A key
+    is trusted for the domain it is paired with, not for any domain a document
+    claims.
+
+    The route is therefore unreachable from this entry point now: whichever of
+    the two domains the key is bound to, the other document is misbound, so the
+    binding always refuses first. ``verify_chain_at``'s own NOT_ATTENUATED
+    verdict for this shape stays pinned where it belongs, in
+    ``python/vaid-mint/tests/test_chain_verification.py``
+    (``test_same_tenant_name_in_a_different_trust_domain_is_not_attenuated``),
+    rather than being asserted here through a check that no longer owns it."""
     local = LocalMint()
     root = local.sign(_vid(3), None, ["data.tenant"], ["read"], trust_domain="vaid.example", tenant="acme")
     leaf = local.sign(_vid(4), _vid(3), ["data.tenant.sub"], ["read"], trust_domain="other.example", tenant="acme")
 
     result = exchange(
         ExchangeRequest(leaf=leaf, chain=(root,), audience="aud"),
-        keys=SingleKernelKey(local.public_key),
+        keys=TrustedIssuers.from_raw_keys([("vaid.example", local.public_key)]),
         revocation=vouching_revocation,
         issuer="https://bridge.example.com",
         signer=eddsa_signer,
@@ -190,7 +213,7 @@ def test_trust_domain_mismatch_is_not_attenuated(trusted_keys, vouching_revocati
     )
 
     assert isinstance(result, Denied)
-    assert result.reason == DenialReason.CHAIN_NOT_ATTENUATED
+    assert result.reason == DenialReason.ISSUER_MISMATCH
 
 
 def test_missing_audience_issues_nothing(

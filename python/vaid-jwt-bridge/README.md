@@ -18,12 +18,19 @@ Reusing only `vaid_mint` primitives (same verification order as
 `vaid_adk`/`vaid_a2a`, re-derived rather than imported — see
 `vaid_jwt_bridge/exchange.py`):
 
-1. the leaf VAID's signature and signing-key trust;
+1. the leaf's **trust-domain binding** — its claimed `trust_domain` equals the
+   domain its `kernel_key_thumbprint` is bound to in `keys` — and only then the
+   leaf VAID's signature, against the key that thumbprint resolved to;
 2. the leaf's own expiry;
-3. full chain integrity and attenuation back to a trusted root
-   (`vaid_mint.chain.verify_chain_at`), including trust-domain binding and
-   consent on any cross-key hop;
+3. each presented ancestor's own trust-domain binding, by the same rule, and
+   then full chain integrity and attenuation back to a trusted root
+   (`vaid_mint.chain.verify_chain_at`), which additionally requires consent on
+   any cross-key hop;
 4. revocation of **every** VAID in the assembled lineage.
+
+The order is load-bearing: step 1 reaches its verdict on the leaf alone before
+step 3 examines any presented document, so a leaf whose own signature does not
+verify is `inauthentic` regardless of what else was presented alongside it.
 
 Any failure issues nothing. There is no partial or degraded JWT, and no
 fail-open default anywhere in this package — a deployment with no
@@ -62,17 +69,63 @@ signer = load_signer_from_file("signing-key.pem")  # Ed25519 or P-256 PEM
 keyring = KeyRing([signer])
 ```
 
+## Trust anchor: a key is trusted for one domain
+
+`keys` is a `TrustedIssuers`, and each kernel key in it is bound to the **one
+trust domain it is trusted for** (profile section 1). A document signed by a
+trusted key is accepted only if it also claims that key's domain.
+
+Binding matters because without it a trusted key vouches for any domain a
+document cares to claim. Given two legitimately trusted issuers, A and B, a
+document signed by B's key while claiming A's `trust_domain` verifies perfectly
+against B's key, and the bridge signed a JWT whose `sub`/`act`/`vaid` claims
+named A's identity — which a downstream gateway then honoured on the bridge's
+word. No forged signature and no compromised key anywhere in the attack
+(GHSA-hfjh-v2x2-r58v).
+
+Two spellings of the same configuration:
+
+```python
+# From config: the VAID A2A extension's `trustedIssuers` shape
+# (docs/a2a/v1/extension.md section 2.1), so one operator's trust
+# configuration reads the same across A2A, ADK and this bridge.
+keys = TrustedIssuers([
+    {"trustDomain": "vaid.example",  "kernelPublicKey": "IVL40Zt5HSRF..."},
+    {"trustDomain": "other.example", "kernelPublicKey": "My6-jSfLcyOz..."},
+])
+
+# From key bytes already held in the process.
+keys = TrustedIssuers.from_raw_keys([("vaid.example", kernel_public_key)])
+```
+
+`kernelPublicKey` is decoded as **strict unpadded base64url to exactly 32
+bytes**. A padded, non-canonical, out-of-alphabet, empty or wrong-length value
+raises `TrustedIssuersConfigError`, as do a non-object entry, an entry with no
+`trustDomain`, and the same key listed under two domains. One domain may hold
+several keys (an issuer rotating); one key may not hold two domains.
+
+A bare `vaid_mint.chain.KernelKeyMap` or `SingleKernelKey` is **not** accepted
+as `keys`. Those resolve a key by thumbprint and cannot say which domain it is
+trusted for, so the binding could not be checked at all; `BridgeConfig` refuses
+one when the deployment is configured, so the gap cannot be left open by
+omission. Any resolver answering both `resolve_key` and `trust_domain_for` is
+accepted, so a KMS-backed one remains possible.
+
 ## Library usage
 
 ```python
-from vaid_jwt_bridge import exchange, ExchangeRequest, load_signer_from_file
-from vaid_mint.chain import SingleKernelKey
+from vaid_jwt_bridge import (
+    ExchangeRequest,
+    TrustedIssuers,
+    exchange,
+    load_signer_from_file,
+)
 from vaid_mint.revocation import InMemoryRevocationList
 
 signer = load_signer_from_file("signing-key.pem")
 result = exchange(
     ExchangeRequest(leaf=leaf_vaid, chain=(), audience="https://api.example.com"),
-    keys=SingleKernelKey(kernel_public_key),
+    keys=TrustedIssuers.from_raw_keys([("vaid.example", kernel_public_key)]),
     revocation=InMemoryRevocationList.assume_nothing_revoked(),
     issuer="https://bridge.example.com",
     signer=signer,

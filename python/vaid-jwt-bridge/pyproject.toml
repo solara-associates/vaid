@@ -34,7 +34,7 @@ classifiers = [
 # itself canonicalizes a VAID document, so the digest is reproducible by a
 # third party using the same library).
 dependencies = [
-    "vaid-mint>=0.9.0",
+    "vaid-mint>=0.9.0,<0.10",
     "jwcrypto>=1.5",
     "rfc8785>=0.1.2",
 ]

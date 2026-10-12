@@ -14,12 +14,22 @@ import jwt as pyjwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
-from vaid_mint.chain import SingleKernelKey
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
 from vaid_mint.revocation import InMemoryRevocationList
 from vaid_pop import canonical_request_signing_bytes
 
-from vaid_jwt_bridge import ExchangeRequest, Issued, KeyRing, exchange
+from vaid_jwt_bridge import (
+    ExchangeRequest,
+    Issued,
+    KeyRing,
+    TrustedIssuers,
+    exchange,
+)
+
+# RFC 2606 reserved domain. Named once because the issuer stamps it into every
+# document it mints and the trust anchor binds the kernel key to it; if those
+# two disagree, every exchange is refused ISSUER_MISMATCH.
+TRUST_DOMAIN = "vaid.example"
 from vaid_jwt_bridge.keys import JwcryptoSigner
 from jwcrypto.jwk import JWK
 
@@ -47,7 +57,7 @@ def main() -> None:
     # 1. Mint a 3-hop chain: orchestrator -> report-worker -> report-reader.
     kernel_key = Ed25519PrivateKey.generate()
     issuer = ReferenceIssuer.from_seed(
-        kernel_key.private_bytes_raw(), vaid_ttl_hours=1, trust_domain="vaid.example"
+        kernel_key.private_bytes_raw(), vaid_ttl_hours=1, trust_domain=TRUST_DOMAIN
     )
     mint = MintService(issuer, InMemoryAudit())
 
@@ -71,7 +81,11 @@ def main() -> None:
     bridge_key = Ed25519PrivateKey.generate()
     signer = JwcryptoSigner(JWK.from_pyca(bridge_key), alg="EdDSA")
     keyring = KeyRing([signer])
-    trusted_keys = SingleKernelKey(issuer.kernel_public_key())
+    # The bridge's trust anchor: each kernel key bound to the one trust domain
+    # it is trusted for (GHSA-hfjh-v2x2-r58v).
+    trusted_keys = TrustedIssuers.from_raw_keys(
+        [(TRUST_DOMAIN, issuer.kernel_public_key())]
+    )
     revocation = InMemoryRevocationList.assume_nothing_revoked()
 
     # 3. Exchange: verify the full chain, issue a JWT only on a full pass.

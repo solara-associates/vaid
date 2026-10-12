@@ -12,14 +12,20 @@ Normative profile: ``docs/jwt/v1/profile.md``.
 
 Usage::
 
-    from vaid_jwt_bridge import exchange, ExchangeRequest, KeyRing, load_signer_from_file
-    from vaid_mint.chain import SingleKernelKey
+    from vaid_jwt_bridge import (
+        exchange,
+        ExchangeRequest,
+        KeyRing,
+        TrustedIssuers,
+        load_signer_from_file,
+    )
     from vaid_mint.revocation import InMemoryRevocationList
 
     signer = load_signer_from_file("signing-key.pem")
     result = exchange(
         ExchangeRequest(leaf=leaf_vaid, chain=(), audience="https://api.example.com"),
-        keys=SingleKernelKey(kernel_public_key),
+        # Each kernel key is bound to the ONE trust domain it is trusted for.
+        keys=TrustedIssuers.from_raw_keys([("vaid.example", kernel_public_key)]),
         revocation=InMemoryRevocationList.assume_nothing_revoked(),
         issuer="https://bridge.example.com",
         signer=signer,
@@ -46,6 +52,11 @@ from vaid_jwt_bridge.keys import (
     load_signer_from_file,
     load_signer_from_pem,
 )
+from vaid_jwt_bridge.trust import (
+    TrustedIssuers,
+    TrustedIssuersConfigError,
+    require_domain_binding,
+)
 
 __all__ = [
     "exchange",
@@ -66,6 +77,9 @@ __all__ = [
     "load_signer_from_pem",
     "load_signer_from_env",
     "load_signer_from_file",
+    "TrustedIssuers",
+    "TrustedIssuersConfigError",
+    "require_domain_binding",
 ]
 
 __version__ = "0.1.0"
