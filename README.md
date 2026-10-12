@@ -51,6 +51,29 @@ checked**, because there is no published revocation list to consult and an offli
 verifier could not reach one if there were. Read a pass as *genuinely issued and in
 date*, never as *currently authorised*.
 
+## Try it in five minutes
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/solara-associates/vaid/blob/main/examples/quickstart/quickstart.ipynb)
+
+Mint a root identity, delegate a narrower one from it, verify the chain the way a
+stranger would, then watch three denials with the reason for each: a resource
+outside the scope boundary, an action with no capability behind it, and a child
+trying to widen what its parent held. It finishes on a revoked document, denied
+through the `RevocationCheck` seam while still being perfectly authentic.
+
+Click the badge to run it in Colab with nothing installed, or locally in two lines:
+
+```sh
+pip install 'vaid-mint>=0.9,<0.10'
+python examples/quickstart/quickstart.py
+```
+
+Nothing is written to disk, no key outlives the process, and no network call is
+made once the package is installed. Both live in
+[`examples/quickstart/`](examples/quickstart/) and run the same steps. The script
+exits non-zero if any step stops behaving the way its own prose describes, and CI
+runs it on every push, so it cannot rot into a tour that no longer works.
+
 ## Use it from a coding agent
 
 ```sh

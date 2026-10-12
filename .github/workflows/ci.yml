@@ -90,6 +90,41 @@ jobs:
       - name: node --test conformance suite (vaid-pop + vaid-mint + vaid-client)
         run: npm test --prefix typescript
 
+  quickstart:
+    name: Quickstart runs against the PUBLISHED package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      # Deliberately NOT `pip install ./python/vaid-mint`. The `python` job above
+      # already proves the tree against itself; this one exists to prove the thing a
+      # newcomer actually types, which resolves from PyPI and can therefore break
+      # without a single line of this repository changing — a breaking 0.x minor
+      # release is exactly the event the README warns consumers about, and the
+      # quickstart is a consumer. Installing the local tree here would make the job
+      # a second, weaker copy of the `python` job and blind to the one failure it is
+      # here to catch.
+      #
+      # The upper bound is load-bearing for the same reason. Without it pip walks
+      # straight onto the next breaking minor and the failure arrives as a confusing
+      # red on an unrelated pull request instead of as a deliberate bump here.
+      - name: Install the published vaid-mint, as the README tells a reader to
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'vaid-mint>=0.9,<0.10'
+      # The script asserts its own narrative and exits non-zero when any step stops
+      # behaving the way its prose says it does, so a change in the published
+      # package's behaviour fails HERE rather than being discovered by whoever is
+      # reading the README for the first time. `examples/conformance_harness.py` was
+      # the precedent for an example nothing ran; an example in a README is read far
+      # more often than it is executed, which is how it comes to be wrong.
+      - name: Run the quickstart (fails the job on any non-zero exit)
+        run: python examples/quickstart/quickstart.py
+
   name-guard:
     name: No added line reintroduces a guarded term
     runs-on: ubuntu-latest
