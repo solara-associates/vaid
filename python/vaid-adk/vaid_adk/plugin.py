@@ -34,10 +34,15 @@ from typing import TYPE_CHECKING
 from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types as gtypes
 
-from vaid_mint.chain import KernelKeyResolver
 from vaid_mint.revocation import RevocationCheck
 
-from ._verify import VaidPresentation, VerifyResult, verify_presentation
+from ._verify import (
+    TrustedIssuers,
+    VaidPresentation,
+    VerifyResult,
+    require_domain_binding,
+    verify_presentation,
+)
 
 if TYPE_CHECKING:
     from google.adk.agents.base_agent import BaseAgent
@@ -76,7 +81,7 @@ class VaidAuthPlugin(BasePlugin):
     Construct once per process/app and register it on the ``Runner``/``App``:
 
         plugin = VaidAuthPlugin(
-            keys=KernelKeyMap([issuer_public_key]),
+            keys=TrustedIssuers.from_raw_keys([("vaid.example", issuer_public_key)]),
             revocation=my_revocation_check,
             tool_authorizations={"lookup_order": ToolAuthorization(capability="read")},
         )
@@ -88,6 +93,14 @@ class VaidAuthPlugin(BasePlugin):
     here the way ``vaid_mint.issuer.ReferenceIssuer`` names its fail-open
     opt-in explicitly; a library wiring itself into every tool call and every
     delegation must never pick a revocation posture on the caller's behalf.
+
+    ``keys`` is a :class:`~vaid_adk.TrustedIssuers`: kernel keys each bound to
+    the one trust domain it is trusted for. A bare ``vaid_mint`` resolver
+    (``KernelKeyMap``, ``SingleKernelKey``) is refused **in this constructor**,
+    not at the first request — a resolver that cannot name a key's domain
+    leaves every document's claimed ``trust_domain`` unchecked for that key
+    (GHSA-hfjh-v2x2-r58v), and a missing control must fail where an operator
+    sees it rather than silently per-call.
     An agent with no registered presentation is denied — never treated as
     exempt — because an unregistered agent is indistinguishable from one that
     was simply never given an identity.
@@ -96,11 +109,15 @@ class VaidAuthPlugin(BasePlugin):
     def __init__(
         self,
         *,
-        keys: KernelKeyResolver,
+        keys: TrustedIssuers,
         revocation: RevocationCheck,
         tool_authorizations: dict[str, ToolAuthorization] | None = None,
         name: str = "vaid_auth",
     ) -> None:
+        # Before super().__init__, so a plugin that cannot bind a trust domain
+        # to a key never comes into existence at all — there is no half-built
+        # instance for a caller to register on a Runner by mistake.
+        require_domain_binding(keys)
         super().__init__(name=name)
         self.keys = keys
         self.revocation = revocation
