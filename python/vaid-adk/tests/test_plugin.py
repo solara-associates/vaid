@@ -13,8 +13,12 @@ from datetime import timezone, datetime
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vaid_adk import ToolAuthorization, VaidAuthPlugin, VaidPresentation
-from vaid_mint.chain import SingleKernelKey
+from vaid_adk import (
+    ToolAuthorization,
+    TrustedIssuers,
+    VaidAuthPlugin,
+    VaidPresentation,
+)
 from vaid_mint.document import build_unsigned_vaid_document, canonical_vaid_signing_bytes, compute_lineage_hash
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import InMemoryRevocationList
@@ -63,7 +67,7 @@ def _root_vaid(scope: list[str], caps: list[str]) -> dict:
 
 def _plugin(tool_authorizations: dict[str, ToolAuthorization] | None = None) -> VaidAuthPlugin:
     return VaidAuthPlugin(
-        keys=SingleKernelKey(_PUBLIC),
+        keys=TrustedIssuers.from_raw_keys([("vaid.example", _PUBLIC)]),
         revocation=InMemoryRevocationList.assume_nothing_revoked(),
         tool_authorizations=tool_authorizations or {},
     )

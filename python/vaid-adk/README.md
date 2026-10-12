@@ -46,11 +46,18 @@ Confirmed directly against the ADK source (`google-adk==2.11.0`):
 ## Usage
 
 ```python
-from vaid_mint.chain import KernelKeyMap
-from vaid_adk import ToolAuthorization, VaidAuthPlugin, VaidPresentation
+from vaid_adk import (
+    ToolAuthorization,
+    TrustedIssuers,
+    VaidAuthPlugin,
+    VaidPresentation,
+)
 
 plugin = VaidAuthPlugin(
-    keys=KernelKeyMap([issuer_kernel_public_key]),   # trusted issuer(s)
+    # Each trusted kernel key is bound to the ONE trust domain it is trusted
+    # for. Read from an `AgentCard`-shaped config instead with
+    # `TrustedIssuers([{"trustDomain": ..., "kernelPublicKey": "<base64url>"}])`.
+    keys=TrustedIssuers.from_raw_keys([("vaid.example", issuer_kernel_public_key)]),
     revocation=my_revocation_check,                   # see "Production note" below
     tool_authorizations={
         "lookup_order": ToolAuthorization(capability="read", resource="data.orders"),
@@ -96,17 +103,72 @@ agents' presentations with the plugin, and runs them through a real ADK
 bounds; `issue_refund` needs `data.payments`/`write`, which the worker's
 VAID never held, so the plugin denies it before the tool runs.
 
+## Trust configuration: a key is trusted for one domain
+
+`keys` is a `TrustedIssuers`, and each kernel key in it is bound to the **one
+trust domain it is trusted for**. A document signed by a trusted key is
+accepted only if it also claims that key's domain.
+
+Binding matters because without it a trusted key vouches for any domain a
+document cares to claim. Given two legitimately trusted issuers, A and B, a
+document signed by B's key while claiming A's `trust_domain` verifies
+perfectly against B's key and was accepted: B's key vouching for A's
+identity, with no forged signature and no compromised key anywhere in the
+attack (GHSA-hfjh-v2x2-r58v). A key is trusted for the domain it is paired
+with, never for a domain a document asserts.
+
+Two spellings of the same configuration:
+
+```python
+# From an AgentCard-shaped config: the VAID A2A extension's `trustedIssuers`
+# shape (docs/a2a/v1/extension.md section 2.1), so one agent's trust
+# configuration reads the same whether it serves A2A or runs under ADK.
+keys = TrustedIssuers([
+    {"trustDomain": "vaid.example",  "kernelPublicKey": "IVL40Zt5HSRF..."},
+    {"trustDomain": "other.example", "kernelPublicKey": "My6-jSfLcyOz..."},
+])
+
+# From key bytes already held in the process (a local issuer, a key just
+# fetched from a KMS).
+keys = TrustedIssuers.from_raw_keys([("vaid.example", issuer_kernel_public_key)])
+```
+
+`kernelPublicKey` is decoded as **strict unpadded base64url to exactly 32
+bytes**. A padded, non-canonical, out-of-alphabet, empty or wrong-length
+value raises `TrustedIssuersConfigError` rather than being repaired or
+skipped, as do a non-object entry, an entry with no `trustDomain`, and the
+same key listed under two domains. One domain may hold several keys (an
+issuer rotating); one key may not hold two domains.
+
+A bare `vaid_mint.chain.KernelKeyMap` or `SingleKernelKey` is **not** accepted
+as `keys`. Those resolve a key by thumbprint and cannot say which domain it is
+trusted for, so the binding could not be checked at all; `VaidAuthPlugin`
+refuses one in its constructor, so the gap cannot be left open by omission.
+Any resolver answering both `resolve_key` and `trust_domain_for` is accepted.
+
 ## What this package checks, in order
 
-1. The leaf VAID's kernel signature, against a trusted key in `keys`.
+1. The leaf VAID's own trust-domain binding — its claimed `trust_domain`
+   equals the domain its `kernel_key_thumbprint` is bound to in `keys` — and
+   only then its kernel signature, against the key that thumbprint resolved
+   to. The binding is checked first so an unrecognised or misbound issuer
+   (`issuer_mismatch`) stays distinguishable from a correctly-bound issuer
+   whose signature does not verify (`inauthentic`).
 2. The leaf's own `expires_at`.
-3. The presented chain's integrity and attenuation back to a trusted root
-   (`vaid_mint.chain.verify_chain_at`): scope, capabilities, tenant and
-   expiry contained at every hop.
+3. Each presented ancestor's own trust-domain binding, by the same rule and
+   reporting the same code, and then the presented chain's integrity and
+   attenuation back to a trusted root (`vaid_mint.chain.verify_chain_at`):
+   scope, capabilities, tenant and expiry contained at every hop.
 4. The specific tool call's mapped `resource`/`capability` against the
    leaf's own `scope_boundary`/`capability_set`.
 5. Revocation of every VAID in the assembled lineage, via the
    `RevocationCheck` passed to `VaidAuthPlugin`.
+
+The order is load-bearing, not incidental. Step 1 reaches its verdict on the
+leaf alone before step 3 examines any presented document, so a leaf whose own
+signature does not verify is `inauthentic` regardless of what else was
+presented alongside it — a defect found in the chain never pre-empts a verdict
+step 1 would already have reached.
 
 Any step that cannot be positively confirmed denies the call. "Could not
 determine" (an unassembled chain, an unavailable revocation store) is never
