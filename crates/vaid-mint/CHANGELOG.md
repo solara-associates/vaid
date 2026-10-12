@@ -3,6 +3,24 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — `mint_child` enforces delegation depth 1 (SECURITY)
+
+`mint_child` attenuated a new child's tenant, scope, and capability set
+against the authenticated parent VAID, but never checked whether that
+parent was itself already a delegated child (`parent_vaid` set). A caller
+authenticated as an already-minted child could present itself as "parent"
+and mint a grandchild, defeating any one-level delegation-depth policy
+built on top of this library; the same defect was independently found and
+fixed in Solara's `synthera-bridge` substrate reimplementation (synthera
+PR #172).
+
+**Fix:** refuse `mint_child` whenever `parent.parent_vaid()` is `Some`,
+checked before any other attenuation, so an unauthorized depth-2
+delegation never consumes a PoP nonce or reaches the issuer. See
+`mint_child_with_a_child_as_parent_is_denied`.
+
 ## [0.10.0] — UNRELEASED
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
