@@ -9,6 +9,17 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
+## [Unreleased]
+
+### Fixed — `mint_child` enforces delegation depth 1 (SECURITY)
+
+Same defect and fix as the Rust crate's `[Unreleased]` entry: `mint_child`
+never checked whether the authenticated parent was itself already a
+delegated child, so a holder of a validly-minted child VAID could mint a
+grandchild. Refuse `mint_child` whenever `parent["parent_vaid"]` is not
+`None`, before any other attenuation. See
+`test_mint_child_with_a_child_as_parent_is_denied`.
+
 ## [0.10.0] — UNRELEASED
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`

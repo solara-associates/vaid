@@ -288,6 +288,20 @@ def test_child_claiming_a_different_parent_vaid_is_denied():
     assert audit.is_empty()
 
 
+def test_mint_child_with_a_child_as_parent_is_denied():
+    """A caller authenticated as an already-minted CHILD must not be able to
+    mint a grandchild by presenting itself as the "parent"."""
+    svc, audit, _ = fixture()
+    root = parent_doc("aifactory", ["data.aifactory"], ["read"])
+    child_as_parent = dict(root)
+    child_as_parent["vaid_id"] = str(uuid.uuid4())
+    child_as_parent["parent_vaid"] = root["vaid_id"]
+    seed, pop = signed_child(child_as_parent, ["data.aifactory"], ["read"], "depth-2-attempt")
+    with pytest.raises(UnauthorizedError, match="bounded at depth"):
+        svc.mint_child(seed, child_as_parent, pop)
+    assert len(audit.entries) == 0
+
+
 def test_mint_child_without_parent_context_is_denied():
     svc, _, _ = fixture()
     parent = parent_doc("aifactory", ["data.aifactory"], ["read"])

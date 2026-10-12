@@ -353,6 +353,21 @@ class MintService:
                 "authenticated parent principal, fail-closed"
             )
 
+        # (1b) DEPTH-1 ENFORCEMENT. The authenticated parent must itself be a
+        # ROOT — i.e. ``parent["parent_vaid"]`` must be ``None``. Without this,
+        # a caller authenticated as an already-minted child could present
+        # itself as "parent" and mint a grandchild, defeating any one-level
+        # delegation policy a caller layers on top: this is the only layer
+        # that actually authenticates the caller, so the refusal must live
+        # here. Checked before any other attenuation, so an unauthorized
+        # depth-2 delegation never consumes a PoP nonce or reaches the issuer.
+        if parent.get("parent_vaid") is not None:
+            raise UnauthorizedError(
+                "mint_child: the authenticated parent VAID is itself a delegated "
+                "child (parent_vaid is set); delegation is bounded at depth 1, "
+                "a child may not mint a grandchild"
+            )
+
         # (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.
         #
         # Shares ``tenant_attenuates`` with verify-time chain walking, so the two
