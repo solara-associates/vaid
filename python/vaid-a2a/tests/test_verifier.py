@@ -498,6 +498,101 @@ def test_valid_config_still_loads() -> None:
     assert result.code is VerifyCode.NO_VAID
 
 
+# ── GHSA-hfjh-v2x2-r58v, follow-up 4 item 1: strict key decoding ─────────
+#
+# Follow-up 3 made an undecodable `kernelPublicKey` raise, but the loader
+# decoded with a NON-STRICT decoder and never checked the length, so three
+# shapes spec §2.1 rejects still loaded: `base64.urlsafe_b64decode` DISCARDS
+# characters outside the alphabet, so "" and "!!!!" both decoded to b"" and
+# were filed as a zero-byte "key"; and a string decoding to 31 or 33 bytes
+# is not an Ed25519 public key at all, but was accepted and thumbprinted
+# anyway. The loader now decodes as strict unpadded base64url and requires
+# exactly 32 bytes.
+
+
+def _loader_raises(bad_key: object, label: str) -> None:
+    """Assert that a ``trustedIssuers`` entry carrying ``bad_key`` as its
+    ``kernelPublicKey`` raises at load, with a well-formed ``trustDomain``
+    present so the failure can only be the key itself."""
+    bad_config = {
+        "trustedIssuers": [
+            {"trustDomain": _ISSUER_A_DOMAIN, "kernelPublicKey": bad_key}
+        ]
+    }
+    try:
+        verify_a2a_message(
+            {"metadata": {}},
+            trust_config=bad_config,
+            revocation=InMemoryRevocationList.assume_nothing_revoked(),
+            requested_action=None,
+            now=NOW,
+        )
+    except TrustedIssuersConfigError:
+        return
+    raise AssertionError(f"{label} must raise TrustedIssuersConfigError")
+
+
+def test_entry_empty_string_key_raises() -> None:
+    """An empty ``kernelPublicKey`` decoded to zero bytes under the old
+    non-strict decoder and was accepted."""
+    _loader_raises("", 'an empty kernelPublicKey ("")')
+
+
+def test_entry_non_base64url_characters_raise() -> None:
+    """``"!!!!"`` is outside the base64url alphabet. The old decoder
+    discarded all four characters and returned ``b""``, so this loaded as a
+    trusted zero-byte key."""
+    _loader_raises("!!!!", 'a kernelPublicKey of "!!!!"')
+
+
+def test_entry_key_one_byte_short_raises() -> None:
+    """31 bytes is valid base64url and is not an Ed25519 public key."""
+    _loader_raises(_b64url(bytes([0x11]) * 31), "a 31-byte kernelPublicKey")
+
+
+def test_entry_key_one_byte_long_raises() -> None:
+    """33 bytes, the other side of the same boundary."""
+    _loader_raises(_b64url(bytes([0x11]) * 33), "a 33-byte kernelPublicKey")
+
+
+def test_entry_not_an_object_raises() -> None:
+    """A ``trustedIssuers`` element that is not an object at all. The loader
+    has raised for this since follow-up 3; nothing pinned it until now, so a
+    regression to ``entry.get`` on a string (an AttributeError) or on a
+    number (a TypeError) would have surfaced as the wrong exception type
+    rather than as a configuration error."""
+    for bad_entry in ("not-an-object", 42):
+        bad_config = {"trustedIssuers": [bad_entry]}
+        try:
+            verify_a2a_message(
+                {"metadata": {}},
+                trust_config=bad_config,
+                revocation=InMemoryRevocationList.assume_nothing_revoked(),
+                requested_action=None,
+                now=NOW,
+            )
+        except TrustedIssuersConfigError:
+            continue
+        raise AssertionError(
+            f"a non-object trustedIssuers entry ({bad_entry!r}) must raise "
+            "TrustedIssuersConfigError"
+        )
+
+
+def test_valid_32_byte_key_still_loads() -> None:
+    """Control for the five tests above: a single well-formed entry, whose
+    key is exactly 32 bytes in unpadded base64url, must still load."""
+    result = verify_a2a_message(
+        {"metadata": {}},
+        trust_config=TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action=None,
+        now=NOW,
+    )
+    assert result.allowed is True
+    assert result.code is VerifyCode.NO_VAID
+
+
 # ── GHSA-hfjh-v2x2-r58v, reviewer follow-up C: deterministic check order ───
 
 

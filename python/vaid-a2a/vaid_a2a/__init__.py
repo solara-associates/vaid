@@ -30,4 +30,4 @@ __all__ = [
     "verify_a2a_message",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

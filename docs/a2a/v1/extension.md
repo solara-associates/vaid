@@ -94,12 +94,25 @@ trust domain. A conforming implementation's loader MUST reject every one of
 the following shapes as a configuration error, at the point this list is
 loaded, rather than accept a narrowed or best-guess reading of it:
 
-- **An entry with no parseable `kernelPublicKey`.** This covers an entry
-  with no `kernelPublicKey` field at all (`{}`), an entry that names only a
-  `trustDomain`, and an entry whose `kernelPublicKey` is present but cannot
-  be base64url-decoded. A thumbprint alone is not key material (§2's
-  `trustedIssuers` row), so there is no reading of such an entry that
-  resolves to key material the loader could actually trust: it is rejected
+- **An entry that is not an object.** `trustedIssuers` is a list of objects
+  (§2). A string, a number or any other non-object element names neither a
+  key nor a domain, so it is rejected rather than skipped.
+- **An entry with no parseable `kernelPublicKey`.** `kernelPublicKey` MUST be
+  present, MUST be a string, and MUST be **strict unpadded base64url**
+  decoding to **exactly 32 bytes**, the length of a raw Ed25519 public key.
+  Strict means exactly three things: the value uses only the unpadded
+  base64url alphabet (`A`-`Z`, `a`-`z`, `0`-`9`, `-` and `_`), carries no
+  `=` padding, and is the canonical encoding of its bytes, so the unused low
+  bits of its final character are zero. Every other shape is a configuration
+  error: no `kernelPublicKey` field at all (`{}`), an entry that names only a
+  `trustDomain`, a non-string value, the empty string, any character outside
+  the alphabet, a padded or non-canonical encoding, and a value that decodes
+  cleanly but to any length other than 32 bytes. A loader MUST NOT use a
+  permissive base64 decoder that discards characters outside the alphabet:
+  `"!!!!"` is not a key, and a decoder that returns zero bytes for it has
+  accepted one. A thumbprint alone is not key material (§2's
+  `trustedIssuers` row), so there is no reading of any of these entries that
+  resolves to key material the loader could actually trust: each is rejected
   outright, never silently dropped from the list.
 - **An entry with no `trustDomain`.** A kernel key with no trust domain
   attached binds to nothing, so accepting it would leave every document's

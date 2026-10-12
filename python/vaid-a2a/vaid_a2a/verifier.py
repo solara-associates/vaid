@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import binascii
 import enum
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -129,12 +130,52 @@ _CHAIN_VERDICT_TO_CODE: dict[ChainVerification, VerifyCode] = {
 }
 
 
-def _b64url_decode(value: str) -> bytes:
-    """Decode base64url with or without the trailing ``=`` padding that
-    :func:`base64.urlsafe_b64encode` emits and that a hand-written
-    ``trustedIssuers`` entry may omit."""
-    padded = value + "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(padded)
+#: Length of a raw Ed25519 public key. ``trustedIssuers`` carries raw keys,
+#: never DER or PEM (spec §2.1), so this is the only accepted length.
+_ED25519_PUBLIC_KEY_BYTES = 32
+
+#: Unpadded base64url alphabet, anchored and non-empty. ``=`` is deliberately
+#: absent: spec §2.1 specifies the unpadded form, so a padded string is a
+#: padding error rather than an alternative spelling.
+_B64URL_UNPADDED = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _strict_b64url_decode(value: str) -> bytes:
+    """Decode ``value`` as **strict unpadded base64url**, raising
+    :class:`ValueError` on anything that is not exactly that.
+
+    Strict means all three of the following are errors, not inputs to be
+    repaired, because each of them makes the decoded bytes something other
+    than what the configuration file literally says (spec §2.1):
+
+    - a character outside the unpadded base64url alphabet, ``=`` included,
+      which :func:`base64.urlsafe_b64decode` would otherwise DISCARD, so
+      ``"!!!!"`` decoded to ``b""`` and was accepted as a key;
+    - a length that no base64 string can have (``len % 4 == 1``), and the
+      empty string, which decoded to zero bytes;
+    - a non-canonical encoding: a final character whose unused low bits are
+      not zero, so two distinct strings decode to the same bytes and the
+      thumbprint a reader derives by hand from the configured text need not
+      be the one the loader files the key under.
+
+    Canonicality is checked by re-encoding rather than by masking bits, so
+    the assertion is the one that matters directly: this string is the one
+    and only base64url spelling of these bytes.
+    """
+    if not _B64URL_UNPADDED.fullmatch(value):
+        raise ValueError(
+            "not strict unpadded base64url (allowed characters are A-Z, a-z, "
+            "0-9, '-' and '_', with no '=' padding, and the value must not "
+            "be empty)"
+        )
+    decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+        raise ValueError(
+            "non-canonical base64url: the trailing bits of the final "
+            "character are not zero, so this is not the unique encoding of "
+            "the bytes it decodes to"
+        )
+    return decoded
 
 
 @dataclass(frozen=True)
@@ -198,9 +239,13 @@ def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
 
     - An entry that is not an object, or has no parseable
       ``kernelPublicKey``: missing entirely (``{}``), present but not a
-      string, or a string that cannot be base64url-decoded. There is no
-      reading of such an entry that resolves to key material the loader
-      could actually trust.
+      string, or a string that is not **strict unpadded base64url decoding
+      to exactly 32 bytes** (the raw Ed25519 public key length). Strict
+      rules out a character outside the unpadded base64url alphabet,
+      ``=`` padding, and a non-canonical final character, each of which a
+      non-strict decoder would accept or quietly repair into bytes the
+      configuration never named. There is no reading of such an entry that
+      resolves to key material the loader could actually trust.
     - An entry with a parseable ``kernelPublicKey`` but no ``trustDomain``:
       a key with no domain it is trusted for binds to nothing, so accepting
       it silently would make every document's claimed ``trust_domain``
@@ -227,12 +272,20 @@ def _build_key_resolver(trust_config: dict) -> _TrustedIssuerMap:
                 "kernel public key it trusts (spec §2.1)"
             )
         try:
-            key_bytes = _b64url_decode(raw)
+            key_bytes = _strict_b64url_decode(raw)
         except (binascii.Error, ValueError) as exc:
             raise TrustedIssuersConfigError(
                 f"trust_config.trustedIssuers entry for kernelPublicKey "
-                f"{raw!r} could not be base64url-decoded: {exc} (spec §2.1)"
+                f"{raw!r} could not be decoded as strict unpadded base64url: "
+                f"{exc} (spec §2.1)"
             ) from exc
+        if len(key_bytes) != _ED25519_PUBLIC_KEY_BYTES:
+            raise TrustedIssuersConfigError(
+                f"trust_config.trustedIssuers entry for kernelPublicKey "
+                f"{raw!r} decodes to {len(key_bytes)} bytes, a raw Ed25519 "
+                f"public key is exactly {_ED25519_PUBLIC_KEY_BYTES} bytes "
+                f"(spec §2.1)"
+            )
         domain = entry.get("trustDomain")
         if not isinstance(domain, str):
             raise TrustedIssuersConfigError(

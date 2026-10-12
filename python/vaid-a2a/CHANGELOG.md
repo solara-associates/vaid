@@ -7,10 +7,11 @@ This package versions **independently** of `vaid-pop`, `vaid-mint` and
 `vaid-langchain`; a shared version number between them is a coincidence, not
 a guarantee.
 
-## [Unreleased]
+## [0.1.1]
 
 Security fixes to the reference verifier, reported by Tymofii Pidlisnyi (Agent
-Passport System):
+Passport System). `0.1.0` was never published, so this is the first version of
+this package that exists anywhere outside the repository's own history.
 
 - `trust_config.trustedIssuers` pairs a trust domain with a kernel key (spec
   section 2). The verifier now enforces that pairing for the leaf and every
@@ -51,6 +52,18 @@ Passport System):
   closed, and the README says so plainly instead of silently assuming nothing
   is revoked. `assume_nothing_revoked()` remains, clearly labelled
   "local demo only, never production", in a separate example further down.
+- `trustedIssuers` keys are now decoded strictly. The loader previously
+  decoded `kernelPublicKey` with a permissive base64 decoder and never
+  checked the decoded length, so three shapes spec section 2.1 rejects still
+  loaded: `""` and `"!!!!"` both decoded to zero bytes (the decoder discards
+  characters outside the alphabet) and were filed as a trusted zero-byte
+  key, and a value decoding to 31 or 33 bytes was accepted and thumbprinted
+  as if it were an Ed25519 public key. `kernelPublicKey` must now be strict
+  unpadded base64url (alphabet only, no `=` padding, canonical encoding
+  only) decoding to exactly 32 bytes, and anything else raises
+  `vaid_a2a.TrustedIssuersConfigError` at load. Spec section 2.1 now states
+  that rule exactly, and also states the already-enforced rejection of a
+  `trustedIssuers` element that is not an object.
 
 ## [0.1.0]
 
