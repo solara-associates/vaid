@@ -36,7 +36,7 @@
  * TypeScript), NOT byte-conformant against the managed authority's VAID format.
  *
  * ```ts
- * import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
+ * import { InMemoryAudit, MintService, ReferenceIssuer, prefixEntry } from 'vaid-mint';
  *
  * const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();
  * const mint = new MintService(issuer, new InMemoryAudit());
@@ -45,7 +45,7 @@
  *     agentClass: 'orchestrator',
  *     version: '1.0.0',
  *     tenantId: 'acme',
- *     scopeBoundary: ['data.acme'],
+ *     scopeBoundary: [prefixEntry('data.acme')],
  *     capabilitySet: ['read'],
  *   },
  * });

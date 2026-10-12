@@ -36,14 +36,27 @@ The block below is executed by ``tests/test_docstring_examples.py``, which parse
 it out of this docstring and runs it. It cannot go stale without that test going
 red.
 
+**Since 0.10.0 each ``scope_boundary`` entry is a typed object**, built with
+:func:`~vaid_mint.document.prefix_entry` (ADR-0009). The pre-0.10.0 spelling
+``scope_boundary=["data.acme"]`` is worth naming because of HOW it fails: Python
+has no string-to-entry coercion (Rust's ``From<&str> for ScopeBoundaryEntry``
+has no Python equivalent), so the bare list is accepted by ``mint_root`` and by
+:meth:`~vaid_mint.issuer.ReferenceIssuer.verify_vaid`, which both work on the
+in-memory document, and is then refused by
+:func:`~vaid_mint.verify.parse_vaid_document` the moment the credential is read
+back off the wire. It produces a ``sig_version`` 4 document that no verifier can
+parse, with nothing failing at the point the mistake is made.
+
 Usage::
 
     from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
+    from vaid_mint import prefix_entry
 
     issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
     mint = MintService(issuer, InMemoryAudit())
     vaid = mint.mint_root(VaidSeed(agent_class="orchestrator", version="1.0.0",
-                                   tenant_id="acme", scope_boundary=["data.acme"],
+                                   tenant_id="acme",
+                                   scope_boundary=[prefix_entry("data.acme")],
                                    capability_set=["read"]))
     assert issuer.verify_vaid(vaid)
 """
