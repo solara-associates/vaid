@@ -10,21 +10,37 @@ This is the open engine of a HashiCorp-Vault-style split; the managed authority
 revocation) is the closed
 product and is deliberately NOT here. Revocation has a pluggable seam here — three-state
 and lineage-aware as of 0.2.0 (:class:`~vaid_mint.revocation.RevocationCheck`,
-injected via :meth:`~vaid_mint.issuer.ReferenceIssuer.with_revocation_check`),
-specified in ``docs/spec/revocation.md`` R.4 and failing closed when status is
-unavailable — with a non-durable in-memory default, and VAID expiry (TTL) is
-hard-enforced at verification. What stays commercial is durable, restart-surviving
+injected together with its lineage half via
+:meth:`~vaid_mint.issuer.ReferenceIssuer.with_revocation_backend`), specified in
+``docs/spec/revocation.md`` R.4 and failing closed when status is unavailable.
+VAID expiry (TTL) is hard-enforced at verification. What stays commercial is
+durable, restart-surviving
 revocation itself. Proof-of-possession reuses the ``vaid-pop`` primitive verbatim. Byte-identity of the signed VAID document with the Rust mint is locked
 by the vendored cross-language vector ``vaid_mint/vectors/mint_v1.json``.
 
 Per Decision B this is self-consistent WITHIN this repo (Rust == Python), NOT
 byte-conformant against the managed authority's VAID format.
 
+**Since 0.9.0 a bare issuer's revocation store is ABSENT, not vouching.** It has
+nothing to vouch for, so it reports ``UNAVAILABLE`` and
+:meth:`~vaid_mint.issuer.ReferenceIssuer.verify_vaid` fails closed on documents
+this issuer has just minted. That is the point: a revocation answer you could not
+obtain must not read as *nothing is revoked* (R.4.5). The example below therefore
+asks for the pre-0.9.0 fail-OPEN posture BY NAME, with
+:meth:`~vaid_mint.issuer.ReferenceIssuer.assuming_nothing_revoked` — correct for a
+local example, and wrong for anything that must survive a restart, which wants
+:meth:`~vaid_mint.issuer.ReferenceIssuer.with_revocation_backend` and two durable
+halves instead.
+
+The block below is executed by ``tests/test_docstring_examples.py``, which parses
+it out of this docstring and runs it. It cannot go stale without that test going
+red.
+
 Usage::
 
     from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
 
-    issuer = ReferenceIssuer.ephemeral(24, "vaid.example")
+    issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
     mint = MintService(issuer, InMemoryAudit())
     vaid = mint.mint_root(VaidSeed(agent_class="orchestrator", version="1.0.0",
                                    tenant_id="acme", scope_boundary=["data.acme"],
