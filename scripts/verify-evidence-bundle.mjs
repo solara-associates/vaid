@@ -74,6 +74,37 @@
  * (`jq -S` sorts keys recursively; `-c` is compact. jq sorts by byte value, which
  * agrees with UTF-16 code-unit order for ASCII keys.)
  *
+ * ## ===== WHERE THE TRUSTED KEY COMES FROM =============================
+ *
+ * The bundle's signature is verified with the substrate's Ed25519 kernel public
+ * key. Taking that key from inside the bundle would establish nothing: whoever
+ * could re-sign a tampered bundle could rewrite the key beside it. So the key is
+ * obtained from sources OUTSIDE the bundle and cross-checked against each other.
+ *
+ * The two that matter are both STATIC PUBLICATIONS, reachable by anyone:
+ *
+ *   1. PINNED — a copy committed to this public repository, in
+ *      `scripts/pinned-keys/`, changed only by reviewed pull request.
+ *   2. SITE — a plain static JSON asset published on the UAB product's own public
+ *      site, served alongside the public `/evidence/verify` auditor page with no
+ *      IAM and no authentication (`--site-key-url`).
+ *
+ * Both must be present and must agree before the key is trusted for the signature
+ * check. They are independent publishers: a substitution has to survive a reviewed
+ * commit in this repo AND a deploy of the UAB site.
+ *
+ * The substrate's own live `GET /kernel/public-key` is an OPTIONAL THIRD VOTE
+ * (`--kernel-url`), and it is for Solara's own operators, not for an auditor. The
+ * substrate's Cloud Run service stays behind IAM permanently — a deliberate
+ * product decision, not a gap — so an anonymous auditor can NEVER reach it. Its
+ * omission is therefore the NORMAL, EXPECTED case and is reported as such, not as
+ * a degradation. If it IS given it must agree with the two static sources; a third
+ * source that contradicts them is not outvoted, it is a reason to stop.
+ *
+ * Disagreement among any sources that answered is a loud FAIL and no signature
+ * check runs under any key. There is no majority vote: which key is right is a
+ * human's decision.
+ *
  * ## ===== ASSUMPTIONS A REVIEWER MUST CHECK ============================
  *
  * Three things below are NOT pinned by a published contract this script can read.
@@ -98,11 +129,13 @@
  *   strictly increasing by one — do not depend on the hash scheme at all, so
  *   those DO fail hard. A break in the chain is caught either way.
  *
- *   ASSUMPTION 3 — the kernel key endpoint's response shape. `GET
- *   /kernel/public-key` is read defensively: a bare JWK, a `{keys: {...}}` trust
- *   anchor, or an object carrying the key under one of several plausible names.
- *   If none match, that is NOT CHECKED with the response's top-level keys printed
- *   so the shape can be added in one line.
+ *   ASSUMPTION 3 — the response shape of both published key documents. The UAB
+ *   site asset and `GET /kernel/public-key` are read by the SAME defensive parser:
+ *   a bare JWK, a `{keys: {...}}` trust anchor, or an object carrying the key
+ *   under one of several plausible names. If none match, that is NOT CHECKED with
+ *   the response's top-level keys printed so the shape can be added in one line.
+ *   The UAB asset's shape is not yet fixed by a published contract either, which
+ *   is why it is parsed defensively rather than against one expected layout.
  *
  * ## Exit codes (documented, never inferred)
  *
@@ -117,8 +150,10 @@
  *
  * Run:
  *   node scripts/verify-evidence-bundle.mjs <bundle.json> \
- *     [--kernel-url https://.../kernel/public-key] \
- *     [--pinned-key <path>] [--trust-anchor <path>] [--at <rfc3339>] [--json]
+ *     [--site-key-url https://<uab-site>/kernel-key.json] \
+ *     [--pinned-key <path>] \
+ *     [--kernel-url https://.../kernel/public-key]   # operators only \
+ *     [--trust-anchor <path>] [--at <rfc3339>] [--json]
  */
 
 import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto';
@@ -138,6 +173,29 @@ const DEFAULT_ANCHOR = join(REPO, 'skill', 'trust-anchor.json');
 const BUNDLE_VERSION = 'evidence-bundle/v1';
 const THUMBPRINT_PREFIX = 'urn:ietf:params:oauth:jwk-thumbprint:sha-256:';
 const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * ===== UPDATE THIS ONCE THE REAL UAB DEPLOYMENT EXISTS =====================
+ *
+ * The second static publication of the kernel key: a plain JSON asset on the UAB
+ * product's own public site, served next to the public `/evidence/verify` auditor
+ * page with no IAM and no authentication, so an anonymous auditor can fetch it.
+ *
+ * The production URL is NOT FINALISED. This value is a deliberate placeholder and
+ * is the ONE line to change when the real one exists. Two properties of it are
+ * load-bearing:
+ *
+ *   - The `.invalid` TLD is reserved by RFC 2606 and can never resolve, so this
+ *     constant can never silently send an auditor's verification run to a host
+ *     somebody else controls.
+ *   - It is compared by identity before any fetch is attempted (see
+ *     `loadSiteKey`), so a run that was never given a real URL says exactly that
+ *     instead of surfacing a DNS failure that reads like a site outage.
+ *
+ * Changing this to a real URL needs no other edit: the flag, the parsing and the
+ * cross-check are all already pointed at it.
+ */
+const UAB_SITE_KEY_URL_PLACEHOLDER = 'https://uab-site-not-yet-deployed.invalid/kernel-key.json';
 
 // --- the four states ---------------------------------------------------------
 // Values identical to `skill/src/verify-core.mjs`'s `Finding` on purpose; see the
@@ -374,14 +432,15 @@ export function extractEd25519Key(doc) {
 }
 
 /**
- * The pinned copy of the kernel key, from this repo.
+ * The pinned copy of the kernel key, from this repo — the FIRST of the two static
+ * publications the cross-check is built on.
  *
  * A MISSING pinned key is NOT a skip. The whole point of the pin is that the key
- * used to verify a bundle's own signature is cross-checked against a source the
- * bundle's producer does not control at verification time; with no pin there is
- * no cross-check, and a run that quietly dropped the check would report the same
- * clean verdict as one that performed it. So this returns a reason, the caller
- * records NOT CHECKED, and the exit code is never 0.
+ * used to verify a bundle's own signature is cross-checked against a second,
+ * independently published copy; with no pin there is no cross-check, and a run
+ * that quietly dropped the check would report the same clean verdict as one that
+ * performed it. So this returns a reason, the caller records NOT CHECKED, and the
+ * exit code is never 0.
  */
 function loadPinnedKey(explicitPath) {
   let path = explicitPath;
@@ -398,8 +457,8 @@ function loadPinnedKey(explicitPath) {
       return {
         error:
           `no pinned kernel key in ${PINNED_DIR} (it holds only the *.json.example template). ` +
-          'Until a key is pinned there by PR review, the live key cannot be cross-checked against ' +
-          'an independent source — see scripts/pinned-keys/README.md.',
+          'Until a key is pinned there by PR review, this repo is not a publisher of the key and the ' +
+          'two-publication cross-check cannot be performed — see scripts/pinned-keys/README.md.',
       };
     }
     if (candidates.length > 1) {
@@ -438,8 +497,16 @@ function loadPinnedKey(explicitPath) {
   return { key: got.key, keyId: got.keyId, path, shape: got.shape };
 }
 
-/** Fetch the live kernel key. A fetch with no timeout hangs forever on a blackhole. */
-async function fetchKernelKey(url) {
+/**
+ * Fetch a PUBLISHED copy of the kernel key over HTTP(S), and extract it.
+ *
+ * Used for both network sources — the UAB site's static asset and the substrate's
+ * live endpoint — because the two are read exactly alike (ASSUMPTION 3); nothing
+ * here knows or cares which publisher it is talking to.
+ *
+ * A fetch with no timeout hangs forever on a blackholed host, so one is set.
+ */
+async function fetchPublishedKey(url) {
   let res;
   try {
     res = await fetch(url, {
@@ -460,6 +527,31 @@ async function fetchKernelKey(url) {
   const got = extractEd25519Key(doc);
   if (got.error) return { error: `${url}: ${got.error}` };
   return { key: got.key, keyId: got.keyId, shape: got.shape, url };
+}
+
+/**
+ * The UAB site's static publication of the key — the second independent publisher.
+ *
+ * The placeholder is detected BEFORE any network call. Fetching a `.invalid` host
+ * would produce a DNS failure, and a DNS failure reads as "the site is down" when
+ * the truth is "nobody has told this script where the site is yet". Those are
+ * different states and an auditor must not have to tell them apart from a stack of
+ * resolver errors.
+ */
+async function loadSiteKey(explicitUrl) {
+  const url = explicitUrl ?? UAB_SITE_KEY_URL_PLACEHOLDER;
+  if (url === UAB_SITE_KEY_URL_PLACEHOLDER) {
+    return {
+      url,
+      placeholder: true,
+      error:
+        `the UAB site key URL is still the built-in PLACEHOLDER (${url}), which is a reserved ` +
+        '.invalid host and was deliberately NOT fetched. The real public URL does not exist yet. ' +
+        'Pass --site-key-url <url>, or update UAB_SITE_KEY_URL_PLACEHOLDER in this script once the ' +
+        'UAB site publishes the asset. This is a missing cross-check, not a site outage.',
+    };
+  }
+  return fetchPublishedKey(url);
 }
 
 // --- the checks --------------------------------------------------------------
@@ -580,72 +672,147 @@ export async function verifyBundle(bundle, opts = {}) {
           '        Reproduce by hand:  jq -S -c \'del(.content_hash, .signature)\' <bundle> | tr -d \'\\n\' | shasum -a 256',
   );
 
-  // --- (c) the two independent key sources -----------------------------------
+  // --- (c) the key, cross-checked across independent publications ------------
+  // See "WHERE THE TRUSTED KEY COMES FROM" in the header. Two STATIC publishers
+  // gate the check; the live substrate endpoint is an optional operator-only third
+  // vote whose absence is the normal case, because its Cloud Run service stays
+  // behind IAM and an anonymous auditor cannot reach it.
   const pinned = loadPinnedKey(opts.pinnedKey);
-  const live = opts.kernelUrl ? await fetchKernelKey(opts.kernelUrl) : { error: null, absent: true };
+  const site = await loadSiteKey(opts.siteKeyUrl);
+  const live = opts.kernelUrl ? await fetchPublishedKey(opts.kernelUrl) : { error: null, absent: true };
 
-  let trustedKey = null;
-  if (pinned.key && live.key) {
-    const same =
-      pinned.key.length === live.key.length && pinned.key.every((b, i) => b === live.key[i]);
-    const pinnedTp = ed25519Thumbprint(pinned.key);
-    const liveTp = ed25519Thumbprint(live.key);
-    if (same && pinnedTp === liveTp) {
-      trustedKey = pinned.key;
-      add(
-        'key_crosscheck',
-        'Kernel key cross-check',
-        Finding.Pass,
-        `two INDEPENDENT sources agree on the signing key.\n` +
-          `        live:   ${opts.kernelUrl} (${live.shape})\n` +
-          `        pinned: ${pinned.path} (${pinned.shape})\n` +
-          `        both:   ${pinnedTp}\n` +
-          '        The key was NOT taken from inside the bundle being verified. A producer who ' +
-          'could re-sign a tampered bundle would also have to change the key published at that ' +
-          'endpoint AND the copy committed to this public repo.',
-      );
-    } else {
-      add(
-        'key_crosscheck',
-        'Kernel key cross-check',
-        Finding.Fail,
-        `THE TWO SOURCES DISAGREE. Refusing to pick one.\n` +
-          `        live   ${opts.kernelUrl}\n` +
-          `               ${liveTp}\n` +
-          `        pinned ${pinned.path}\n` +
-          `               ${pinnedTp}\n` +
-          '        Either the substrate rotated its kernel key and the pin in this repo is stale, or ' +
-          'the endpoint is serving a key nobody reviewed. Both are things a human decides, not this ' +
-          'script. No signature check was performed under either key.',
+  const sources = [
+    {
+      id: 'pinned',
+      gating: true,
+      what: 'pinned copy committed to this public repo',
+      where: pinned.path ?? opts.pinnedKey ?? PINNED_DIR,
+      got: pinned,
+    },
+    {
+      id: 'site',
+      gating: true,
+      what: "static asset published on the UAB product's public site",
+      where: site.url ?? UAB_SITE_KEY_URL_PLACEHOLDER,
+      got: site,
+    },
+    {
+      id: 'live',
+      gating: false,
+      what: 'live substrate endpoint — OPERATOR ONLY, behind Cloud Run IAM',
+      where: opts.kernelUrl ?? '(not requested)',
+      got: live,
+    },
+  ];
+
+  /**
+   * Byte equality of the raw 32-byte keys, and equality of their RFC 7638
+   * thumbprints. The second is implied by the first — the thumbprint is a pure
+   * function of those bytes — so this is a redundant check stated explicitly
+   * because the model calls for comparing both. It is NOT two independent facts,
+   * and nothing should be reported as if it were.
+   */
+  const agrees = (a, b) =>
+    a.got.key.length === b.got.key.length &&
+    a.got.key.every((byte, i) => byte === b.got.key[i]) &&
+    ed25519Thumbprint(a.got.key) === ed25519Thumbprint(b.got.key);
+
+  const answered = sources.filter((s) => s.got.key);
+  const silent = sources.filter((s) => !s.got.key);
+  const gatingAnswered = answered.filter((s) => s.gating);
+
+  const tpOf = (s) => ed25519Thumbprint(s.got.key);
+  const answeredLine = (s) =>
+    `        ${s.id.padEnd(6)} ${s.where}\n` +
+    `               ${tpOf(s)}${s.got.shape ? `  (${s.got.shape})` : ''}`;
+  const whyNot = (s) => {
+    if (s.id === 'live' && s.got.absent) {
+      return (
+        'not requested (no --kernel-url). EXPECTED: the substrate stays behind Cloud Run IAM by ' +
+        'design, so an external auditor cannot reach it. This is not a degraded run.'
       );
     }
-  } else if (pinned.key || live.key) {
-    const one = pinned.key ? pinned : live;
-    trustedKey = one.key;
+    return s.got.error ?? 'no key';
+  };
+  const silentLines = () => silent.map((s) => `        ${s.id.padEnd(6)} ${whyNot(s)}`).join('\n');
+
+  let trustedKey = null;
+  // Disagreement is tested across EVERY source that answered, before the gating
+  // question, and deliberately without regard to how many agreed: a third source
+  // that contradicts two others is not outvoted. Majority rule here would let the
+  // script quietly pick a key, which is the one thing it must never do.
+  const dissenting = answered.filter((s) => !agrees(s, answered[0]));
+
+  if (dissenting.length > 0) {
+    add(
+      'key_crosscheck',
+      'Kernel key cross-check',
+      Finding.Fail,
+      `SOURCES DISAGREE ABOUT THE SIGNING KEY. Refusing to pick one.\n` +
+        `${answered.map(answeredLine).join('\n')}\n` +
+        '        No signature check was performed under any of these keys. There is no majority ' +
+        'vote: either a key was rotated and one publication is stale, or one of them is serving a ' +
+        'key nobody reviewed. Which is which is a human decision, not this script\'s.' +
+        (silent.length > 0 ? `\n        Did not answer:\n${silentLines()}` : ''),
+    );
+  } else if (gatingAnswered.length === 2) {
+    trustedKey = gatingAnswered[0].got.key;
+    const liveNote = live.key
+      ? '        The live substrate endpoint was ALSO checked and agrees — a third, independent vote.'
+      : `        The live substrate endpoint was NOT checked: ${whyNot(sources[2])}`;
+    add(
+      'key_crosscheck',
+      'Kernel key cross-check',
+      Finding.Pass,
+      `TWO INDEPENDENT STATIC PUBLICATIONS agree on the signing key.\n` +
+        `${answered.map(answeredLine).join('\n')}\n` +
+        '        The key was NOT taken from inside the bundle being verified. A producer able to ' +
+        're-sign a tampered bundle would also have to change a reviewed commit in this public repo ' +
+        'AND the static asset deployed on the UAB site — two separate publishers.\n' +
+        liveNote,
+    );
+  } else if (answered.length > 0) {
+    // Something answered, but not both gating publications. The signature is still
+    // checked under what we have — that establishes the bundle was signed by
+    // whoever holds that key, which is less than, and must not be reported as, the
+    // cross-check having been performed.
+    trustedKey = answered[0].got.key;
+    const missing = sources.filter((s) => s.gating && !s.got.key);
     add(
       'key_crosscheck',
       'Kernel key cross-check',
       Finding.NotChecked,
-      `ONLY ONE SOURCE WAS AVAILABLE, so there was no cross-check.\n` +
-        `        available:   ${pinned.key ? `pinned copy ${pinned.path}` : `live ${opts.kernelUrl}`} ` +
-        `(${ed25519Thumbprint(one.key)})\n` +
-        `        unavailable: ${pinned.key ? (live.absent ? 'no --kernel-url was given' : live.error) : pinned.error}\n` +
-        '        The signature check below used this key, so it still establishes that the bundle was ' +
-        'signed by whoever holds it — but NOT that that party is the Solara substrate. One source is ' +
-        'the source the bundle producer may control. This is not a pass.',
+      `CROSS-CHECK INCOMPLETE — the two static publications were not both available, so they were ` +
+        `never compared.\n` +
+        `        Answered:\n${answered.map(answeredLine).join('\n')}\n` +
+        `        Missing (required for the cross-check):\n` +
+        `${missing.map((s) => `        ${s.id.padEnd(6)} ${whyNot(s)}`).join('\n')}\n` +
+        '        The signature check below used the key above, so it still establishes that the ' +
+        'bundle was signed by whoever holds that key — but NOT that that party is the Solara ' +
+        'substrate, because only one publisher vouched for it. This is not a pass.' +
+        (live.key && answered.length > 1
+          ? '\n        The live endpoint agreed with the source above, which is reassuring and is ' +
+            'still not the published cross-check: it is a source an external auditor cannot reach ' +
+            'and cannot reproduce.'
+          : ''),
     );
   } else {
     add(
       'key_crosscheck',
       'Kernel key cross-check',
       Finding.NotChecked,
-      `NEITHER source yielded a key, so there is nothing to verify the signature with.\n` +
-        `        pinned: ${pinned.error}\n` +
-        `        live:   ${live.absent ? 'no --kernel-url was given' : live.error}`,
+      `NO SOURCE yielded a key, so there is nothing to verify the signature with.\n${silentLines()}`,
     );
   }
 
   // --- (d) the manifest signature --------------------------------------------
+  // How the key was established decides how this finding may describe itself. With
+  // the cross-check incomplete, "the cross-checked key" would be a claim the run
+  // did not earn, so the phrase is chosen from what actually happened.
+  const keyProvenance =
+    gatingAnswered.length === 2
+      ? 'the cross-checked kernel key'
+      : 'the ONLY available copy of the kernel key (cross-check incomplete — see above)';
   if (!trustedKey) {
     add(
       'signature',
@@ -694,7 +861,7 @@ export async function verifyBundle(bundle, opts = {}) {
           'signature',
           'Manifest signature',
           Finding.Pass,
-          `Ed25519 signature verifies under the cross-checked kernel key, over ${hit[0]}.\n` +
+          `Ed25519 signature verifies under ${keyProvenance}, over ${hit[0]}.\n` +
             `        key: ${ed25519Thumbprint(trustedKey)}\n` +
             `${signature.key_id ? `        bundle names key_id ${signature.key_id}\n` : ''}` +
             '        ASSUMPTION 1 at the top of this script: the signed message was not pinned by a ' +
@@ -705,7 +872,7 @@ export async function verifyBundle(bundle, opts = {}) {
           'signature',
           'Manifest signature',
           Finding.Fail,
-          'the Ed25519 signature does NOT verify under the cross-checked kernel key, over either ' +
+          `the Ed25519 signature does NOT verify under ${keyProvenance}, over either ` +
             'candidate message (the hex content_hash string, or its 32 raw bytes). The bundle was not ' +
             'signed by the holder of that key, or the signature has been altered. ' +
             `key tried: ${ed25519Thumbprint(trustedKey)}.`,
@@ -1018,13 +1185,26 @@ const USAGE = `${bold('verify-evidence-bundle')} — verify an ${BUNDLE_VERSION}
 
   node scripts/verify-evidence-bundle.mjs <bundle.json> [options]
 
-  ${bold('--kernel-url')} <url>      Fetch the substrate's Ed25519 kernel public key live from
-                           GET /kernel/public-key and cross-check it against the copy
-                           pinned in this repo. Without it there is only ONE source for
-                           the key, so the cross-check reports NOT CHECKED and the exit
-                           code cannot be 0.
-  ${bold('--pinned-key')} <path>     The pinned copy to cross-check against.
-                           Default: the single *.json in scripts/pinned-keys/.
+  ${bold('The key cross-check')}   The signing key is taken from TWO independent STATIC
+                       publications and trusted only if they agree:
+
+  ${bold('--site-key-url')} <url>    The key as published on the UAB product's own public site —
+                           a plain static JSON asset, no login, no IAM.
+                           Default: ${UAB_SITE_KEY_URL_PLACEHOLDER}
+                           which is a PLACEHOLDER (reserved .invalid host, never
+                           fetched). The real URL does not exist yet; until it does,
+                           pass this flag or the cross-check reports NOT CHECKED.
+  ${bold('--pinned-key')} <path>     The key as committed to this public repo, changed only by
+                           reviewed PR. Default: the single *.json in
+                           scripts/pinned-keys/.
+
+  ${bold('--kernel-url')} <url>      OPTIONAL THIRD VOTE, FOR SOLARA OPERATORS ONLY. The
+                           substrate's live GET /kernel/public-key. Its Cloud Run
+                           service stays behind IAM by design, so an external auditor
+                           cannot reach it and is NOT expected to pass this. Omitting
+                           it is the normal case and is reported as such, not as an
+                           error. If given, it must AGREE with the two static sources
+                           or the run fails loudly — there is no majority vote.
   ${bold('--trust-anchor')} <path>   Trust anchor for the VAIDs in delegation_chain.
                            Default: skill/trust-anchor.json (the published anchor).
   ${bold('--at')} <rfc3339>          Evaluate VAID expiry at this instant instead of the
@@ -1072,6 +1252,7 @@ async function main() {
   if (at && Number.isNaN(at.getTime())) die('--at is not a parseable timestamp');
 
   const result = await verifyBundle(bundle, {
+    siteKeyUrl: typeof flags['site-key-url'] === 'string' ? flags['site-key-url'] : undefined,
     kernelUrl: typeof flags['kernel-url'] === 'string' ? flags['kernel-url'] : undefined,
     pinnedKey: typeof flags['pinned-key'] === 'string' ? flags['pinned-key'] : undefined,
     trustAnchor: typeof flags['trust-anchor'] === 'string' ? flags['trust-anchor'] : undefined,
@@ -1092,4 +1273,4 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   main().catch((e) => die(e?.stack ?? String(e), 2));
 }
 
-export { Finding };
+export { Finding, UAB_SITE_KEY_URL_PLACEHOLDER };
