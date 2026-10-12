@@ -31,7 +31,7 @@ classifiers = [
 # langchain-core is OPTIONAL: VaidAuth works with any httpx client standalone;
 # only `make_vaid_tool` needs it, and it is imported lazily.
 dependencies = [
-    "vaid-pop>=0.1.0",
+    "vaid-pop>=0.1.0,<0.3",
     "httpx>=0.27",
 ]
 
