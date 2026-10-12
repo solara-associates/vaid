@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vaid-a2a"
-version = "0.1.0"
+version = "0.1.1"
 description = "Reference verifier for the VAID A2A extension (docs/a2a/v1/extension.md): checks a VAID carried in an A2A Message against signature, expiry, chain attenuation, requested-action scope and revocation."
 readme = "README.md"
 requires-python = ">=3.10"
