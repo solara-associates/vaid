@@ -21,15 +21,25 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types as gtypes
 
 from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
-from vaid_mint.chain import SingleKernelKey
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
 from vaid_mint.revocation import InMemoryRevocationList
 from vaid_pop import canonical_request_signing_bytes
 
-from vaid_adk import ToolAuthorization, VaidAuthPlugin, VaidPresentation
+from vaid_adk import (
+    ToolAuthorization,
+    TrustedIssuers,
+    VaidAuthPlugin,
+    VaidPresentation,
+)
 
 APP_NAME = "vaid-adk-example"
 USER_ID = "demo-user"
+
+# RFC 2606 reserved domain. Named once because it has to agree in two places:
+# the issuer stamps it into every document it mints, and the plugin's trust
+# configuration binds the kernel key to it. If those two disagree, every
+# document is refused ISSUER_MISMATCH — which is the point of the binding.
+TRUST_DOMAIN = "vaid.example"
 
 
 class ToolCallingAgent(BaseAgent):
@@ -94,7 +104,7 @@ async def main() -> None:
     #    the worker — ordinary vaid_mint usage, no ADK involved yet.
     kernel_key = Ed25519PrivateKey.generate()
     issuer = ReferenceIssuer.from_seed(
-        kernel_key.private_bytes_raw(), vaid_ttl_hours=1, trust_domain="vaid.example"
+        kernel_key.private_bytes_raw(), vaid_ttl_hours=1, trust_domain=TRUST_DOMAIN
     )
     revocation = InMemoryRevocationList.assume_nothing_revoked()
     mint = MintService(issuer, InMemoryAudit())
@@ -136,7 +146,10 @@ async def main() -> None:
     #    (demo only — see the README's production note), and the explicit
     #    tool -> capability map.
     plugin = VaidAuthPlugin(
-        keys=SingleKernelKey(issuer.kernel_public_key()),
+        # Each kernel key is bound to the one trust domain it is trusted for:
+        # a document claiming any other domain is refused even though its
+        # signature verifies (GHSA-hfjh-v2x2-r58v).
+        keys=TrustedIssuers.from_raw_keys([(TRUST_DOMAIN, issuer.kernel_public_key())]),
         revocation=revocation,
         tool_authorizations={
             "lookup_order": ToolAuthorization(capability="read", resource="data.orders"),

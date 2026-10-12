@@ -10,8 +10,12 @@ from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vaid_adk import VaidPresentation, VerifyCode, verify_presentation
-from vaid_mint.chain import SingleKernelKey
+from vaid_adk import (
+    TrustedIssuers,
+    VaidPresentation,
+    VerifyCode,
+    verify_presentation,
+)
 from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
@@ -23,7 +27,8 @@ from vaid_mint.revocation import InMemoryRevocationList
 _KEY = Ed25519PrivateKey.from_private_bytes(bytes([0x11]) * 32)
 _PUBLIC = _KEY.public_key().public_bytes_raw()
 _THUMBPRINT = kernel_key_thumbprint(_PUBLIC)
-_KEYS = SingleKernelKey(_PUBLIC)
+_DOMAIN = "vaid.example"
+_KEYS = TrustedIssuers.from_raw_keys([(_DOMAIN, _PUBLIC)])
 NOW = datetime(2026, 7, 1, tzinfo=timezone.utc)
 
 
