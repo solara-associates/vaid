@@ -46,18 +46,31 @@ version numbers move on their own schedules and may legitimately diverge. A shar
 version number is a coincidence, not a guarantee, even when a change lands in both
 (as `vaid-mint` 0.1.2 did).
 
-**Git tags are therefore language-prefixed:**
+**Git tags name the ecosystem AND the package:**
 
 ```
-rust-vX.Y.Z      # a crates.io release of the Rust crate
-python-vX.Y.Z    # a PyPI release of the Python package
+<eco>-<package>-vX.Y.Z
+
+rust-vaid-pop-v0.2.2             # a crates.io release of that crate
+python-vaid-a2a-v0.1.1           # a PyPI release of that package
+npm-vaid-client-v0.3.1           # an npm release of that package
 ```
 
-Do **not** cut an unprefixed `vX.Y.Z` tag. An unprefixed tag cannot say which
-package it releases, and in practice it misleads: the original `v0.1.2` tagged the
+`.github/workflows/release.yml` parses exactly that form and **refuses anything
+else**, publishing nothing. The ecosystem-only form this section used to document
+(`rust-vX.Y.Z`, `python-vX.Y.Z`) is no longer accepted for new releases: it cannot
+say which package it releases, and the ambiguity was real rather than theoretical
+here, since `npm-v0.3.0` published three packages while `npm-v0.5.0` published one.
+`scripts/verify-package-versions.mjs` still resolves the legacy forms so existing
+tags stay auditable.
+
+Do **not** cut an unprefixed `vX.Y.Z` tag either. The original `v0.1.2` tagged the
 Rust 0.1.2 release at a commit where the Python package was still 0.1.1 and had
 none of the 0.1.2 changes. It was renamed to `rust-v0.1.2` for exactly that
 reason.
+
+**One tag publishes one package.** The workflow deliberately does not iterate the
+workspace, so releasing three packages means three tags.
 
 Each package keeps its own changelog (`crates/vaid-mint/CHANGELOG.md`,
 `python/vaid-mint/CHANGELOG.md`) documenting its own language's behavior. Before

@@ -58,6 +58,53 @@ function manifestName(eco, dir) {
   return null;
 }
 
+/**
+ * Does `dir`'s pyproject declare a `<pkg>-conformance` console script?
+ *
+ * release.yml's verify-artifact job runs exactly that executable against the
+ * PUBLISHED wheel and fails the release when it is missing:
+ *
+ *     ::error::$PKG $V installed but shipped no $PKG-conformance entry point —
+ *     the packaged firewall is the published-first evaluation path.
+ *
+ * That assertion is correct and arrives too late. It runs AFTER `twine upload`,
+ * and a publish cannot be undone — yanking is not deletion, and the version
+ * number is spent either way. So the requirement is restated here, where it is
+ * caught in the PR that adds the package. This is the exact analogue of the npm
+ * `verify_bin`/`verify_cmd` check below, which exists for the same reason.
+ *
+ * Read from `[project.scripts]` specifically, not from anywhere the string
+ * happens to appear: a mention in a comment or a README is not an entry point.
+ */
+function declaresConformanceScript(dir, pkg) {
+  let text;
+  try {
+    text = readFileSync(join(ROOT, dir, 'pyproject.toml'), 'utf8');
+  } catch {
+    return false;
+  }
+  // Scanned line by line rather than with one regex over the whole file. A
+  // lazy `([\s\S]*?)` closed by a `(?=^\[|$)` lookahead under the `m` flag
+  // captures the EMPTY string — `$` matches the end of the heading's own line,
+  // so the section always "exists" and never contains anything. That version
+  // of this function reported every package as missing its entry point,
+  // including the three that have shipped one for months, which is the only
+  // reason it was caught: a check that flags every subject is broken, not
+  // informative. A check that flags none of them looks exactly like a pass.
+  let inScripts = false;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('[')) {
+      inScripts = line === '[project.scripts]';
+      continue;
+    }
+    if (!inScripts || line.startsWith('#') || line === '') continue;
+    const name = line.split('=')[0].trim().replace(/^["']|["']$/g, '');
+    if (name === `${pkg}-conformance`) return true;
+  }
+  return false;
+}
+
 // --- 1. every entry resolves to the package it claims -------------------------
 const entries = Object.entries(MAP.packages ?? {});
 if (entries.length === 0) note('release-map.json lists no packages');
@@ -82,6 +129,14 @@ for (const [key, cfg] of entries) {
   } else if (name !== pkg) {
     // The dangerous case: a right-looking tag publishing the wrong package.
     note(`${key}: "${cfg.dir}" holds a package called "${name}", not "${pkg}"`);
+  }
+  if (eco === 'python' && !declaresConformanceScript(cfg.dir, pkg)) {
+    note(
+      `${key}: "${cfg.dir}/pyproject.toml" declares no [project.scripts] entry named ` +
+        `"${pkg}-conformance". release.yml's verify-artifact job runs that executable ` +
+        `against the published wheel and FAILS the release without it — after the ` +
+        `upload, which cannot be undone. Add the packaged firewall before releasing.`,
+    );
   }
   if (eco === 'npm' && !cfg.verify_bin && !cfg.verify_cmd) {
     note(`${key}: declares neither verify_bin nor verify_cmd — a published artifact nobody checks is not a release`);
@@ -143,4 +198,5 @@ if (problems.length > 0) {
 }
 
 console.log(`✓ release map — ${entries.length} entries, each resolving to the package it names`);
+console.log(`✓ every python entry declares its <pkg>-conformance packaged firewall (asserted here, not after an irreversible publish)`);
 console.log(`✓ every publishable package found in the tree (${found.length}) has an entry`);
