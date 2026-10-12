@@ -48,18 +48,27 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      - name: Install vaid-pop + vaid-mint + vaid-langchain + vaid-adk + test deps
+      - name: Install vaid-pop + vaid-mint + vaid-langchain + vaid-a2a + vaid-adk + test deps
         run: |
           python -m pip install --upgrade pip
           python -m pip install "./python/vaid-pop[test]"
           python -m pip install "./python/vaid-mint[test]"
           python -m pip install "./python/vaid-langchain[test]"
+          python -m pip install "./python/vaid-a2a[test]"
           python -m pip install "./python/vaid-adk[test]"
-      # vaid-adk is added here because its tests ran in no CI job at all: the
-      # fail-closed denials and the GHSA-hfjh-v2x2-r58v trust-domain binding
-      # tests were green only on a developer's machine, which is not a check.
-      - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain + vaid-adk)
-        run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain python/vaid-adk
+      # vaid-a2a and vaid-adk both ran in no CI job at all before #120 and
+      # #121. For vaid-adk that left its fail-closed denials and its
+      # GHSA-hfjh-v2x2-r58v trust-domain binding tests green only on a
+      # developer's machine. For vaid-a2a it left the A2A vectors' only
+      # conformance runner (python/vaid-a2a/tests/test_vectors.py) unexecuted,
+      # so adding vector 12 to it would have wired it to nothing.
+      #
+      # Both names must stay in both lines. #120 and #121 edited these same
+      # two lines, and resolving that conflict in favour of either side drops
+      # the other package back out of CI silently: the job stays green and the
+      # tests it was added to simply do not run.
+      - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain + vaid-a2a + vaid-adk)
+        run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain python/vaid-a2a python/vaid-adk
 
   typescript:
     name: TypeScript conformance (node --test)
@@ -658,11 +667,14 @@ jobs:
       # The only check here that looks at what a CONSUMER would resolve rather than
       # at what this repository declares about itself. `vaid-a2a` and `vaid-adk`
       # both carried `vaid-mint>=0.9.0` — a floor and no ceiling — while neither had
-      # been migrated to the v4 typed scope_boundary and neither is exercised by any
-      # job in this file. The breakage would have happened at `pip install` time in
-      # someone else's environment, with every check here green. See the script
-      # header for why the subject list comes from release-map.json rather than
-      # naming vaid-mint.
+      # been migrated to the v4 typed scope_boundary and, when this check was
+      # written, neither was exercised by any job in this file. Both are exercised
+      # by the `python` job now (#120, #121), which closes the second half of that
+      # but not the first: the breakage this catches happens at `pip install` time
+      # in someone else's environment, which no job here resolves, so the check is
+      # still the only thing standing between a missing ceiling and a consumer.
+      # See the script header for why the subject list comes from release-map.json
+      # rather than naming vaid-mint.
       - name: Verify in-repo dependencies on in-repo packages are upper-bounded
         run: node scripts/verify-dependency-bounds.mjs
       # ADVISORY, never fails. Every check above compares a package to ITSELF, to
