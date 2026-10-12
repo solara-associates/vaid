@@ -87,6 +87,48 @@ An agent declaring `required: true` is stating that peers MUST understand and
 honour this extension to interoperate with it at all — ordinary A2A extension
 semantics, not special to VAID.
 
+### 2.1 `trustedIssuers` validity
+
+Each `trustedIssuers` entry pairs exactly one kernel key with exactly one
+trust domain. A conforming implementation's loader MUST reject every one of
+the following shapes as a configuration error, at the point this list is
+loaded, rather than accept a narrowed or best-guess reading of it:
+
+- **An entry that is not an object.** `trustedIssuers` is a list of objects
+  (§2). A string, a number or any other non-object element names neither a
+  key nor a domain, so it is rejected rather than skipped.
+- **An entry with no parseable `kernelPublicKey`.** `kernelPublicKey` MUST be
+  present, MUST be a string, and MUST be **strict unpadded base64url**
+  decoding to **exactly 32 bytes**, the length of a raw Ed25519 public key.
+  Strict means exactly three things: the value uses only the unpadded
+  base64url alphabet (`A`-`Z`, `a`-`z`, `0`-`9`, `-` and `_`), carries no
+  `=` padding, and is the canonical encoding of its bytes, so the unused low
+  bits of its final character are zero. Every other shape is a configuration
+  error: no `kernelPublicKey` field at all (`{}`), an entry that names only a
+  `trustDomain`, a non-string value, the empty string, any character outside
+  the alphabet, a padded or non-canonical encoding, and a value that decodes
+  cleanly but to any length other than 32 bytes. A loader MUST NOT use a
+  permissive base64 decoder that discards characters outside the alphabet:
+  `"!!!!"` is not a key, and a decoder that returns zero bytes for it has
+  accepted one. A thumbprint alone is not key material (§2's
+  `trustedIssuers` row), so there is no reading of any of these entries that
+  resolves to key material the loader could actually trust: each is rejected
+  outright, never silently dropped from the list.
+- **An entry with no `trustDomain`.** A kernel key with no trust domain
+  attached binds to nothing, so accepting it would leave every document's
+  claimed `trust_domain` effectively unchecked for that key. Entries
+  without `trustDomain` are not accepted.
+- **The same kernel public key listed more than once.** Whichever
+  `trustDomain` a lookup happened to resolve to last would otherwise decide,
+  silently, which domain that key is actually trusted for. The error MUST
+  name the key (its derived thumbprint) and every trust domain it was
+  listed under, so the operator can see the conflict directly rather than
+  re-deriving it from the raw configuration.
+
+These rules apply before anything in section 5 runs: a `trustedIssuers` list
+that violates any one of them is a defect in the agent's own configuration,
+not a property of any particular incoming request.
+
 ## 3. Activation
 
 Standard A2A per-request activation: a client that wants a VAID-bearing request
@@ -173,25 +215,66 @@ key and, where the request requires chain verification, the documents in
 by different routes can still disagree about *why*, and that disagreement is
 invisible unless the reason is named.
 
-1. **Signature.** The leaf VAID's Ed25519 kernel signature verifies against a
-   kernel public key this agent trusts for the claimed `trust_domain` /
-   `kernel_key_thumbprint` (resolved per §2's `trustedIssuers`, never from a key
-   the message itself supplies). Equivalent to
-   `vaid_mint.verify.verify_vaid_authenticity_graded`. Any `UNPARSEABLE`,
+**Input-shape validation comes first, before step 1.** Malformed input, meaning
+the `/vaid` metadata value present but not a VAID document object, or
+`/vaidChain` present but not a list of VAID document objects (a value such as
+`[null]` is such a case: a list, but not a list *of documents*), is rejected
+as `UNPARSEABLE` before step 1 is ever reached. This is not itself one of the
+numbered, ordered steps below; it is a precondition on them. The ordering
+stated for steps 1 onward governs only input that has already parsed into the
+expected shapes. It says nothing about, and makes no claim about, the relative
+order of two different malformed-shape rejections, because that question does
+not arise until parsing has already succeeded.
+
+1. **Signature.** First, the leaf VAID's own binding: its claimed
+   `trust_domain` MUST equal the trust domain that its `kernel_key_thumbprint`
+   is bound to under §2's `trustedIssuers` (never the other way round, since a key
+   is trusted for the domain `trustedIssuers` pairs it with, not for any
+   domain a document cares to claim). A thumbprint resolving to no entry, or
+   resolving to an entry bound to a different domain, is `ISSUER_MISMATCH`.
+   Only once that binding holds does the leaf VAID's Ed25519 kernel signature
+   get checked, against the key that same thumbprint resolved to. Equivalent
+   to `vaid_mint.verify.verify_vaid_authenticity_graded`. Any `UNPARSEABLE`,
    `UNSUPPORTED_SIG_VERSION`, `MALFORMED_TRUST_DOMAIN`, `ISSUER_MISMATCH`,
    `LINEAGE_INCONSISTENT` or `INAUTHENTIC` result fails the request; see §6 for
-   the specific error returned.
+   the specific error returned. This step is scoped to the leaf alone: it
+   MUST reach its own verdict (`INAUTHENTIC` or otherwise) without being
+   affected by any defect in a chain document considered under step 3.
 2. **Expiry / TTL.** The leaf VAID has not passed its own `expires_at` at the
    verification instant (`vaid_mint.document.is_expired`).
-3. **Chain integrity back to a trusted root.** If `/vaidChain` is present, or the
-   agent's policy requires chain verification regardless, every ancestor named by
-   a signed `parent_vaid` is present in `/vaidChain`, every document in the chain
-   is itself authentic under a trusted key, and no ancestor has passed its own
-   `expires_at` at the verification instant. Equivalent to
-   `vaid_mint.chain.verify_chain_at` through the point where it would return
-   `INAUTHENTIC`, `UNVERIFIABLE` or `EXPIRED`. An agent that does not require chain
-   verification for this request MAY check only the leaf (steps 1-2 and
-   step 6 against the leaf's own authority) and skip to step 7.
+3. **Chain integrity back to a trusted root.** For each document presented in
+   `/vaidChain`, its own binding is checked first, the same rule as step 1:
+   its claimed `trust_domain` MUST equal the trust domain its own
+   `kernel_key_thumbprint` is bound to under `trustedIssuers`. A document
+   whose thumbprint resolves to a different bound domain is `ISSUER_MISMATCH`,
+   the same code step 1 uses for the leaf's own binding failure, applied here
+   to a chain document instead. Only then does chain integrity proceed: every
+   ancestor named by a signed `parent_vaid` is present in `/vaidChain`, every
+   document in the chain is itself authentic under a trusted key, and no
+   ancestor has passed its own `expires_at` at the verification instant.
+   Equivalent to `vaid_mint.chain.verify_chain_at` through the point where it
+   would return `INAUTHENTIC`, `UNVERIFIABLE` or `EXPIRED`.
+
+   **Every step above applies to every request.** There is no leaf-only mode: a
+   leaf's own authority cannot be assessed without its lineage, because ancestor
+   revocation (a parent whose standing was withdrawn after it delegated) can
+   only be established by walking the chain, never by looking at the leaf alone.
+   An agent that requires chain verification for a request but receives no
+   `/vaidChain` (or an incomplete one) MUST deny it: a missing chain where one is
+   required is `UNVERIFIABLE`, never a reason to fall back to checking the leaf in
+   isolation.
+
+   **The order is deterministic, and this is why it matters in practice.**
+   Step 1 runs to completion, and only to a final verdict on the leaf alone,
+   before step 3 examines any chain document. A leaf whose own signature does
+   not verify is `INAUTHENTIC` regardless of what else is presented in
+   `/vaidChain`, including a chain document that is independently misbound
+   to the wrong trust domain. A conforming implementation MUST NOT let a
+   defect discovered while examining the chain in step 3 pre-empt a verdict
+   that step 1 would already have reached about the leaf; two implementations
+   presented with the same bad-leaf-signature-plus-misbound-chain-document
+   input MUST both return `INAUTHENTIC`, not one `INAUTHENTIC` and the other
+   `ISSUER_MISMATCH`.
 4. **Scope at each hop is a subset of its parent's.** Every hop in the assembled
    chain holds `scope_boundary` and `capability_set` contained in its parent's,
    and `expires_at` no later than its parent's. Equivalent to the per-hop

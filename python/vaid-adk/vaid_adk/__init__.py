@@ -19,12 +19,19 @@ on.
 
 Usage::
 
-    from vaid_adk import ToolAuthorization, VaidAuthPlugin, VaidPresentation
-    from vaid_mint.chain import KernelKeyMap
+    from vaid_adk import (
+        ToolAuthorization,
+        TrustedIssuers,
+        VaidAuthPlugin,
+        VaidPresentation,
+    )
     from vaid_mint.revocation import InMemoryRevocationList
 
     plugin = VaidAuthPlugin(
-        keys=KernelKeyMap([issuer_kernel_public_key]),
+        # Each kernel key is bound to the ONE trust domain it is trusted for;
+        # a document claiming any other domain is refused even though its
+        # signature verifies (GHSA-hfjh-v2x2-r58v).
+        keys=TrustedIssuers.from_raw_keys([("vaid.example", issuer_kernel_public_key)]),
         revocation=my_revocation_check,  # see the README's production note
         tool_authorizations={"lookup_order": ToolAuthorization(capability="read")},
     )
@@ -34,7 +41,15 @@ Usage::
 
 from vaid_mint.revocation import InMemoryRevocationList, RevocationCheck, RevocationStatus
 
-from ._verify import VaidPresentation, VerifyCode, VerifyResult, verify_presentation
+from ._verify import (
+    TrustedIssuers,
+    TrustedIssuersConfigError,
+    VaidPresentation,
+    VerifyCode,
+    VerifyResult,
+    require_domain_binding,
+    verify_presentation,
+)
 from .plugin import ToolAuthorization, VaidAuthPlugin
 
 __all__ = [
@@ -42,10 +57,13 @@ __all__ = [
     "RevocationCheck",
     "RevocationStatus",
     "ToolAuthorization",
+    "TrustedIssuers",
+    "TrustedIssuersConfigError",
     "VaidAuthPlugin",
     "VaidPresentation",
     "VerifyCode",
     "VerifyResult",
+    "require_domain_binding",
     "verify_presentation",
 ]
 

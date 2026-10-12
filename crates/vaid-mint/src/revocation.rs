@@ -260,7 +260,6 @@ impl RevocationCheck for InMemoryRevocationList {
     }
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // The durable seam (spec R.4.6). Two stores, injected as one.
 // ─────────────────────────────────────────────────────────────────────────────
