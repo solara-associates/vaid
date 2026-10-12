@@ -6,7 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 This package versions **independently** of `vaid-mint`; a shared version
 number between them is a coincidence, not a guarantee.
 
-## [Unreleased]
+## [0.1.0] — released 2026-10-12
 
 Security fix: a trusted kernel key now vouches only for the trust domain it is
 configured for (GHSA-hfjh-v2x2-r58v, reported by Tymofii Pidlisnyi, Agent
@@ -48,8 +48,15 @@ published version carrying the defect and no version bump here.
   (see `vaid_mint.mint.tenant_attenuates`).
 - `python/vaid-adk` is now run by CI's Python job. Its tests, these included,
   were not executed by any CI job before this change.
+- New `vaid-adk-conformance` console entry point (`vaid_adk.conformance`): the
+  packaged firewall. It replays the frozen three-hop chain bundled in
+  `vaid-mint` and asserts one allowed outcome plus seven denials, each with a
+  distinct code, together with the refusal of a trust resolver that cannot bind
+  a domain to a key - the configuration half of the fix above. `release.yml`
+  runs this executable against the published artifact, so the package could not
+  have been released without it.
 
-## [0.1.0]
+### What 0.1.0 ships
 
 Initial release: VAID verification for Google ADK.
 

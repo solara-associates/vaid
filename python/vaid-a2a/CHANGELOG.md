@@ -7,7 +7,7 @@ This package versions **independently** of `vaid-pop`, `vaid-mint` and
 `vaid-langchain`; a shared version number between them is a coincidence, not
 a guarantee.
 
-## [0.1.1]
+## [0.1.1] — released 2026-10-12
 
 Security fixes to the reference verifier, reported by Tymofii Pidlisnyi (Agent
 Passport System). `0.1.0` was never published, so this is the first version of
@@ -64,6 +64,15 @@ this package that exists anywhere outside the repository's own history.
   `vaid_a2a.TrustedIssuersConfigError` at load. Spec section 2.1 now states
   that rule exactly, and also states the already-enforced rejection of a
   `trustedIssuers` element that is not an object.
+- New `vaid-a2a-conformance` console entry point (`vaid_a2a.conformance`): the
+  packaged firewall. The 12 extension vectors now ship inside the wheel, so a
+  consumer who installed only the wheel can replay them through
+  `verify_a2a_message` and confirm the verdict the extension specifies for
+  each, with no repository checkout. It pins verdicts rather than bytes, and
+  asserts both polarities and a vector-count floor so a truncated or one-sided
+  bundle cannot report a clean pass. `release.yml` runs this executable against
+  the published artifact, so the package could not have been released without
+  it.
 
 ## [0.1.0]
 
