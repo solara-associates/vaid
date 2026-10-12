@@ -558,7 +558,9 @@ first: the loader was still decoding `kernelPublicKey` non-strictly despite
 section 2.1 saying an undecodable key is rejected at load, and the package
 needed a version for the advisory.
 
-Head SHA: `1cb9a32c9d2de32461efd54520eaac042da3a80b`.
+Head SHA: `3af395b1feb3c27b91b6a05569436a89792be989`, the commit appending
+this report section. The code, spec and version change is its parent,
+`1cb9a32c9d2de32461efd54520eaac042da3a80b`.
 
 ### Item 1: strict key decoding
 
@@ -733,13 +735,21 @@ and `test_vectors.py` passes unchanged.)
 
 ### Commit and push
 
-Commit `1cb9a32` ("fix(a2a): reviewer follow-up 4 (strict kernelPublicKey
-decoding, version 0.1.1)") on `fix/trust-domain-binding`, pushed as an
-ordinary fast-forward (`1a8be96..1cb9a32`). Confirmed via the REST API after
-the push: `GET /repos/solara-associates/vaid-ghsa-hfjh-v2x2-r58v/pulls/1`
-reports `head.sha` = `1cb9a32c9d2de32461efd54520eaac042da3a80b`, and
-`GET /git/refs/heads/fix/trust-domain-binding` reports the same SHA. PR #1
-is open against `main`.
+Two commits on `fix/trust-domain-binding`, each pushed as an ordinary
+fast-forward:
+
+- `1cb9a32` ("fix(a2a): reviewer follow-up 4 (strict kernelPublicKey
+  decoding, version 0.1.1)"), the code, spec and version change
+  (`1a8be96..1cb9a32`).
+- `3af395b` ("docs: append session 307 follow-up 4 report"), this report
+  section (`1cb9a32..3af395b`).
+
+Confirmed via the REST API after each push. After the first,
+`GET /repos/solara-associates/vaid-ghsa-hfjh-v2x2-r58v/pulls/1` reported
+`head.sha` = `1cb9a32c9d2de32461efd54520eaac042da3a80b`; after the second,
+`3af395b1feb3c27b91b6a05569436a89792be989`. In both cases
+`GET /git/refs/heads/fix/trust-domain-binding` reported the same SHA as the
+pull request's head. PR #1 is open against `main`.
 
 ### Decisions made on Allan's behalf
 
