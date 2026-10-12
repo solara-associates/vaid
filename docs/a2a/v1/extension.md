@@ -242,6 +242,32 @@ not arise until parsing has already succeeded.
    affected by any defect in a chain document considered under step 3.
 2. **Expiry / TTL.** The leaf VAID has not passed its own `expires_at` at the
    verification instant (`vaid_mint.document.is_expired`).
+
+   **2a. Every presented `scope_boundary` is one this verifier can read.** Since
+   `sig_version` 4 a boundary entry is a typed `{kind, value}` object
+   (ADR-0009, `docs/spec/scope.md` S.7-S.10). A verifier that meets an entry
+   whose `kind` it does not recognise MUST refuse the request, and MUST NOT
+   report a verdict computed from the entries it could read. The code is
+   `UNKNOWN_SCOPE_KIND`, applied to the leaf and to every document in
+   `/vaidChain` (`vaid_mint.document.boundary_is_evaluable`).
+
+   This is a refusal over an *authentic* document, not a parse failure: the
+   entry is well formed and only its `kind` is unknown, so reporting it as
+   malformed bytes would accuse a correctly signed future-version credential
+   of being forged. One unreadable entry refuses the **whole** boundary, even
+   when another entry in the same boundary would have matched, because an
+   unrecognised kind can only ever NARROW the authority granted; evaluating
+   around it would grant authority the signer withheld.
+
+   **It is placed here, and over the ancestors, for a reason step 4 cannot
+   cover.** Per-hop attenuation already refuses an unreadable boundary on
+   either side, but it only runs where there IS a parent. A root leaf carrying
+   an unrecognised kind would otherwise reach step 5 unchecked and, where no
+   requested action is supplied, be allowed. And where attenuation does refuse
+   it, it reports `NOT_ATTENUATED`, which names the wrong fault: the boundary
+   was never read, so nothing was established about whether it attenuates.
+   The position mirrors `vaid_mint.verify.verify_vaid_standing` exactly (after
+   authenticity, after expiry, before revocation).
 3. **Chain integrity back to a trusted root.** For each document presented in
    `/vaidChain`, its own binding is checked first, the same rule as step 1:
    its claimed `trust_domain` MUST equal the trust domain its own
@@ -332,6 +358,14 @@ verification failure onto the existing A2A error space as follows:
   agent returns an A2A **`InvalidRequestError`** (or the transport's equivalent
   "the request could not be validated" error), since the fault is in what the
   caller presented, not in a transient condition.
+- A VAID that fails §5 step 2a (`UNKNOWN_SCOPE_KIND`): the agent returns an A2A
+  **authorization-class error**, naming an unrecognised `scope_boundary` kind as
+  the cause. It is deliberately NOT an `InvalidRequestError`: the document is
+  authentic and well formed, and the fault is that this verifier is too old to
+  evaluate a constraint it carries, which is a reason to refuse the authority
+  rather than to call the request malformed. An agent SHOULD distinguish this in
+  its logs from every other denial in this list, because it is the one that is
+  cleared by upgrading the verifier rather than by changing the request.
 - A VAID that fails §5 step 2 (expired), step 4 (not attenuated) or step 5
   (action outside scope): the agent returns an A2A **authorization-class error**
   — the error A2A defines for "the caller is not permitted to do this", with a

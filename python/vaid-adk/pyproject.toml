@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vaid-adk"
-version = "0.1.0"
+version = "0.2.0"
 description = "VAID verification for Google ADK: a BasePlugin that checks a presented VAID's signature, expiry, delegation-chain attenuation and revocation before an agent runs, is delegated to, or calls a tool, denying fail-closed."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,7 +33,7 @@ classifiers = [
 # relies on; a future ADK major is a deliberate re-verification, not a silent
 # version-range upgrade.
 dependencies = [
-    "vaid-mint>=0.9.0,<0.10",
+    "vaid-mint>=0.10.0,<0.11",
     "google-adk>=2.0,<3",
 ]
 

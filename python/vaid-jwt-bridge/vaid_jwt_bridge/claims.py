@@ -50,7 +50,11 @@ def build_vaid_claim(leaf: dict, chain_docs: list[dict]) -> dict:
     return {
         "vaid_id": leaf["vaid_id"],
         "trust_domain": leaf["trust_domain"],
-        "scope_boundary": list(leaf["scope_boundary"]),
+        # Entries are OBJECTS since ADR-0009, so `list(...)` alone would
+        # copy the list and alias every entry, letting a caller that edits
+        # the returned claim reach into the verified leaf. Copying each
+        # entry keeps this a snapshot, as it was when entries were strings.
+        "scope_boundary": [dict(entry) for entry in leaf["scope_boundary"]],
         "capability_set": list(leaf["capability_set"]),
         "chain_sha256": chain_sha256(chain_docs),
     }

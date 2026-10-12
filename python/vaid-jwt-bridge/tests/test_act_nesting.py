@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from vaid_jwt_bridge import ExchangeRequest, Issued, exchange
 from vaid_jwt_bridge.claims import build_sub_and_act
+from vaid_mint.document import prefix_entry
 
 
 def test_three_hop_act_nesting_matches_spec(three_hop_chain):
@@ -34,7 +35,7 @@ def test_two_hop_chain_single_act_level(mint, issuer):
             agent_class="orchestrator",
             version="1.0.0",
             tenant_id="acme",
-            scope_boundary=["data.acme"],
+            scope_boundary=[prefix_entry("data.acme")],
             capability_set=["read"],
         )
     )
@@ -45,7 +46,7 @@ def test_two_hop_chain_single_act_level(mint, issuer):
         agent_class="leafagent",
         version="1.0.0",
         tenant_id="acme",
-        scope_boundary=["data.acme"],
+        scope_boundary=[prefix_entry("data.acme")],
         capability_set=["read"],
     )
 
@@ -76,7 +77,7 @@ def test_issued_jwt_omits_act_for_a_root_only_chain(
             agent_class="orchestrator",
             version="1.0.0",
             tenant_id="acme",
-            scope_boundary=["data.acme"],
+            scope_boundary=[prefix_entry("data.acme")],
             capability_set=["read"],
         )
     )

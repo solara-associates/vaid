@@ -21,6 +21,7 @@ from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
+    prefix_entry,
 )
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import InMemoryRevocationList
@@ -51,7 +52,7 @@ def _leaf(agent_id: str, scope: list[str]) -> dict:
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=None,
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         lineage_hash=compute_lineage_hash(None, agent_id),
         capability_set=["read"],
         trust_domain="vaid.example",
@@ -59,6 +60,37 @@ def _leaf(agent_id: str, scope: list[str]) -> dict:
     )
     signature = _KEY.sign(canonical_vaid_signing_bytes(unsigned))
     return {**unsigned, "kernel_signature": list(signature)}
+
+
+def _leaf_with_boundary(agent_id: str, boundary: list[dict]) -> dict:
+    """A root leaf carrying ``boundary`` verbatim and authentically signed over
+    it. Separate from :func:`_leaf` because that one types bare strings as
+    ``prefix`` entries, and these tests need an entry whose kind this verifier
+    does NOT recognise."""
+    unsigned = build_unsigned_vaid_document(
+        vaid_id=agent_id,
+        agent_id=agent_id,
+        agent_class="test",
+        version="1.0.0",
+        tenant_id="t",
+        issued_at="2026-06-04T12:00:00Z",
+        expires_at="2999-01-01T00:00:00Z",
+        public_key_der=list(range(32)),
+        parent_vaid=None,
+        scope_boundary=boundary,
+        lineage_hash=compute_lineage_hash(None, agent_id),
+        capability_set=["read"],
+        trust_domain="vaid.example",
+        kernel_key_thumbprint=_THUMBPRINT,
+    )
+    signature = _KEY.sign(canonical_vaid_signing_bytes(unsigned))
+    return {**unsigned, "kernel_signature": list(signature)}
+
+
+#: A boundary entry of a kind this verifier does not implement. Shaped like the
+#: amount limit ADR-0009 names as the motivating future kind, so the test is
+#: about an entry that NARROWS authority rather than a nonsense one.
+_FUTURE_KIND_ENTRY = {"kind": "amount_limit", "value": 100}
 
 
 def test_no_vaid_passes_through_when_not_required() -> None:
@@ -142,6 +174,69 @@ def test_no_requested_action_skips_scope_check() -> None:
     assert result.code is VerifyCode.ALLOWED
 
 
+def test_unknown_scope_kind_is_refused_even_with_no_requested_action() -> None:
+    """ADR-0009 S.10, and the case that makes this check necessary rather than
+    redundant.
+
+    The document is authentic, unexpired, a root (so no attenuation check runs
+    over it) and no ``requested_action`` is supplied (so the leaf's own scope is
+    never consulted). Every other gate has nothing to say about it. Without an
+    explicit evaluability step this is ALLOWED while carrying a constraint the
+    verifier could not read, which is precisely the fail-open ADR-0009 exists to
+    prevent: an unrecognised kind can only NARROW what the signer granted."""
+    leaf = _leaf_with_boundary(str(uuid.uuid4()), [_FUTURE_KIND_ENTRY])
+    result = verify_a2a_message(
+        {"metadata": {METADATA_VAID_KEY: leaf}},
+        trust_config=TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action=None,
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
+
+
+def test_unknown_scope_kind_is_refused_not_reported_as_inauthentic() -> None:
+    """The refusal is a verdict over an AUTHENTIC document, not a parse or
+    signature failure (ADR-0009 decision 3). Reporting a correctly signed
+    future-version credential as forged would be both false and unactionable,
+    and it is what the default branch of a verdict map does if the code is
+    missing from the enum."""
+    leaf = _leaf_with_boundary(str(uuid.uuid4()), [_FUTURE_KIND_ENTRY])
+    result = verify_a2a_message(
+        {"metadata": {METADATA_VAID_KEY: leaf}},
+        trust_config=TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action="data.acme",
+        now=NOW,
+    )
+    assert result.code is not VerifyCode.INAUTHENTIC
+    assert result.code is not VerifyCode.UNPARSEABLE
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
+
+
+def test_one_unreadable_entry_refuses_a_boundary_that_also_matches() -> None:
+    """S.10 refuses the WHOLE boundary, not just the entry it cannot read.
+
+    The readable ``prefix`` entry here DOES contain the requested action, so a
+    union implemented as "at least one entry matched" would find the match and
+    return allowed without ever reaching the entry it cannot evaluate. That is
+    the specific wrong answer decision 4 of ADR-0009 calls out."""
+    leaf = _leaf_with_boundary(
+        str(uuid.uuid4()),
+        [prefix_entry("data.acme"), _FUTURE_KIND_ENTRY],
+    )
+    result = verify_a2a_message(
+        {"metadata": {METADATA_VAID_KEY: leaf}},
+        trust_config=TRUST_CONFIG,
+        revocation=InMemoryRevocationList.assume_nothing_revoked(),
+        requested_action="data.acme.orders",
+        now=NOW,
+    )
+    assert result.allowed is False
+    assert result.code is VerifyCode.UNKNOWN_SCOPE_KIND
+
+
 def test_requested_action_cannot_be_omitted() -> None:
     """GHSA-hfjh-v2x2-r58v finding 3: skipping the scope check must be an
     explicit, named decision (``requested_action=None``), never the default
@@ -208,7 +303,7 @@ def _signed_root(
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=None,
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         lineage_hash=compute_lineage_hash(None, agent_id),
         capability_set=["read"],
         trust_domain=trust_domain,
@@ -275,7 +370,7 @@ def test_cross_key_hop_claiming_the_parents_domain_is_denied() -> None:
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=root["vaid_id"],
-        scope_boundary=["data.acme.sub"],
+        scope_boundary=[prefix_entry("data.acme.sub")],
         lineage_hash=compute_lineage_hash(root["vaid_id"], leaf_id),
         capability_set=["read"],
         trust_domain=_ISSUER_A_DOMAIN,  # claims A's domain; B's key is bound to _ISSUER_B_DOMAIN
@@ -293,7 +388,7 @@ def test_cross_key_hop_claiming_the_parents_domain_is_denied() -> None:
         child_tenant_id="t",
         issued_at="2026-06-04T11:00:00Z",
         expires_at="2999-01-01T00:00:00Z",
-        scope_boundary=["data.acme.sub"],
+        scope_boundary=[prefix_entry("data.acme.sub")],
         capability_set=["read"],
         trust_domain=_ISSUER_A_DOMAIN,
         kernel_key_thumbprint=_ISSUER_A_THUMBPRINT,
@@ -611,7 +706,7 @@ def _bad_signature_leaf() -> dict:
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=None,
-        scope_boundary=["data.acme"],
+        scope_boundary=[prefix_entry("data.acme")],
         lineage_hash=compute_lineage_hash(None, leaf_id),
         capability_set=["read"],
         trust_domain=_ISSUER_A_DOMAIN,

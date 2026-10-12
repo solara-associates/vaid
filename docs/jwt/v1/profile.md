@@ -85,6 +85,25 @@ a VAID presentation, reusing `vaid_mint` primitives without modification:
    considered under step 3.
 2. **Leaf expiry** — the leaf's own `expires_at` has not passed
    (`vaid_mint.document.is_expired_at`).
+
+   **2a. Every presented `scope_boundary` is readable** — since `sig_version` 4 a
+   boundary entry is a typed `{kind, value}` object (ADR-0009,
+   `docs/spec/scope.md` S.7-S.10). An entry whose `kind` the bridge does not
+   recognise denies the exchange as `unknown_scope_kind`, over the leaf and every
+   presented document (`vaid_mint.document.boundary_is_evaluable`). One
+   unreadable entry refuses the **whole** boundary, even when another entry in it
+   would have matched, because an unrecognised kind can only ever NARROW the
+   authority granted.
+
+   This denial matters more here than in a verifier that authorises one request.
+   The bridge authorises no specific resource, so there is no later containment
+   check to fail closed, and §5's `vaid` claim copies `scope_boundary` verbatim
+   into the issued token. Without this step the bridge would mint a signed,
+   audience-scoped JWT asserting a boundary it could not evaluate and hand it to
+   a relying party even less likely to recognise the kind, laundering a narrowing
+   constraint through a token that looks fully verified. The position mirrors
+   `vaid_mint.verify.verify_vaid_standing` (after authenticity, after expiry,
+   before revocation).
 3. **Presented documents' trust-domain binding, then chain integrity and
    attenuation to a trusted root** — for each document presented in the chain,
    its own binding is checked first, by the same rule as step 1 and denying with

@@ -7,6 +7,48 @@ This package versions **independently** of `vaid-pop`, `vaid-mint` and
 `vaid-langchain`; a shared version number between them is a coincidence, not
 a guarantee.
 
+## [0.2.0]
+
+> **Read this before upgrading. This release follows `vaid-mint` 0.10.0's
+> BREAKING WIRE CHANGE and requires `sig_version` 4.** A `scope_boundary` entry
+> is now a typed `{kind, value}` object rather than a bare string, so a v3
+> credential does not verify here and `0.1.1` does not verify a v4 one. There is
+> no dual-acceptance path and deliberately none to add; credentials carry a one
+> hour default TTL, so the in-flight population expires on its own. Taken pre-1.0
+> on purpose. See `docs/adr/0009-typed-extensible-scope-boundary.md`.
+
+- Requires `vaid-mint>=0.10.0,<0.11`. Typed `scope_boundary` entries are
+  constructed with `vaid_mint.document.prefix_entry`; `prefix` is the only kind
+  v4 defines and its containment rule is ADR-0005's, unchanged.
+- All 24 documents across the 12 vectors in `docs/a2a/v1/vectors/` are
+  regenerated at `sig_version` 4 with typed boundaries, by re-running
+  `generate_vectors.py`. Vector 12 still reports `issuer_mismatch`, and every
+  other vector keeps the verdict it had: the typing changes the envelope, not the
+  rule.
+- **New denial `unknown_scope_kind` (ADR-0009 S.10), and it closes a fail-open.**
+  `verify_a2a_message` now refuses any request where the leaf or a presented
+  chain document carries a `scope_boundary` entry of a kind it does not
+  recognise, and reports a verdict computed from no entries rather than from the
+  ones it could read. The gap this closes: a ROOT leaf has no attenuation check
+  run over it, and when `requested_action` is `None` the leaf's own scope is
+  never consulted, so such a credential was previously ALLOWED while carrying a
+  constraint the verifier could not evaluate. An unrecognised kind can only ever
+  NARROW authority, so reading around it granted what the signer withheld.
+  Checked after authenticity and expiry and before revocation, mirroring
+  `vaid_mint.verify.verify_vaid_standing`; specified as step 2a in
+  `docs/a2a/v1/extension.md` §5 and mapped in §6.
+- The refusal is reported over an **authentic** document, never as `inauthentic`
+  or `unparseable`. An entry of an unknown kind is well formed and only its
+  `kind` is unknown, so calling it forged would be both false and unactionable.
+- Every GHSA-hfjh-v2x2-r58v fix from `0.1.1` is unchanged: leaf and per-document
+  trust-domain binding, `issuer_mismatch`, strict unpadded base64url key
+  decoding, and `TrustedIssuersConfigError` on a missing `trustDomain` or a
+  duplicated key.
+
+- The `vaid-mint` dependency ceiling moves to `>=0.10.0,<0.11`. The previous
+  `<0.10` was correct and was doing its job: it said this package does not work
+  with a typed boundary, which was true until this release.
+
 ## [0.1.1]
 
 Security fixes to the reference verifier, reported by Tymofii Pidlisnyi (Agent

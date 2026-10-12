@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 import jwt as pyjwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
+from vaid_mint import (
+    InMemoryAudit,
+    MintService,
+    ReferenceIssuer,
+    VaidSeed,
+    prefix_entry,
+)
 from vaid_mint.mint_types import MintPop, build_mint_pop_payload
 from vaid_mint.revocation import InMemoryRevocationList
 from vaid_pop import canonical_request_signing_bytes
@@ -43,7 +49,7 @@ def mint_child_byo(mint: MintService, parent: dict, *, agent_class: str, scope, 
         agent_class=agent_class,
         version="1.0.0",
         tenant_id="acme",
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         capability_set=caps,
     )
     nonce = f"nonce-{agent_class}"
@@ -66,7 +72,7 @@ def main() -> None:
             agent_class="orchestrator",
             version="1.0.0",
             tenant_id="acme",
-            scope_boundary=["data.acme"],
+            scope_boundary=[prefix_entry("data.acme")],
             capability_set=["read", "write"],
         )
     )

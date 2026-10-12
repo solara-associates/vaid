@@ -48,6 +48,7 @@ from vaid_mint.document import (
     build_unsigned_vaid_document,
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
+    prefix_entry,
 )
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 
@@ -105,7 +106,7 @@ def _signed(
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=parent_vaid,
-        scope_boundary=scope,
+        scope_boundary=[prefix_entry(v) for v in scope],
         lineage_hash=compute_lineage_hash(parent_vaid, vaid_id),
         capability_set=["read"],
         trust_domain=trust_domain,
@@ -224,7 +225,7 @@ def test_t3_cross_key_hop_claiming_the_parents_domain_issues_nothing(
         child_tenant_id="acme",
         issued_at="2026-01-01T00:00:00Z",
         expires_at="2999-01-01T00:00:00Z",
-        scope_boundary=["data.acme.sub"],
+        scope_boundary=[prefix_entry("data.acme.sub")],
         capability_set=["read"],
         trust_domain=_ISSUER_A_DOMAIN,
         kernel_key_thumbprint=_ISSUER_A_THUMBPRINT,
@@ -305,7 +306,7 @@ def _bad_signature_leaf() -> dict:
         expires_at="2999-01-01T00:00:00Z",
         public_key_der=list(range(32)),
         parent_vaid=None,
-        scope_boundary=["data.acme"],
+        scope_boundary=[prefix_entry("data.acme")],
         lineage_hash=compute_lineage_hash(None, _vid(107)),
         capability_set=["read"],
         trust_domain=_ISSUER_A_DOMAIN,
