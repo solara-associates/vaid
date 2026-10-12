@@ -6,7 +6,7 @@ here. This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0
 This package versions **independently** of `vaid-mint`; a shared version
 number between them is a coincidence, not a guarantee.
 
-## [Unreleased]
+## [0.1.0] — released 2026-10-12
 
 Security fix: a trusted kernel key now vouches only for the trust domain it is
 configured for (GHSA-hfjh-v2x2-r58v, reported by Tymofii Pidlisnyi, Agent
@@ -60,8 +60,15 @@ published version carrying the defect and no version bump here.
 - No change to `vaid_mint`'s public API: the domain-to-key pairing is held here,
   which is the half `vaid_mint` documents as deliberately out of band (see
   `vaid_mint.mint.tenant_attenuates`).
+- New `vaid-jwt-bridge-conformance` console entry point
+  (`vaid_jwt_bridge.conformance`): the packaged firewall. It exchanges the
+  frozen three-hop chain bundled in `vaid-mint`, verifies the issued JWT
+  against the bridge's own published JWKS, and asserts the profile's claims
+  including a frozen `chain_sha256` literal, plus seven denial paths each with
+  a distinct reason. `release.yml` runs this executable against the published
+  artifact, so the package could not have been released without it.
 
-## [0.1.0]
+### What 0.1.0 ships
 
 Initial release: a token bridge that verifies a full VAID delegation chain
 and, only on a full pass, exchanges it (RFC 8693 token exchange) for a

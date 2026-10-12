@@ -37,6 +37,15 @@ dependencies = [
     "google-adk>=2.0,<3",
 ]
 
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can run
+# `vaid-adk-conformance` to prove the verifier they got still reaches the frozen
+# verdict on a frozen delegation chain, and still denies fail-closed for each
+# distinct reason it exists to deny for. It pins VERDICTS, not bytes - this
+# package signs nothing of its own; the bytes are vaid-mint's, proven by
+# `vaid-mint-conformance`. See the module docstring.
+vaid-adk-conformance = "vaid_adk.conformance:main"
+
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",

@@ -152,6 +152,32 @@ the `service` extra is only for running this bridge as its own process.
 Gateway-side configuration examples (agentgateway, Envoy AI Gateway) are in
 [`docs/jwt/v1/gateways.md`](../../docs/jwt/v1/gateways.md).
 
+## Packaged conformance firewall
+
+An installed copy can be checked without this repository:
+
+```
+vaid-jwt-bridge-conformance           # exit 0 = PASS, 1 = BLOCKER
+python -m vaid_jwt_bridge.conformance  # same
+```
+
+It exchanges the frozen three-hop chain bundled in `vaid-mint`
+(`chain_v1.json`) at the instant that vector names, then verifies the issued JWT
+against the bridge's **own published JWKS** - the route a gateway uses - and
+asserts `sub`, the nested `act`, `iss`/`aud`, that `exp` never outlives the
+leaf's own expiry, and that `vaid.chain_sha256` equals the frozen digest
+
+```
+daa5c6cf4b3d2d3692c53d3f781a9fc19c6ca1f011149c49639b6d5a865bdd8b
+```
+
+That digest is a **byte** claim, frozen as a literal: recomputing it with this
+package's own `chain_sha256()` would agree with the token even if both moved,
+which is a check that cannot fail. It then asserts seven denial paths, each with
+a distinct reason, and that an unrelated key does **not** verify the token. The
+issuing case is load-bearing: a bridge that refused every exchange would
+otherwise satisfy every denial check.
+
 ## What this package does not do
 
 - It does not mint VAIDs. It only verifies a chain someone else minted.

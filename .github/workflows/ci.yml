@@ -644,6 +644,59 @@ jobs:
       - name: TypeScript completion conformance gate (packaged firewall)
         run: node typescript/vaid-pop/dist/bin/conformance.js
 
+  integration-packaged-firewalls:
+    name: Integration packaged firewalls (vaid-a2a, vaid-adk, vaid-jwt-bridge) + A2A vector drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # (a) vaid-a2a VENDORS the extension's vectors into its wheel so a consumer
+      # who installed only the wheel can run the firewall against the exact bytes
+      # this verifier was proven against. The vendored copy must therefore be
+      # byte-identical to docs/a2a/v1/vectors/, the extension's own source of
+      # truth, which the repo test suite reads directly.
+      #
+      # THE LISTING IS COMPARED BEFORE THE BYTES, and that order is the point. A
+      # per-file cmp loop proves every file it is handed is identical and says
+      # nothing at all about a file it was never handed: add vector 13 to docs/
+      # and forget to vendor it, and a bytes-only check stays green over the 12
+      # it still compares. The packaged firewall's own count floor is the second
+      # line of defence, not the first.
+      - name: A2A vector drift (listing parity, then byte-identity)
+        run: |
+          set -euo pipefail
+          SRC=docs/a2a/v1/vectors
+          VENDORED=python/vaid-a2a/vaid_a2a/vectors
+          diff <(cd "$SRC" && ls *.json) <(cd "$VENDORED" && ls *.json) || {
+            echo "::error::$VENDORED does not list the same vectors as $SRC."
+            echo "::error::A vector added to the extension but not vendored never ships in the wheel, so no consumer's firewall ever runs it."
+            exit 1
+          }
+          for f in "$SRC"/*.json; do
+            cmp "$f" "$VENDORED/$(basename "$f")"
+          done
+          echo "$(cd "$SRC" && ls *.json | wc -l) vector(s): same names, same bytes"
+      # (b) Run each packaged firewall THE WAY A CONSUMER DOES — the installed
+      # console entry point, not pytest over the repo tree. These are the exact
+      # executables release.yml's verify-artifact job runs against the PUBLISHED
+      # wheel; a package missing or breaking one of them fails that job AFTER the
+      # publish has already happened, which cannot be undone. Running them here
+      # moves that failure before the irreversible step.
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install the three integration packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./python/vaid-a2a ./python/vaid-adk ./python/vaid-jwt-bridge
+      - name: vaid-a2a packaged firewall (extension verdicts, all 12 vectors)
+        run: vaid-a2a-conformance
+      - name: vaid-adk packaged firewall (frozen chain verdicts, fail-closed denials)
+        run: vaid-adk-conformance
+      - name: vaid-jwt-bridge packaged firewall (frozen claims + chain_sha256, denial paths)
+        run: vaid-jwt-bridge-conformance
+
   capabilities:
     name: Capabilities manifest & claims-register verified
     runs-on: ubuntu-latest

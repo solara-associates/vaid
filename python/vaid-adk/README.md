@@ -206,6 +206,28 @@ already denies on that outcome.
   but each is self-contained against `vaid_mint` rather than one importing
   the other.
 
+## Packaged conformance firewall
+
+An installed copy can be checked without this repository:
+
+```
+vaid-adk-conformance           # exit 0 = PASS, 1 = BLOCKER
+python -m vaid_adk.conformance  # same
+```
+
+It verifies the frozen three-hop delegation chain bundled in `vaid-mint`
+(`chain_v1.json`), at the instant that vector names rather than the wall clock,
+and asserts eight outcomes: one that must be **allowed**, and seven that must
+each be **denied with a different code** (cross-domain key, out-of-scope
+resource, missing capability, no VAID, withheld ancestry, revoked ancestor,
+revocation unavailable). It also asserts that a trust resolver which cannot bind
+a domain to a key is refused outright, which is the half of
+GHSA-hfjh-v2x2-r58v no single request can demonstrate.
+
+The allowed case is load-bearing: without it, a build that denied everything
+would satisfy every other check. It pins **verdicts**, not bytes - this package
+signs nothing of its own.
+
 ## Install
 
 **Local dev only**, from a repo checkout:
