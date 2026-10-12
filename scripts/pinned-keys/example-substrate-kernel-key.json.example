@@ -1,0 +1,12 @@
+{
+  "$comment": "TEMPLATE, NOT A PINNED KEY. The .json.example extension is deliberate: verify-evidence-bundle.mjs loads *.json only, so this file can never be mistaken for a real pin and can never make a cross-check look performed when it was not. Copy it to <deployment>.json and fill in a key you obtained OUT OF BAND -- see README.md. This holds a PUBLIC key; a 'd' member or a seed must never appear in this directory.",
+  "thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:<RFC 9278 thumbprint URI of the key below>",
+  "kty": "OKP",
+  "crv": "Ed25519",
+  "x": "<base64url, unpadded, of the raw 32-byte Ed25519 public key>",
+  "key_id": "<the key_id the substrate reports, for cross-referencing against a bundle's signature.key_id>",
+  "deployment": "<which substrate this key belongs to, e.g. synthera-substrate-prod, europe-west1>",
+  "obtained_from": "<the channel it came from: a release record, docs/kernel-keys.json, a named person. NOT 'curled the endpoint' -- pinning what the endpoint served is a cross-check against itself>",
+  "pinned_at": "<RFC 3339 date this was reviewed and merged>",
+  "pinned_in_pr": "<PR number, so the review is findable later>"
+}
