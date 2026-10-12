@@ -45,11 +45,15 @@ a guarantee.
   decoding, and `TrustedIssuersConfigError` on a missing `trustDomain` or a
   duplicated key.
 
+- The vectors vendored into the wheel (`vaid_a2a/vectors/`) are re-vendored from
+  the regenerated `docs/a2a/v1/vectors/`, so the packaged firewall runs against
+  `sig_version` 4 bytes. The CI drift-check `cmp`s the two copies and compares the
+  listings before the bytes.
 - The `vaid-mint` dependency ceiling moves to `>=0.10.0,<0.11`. The previous
   `<0.10` was correct and was doing its job: it said this package does not work
   with a typed boundary, which was true until this release.
 
-## [0.1.1]
+## [0.1.1] — released 2026-10-12
 
 Security fixes to the reference verifier, reported by Tymofii Pidlisnyi (Agent
 Passport System). `0.1.0` was never published, so this is the first version of
@@ -106,6 +110,15 @@ this package that exists anywhere outside the repository's own history.
   `vaid_a2a.TrustedIssuersConfigError` at load. Spec section 2.1 now states
   that rule exactly, and also states the already-enforced rejection of a
   `trustedIssuers` element that is not an object.
+- New `vaid-a2a-conformance` console entry point (`vaid_a2a.conformance`): the
+  packaged firewall. The 12 extension vectors now ship inside the wheel, so a
+  consumer who installed only the wheel can replay them through
+  `verify_a2a_message` and confirm the verdict the extension specifies for
+  each, with no repository checkout. It pins verdicts rather than bytes, and
+  asserts both polarities and a vector-count floor so a truncated or one-sided
+  bundle cannot report a clean pass. `release.yml` runs this executable against
+  the published artifact, so the package could not have been released without
+  it.
 
 ## [0.1.0]
 

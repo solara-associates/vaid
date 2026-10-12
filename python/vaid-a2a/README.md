@@ -163,6 +163,24 @@ rather than reimplements.
 asserts the expected result. Regenerate the vectors from `vaid-mint` tooling
 with `docs/a2a/v1/vectors/generate_vectors.py`; see that directory's own README.
 
+## Packaged conformance firewall
+
+The vectors above also ship **inside the wheel**, so an installed copy can be
+checked without this repository:
+
+```
+vaid-a2a-conformance           # exit 0 = PASS, 1 = BLOCKER
+python -m vaid_a2a.conformance  # same
+```
+
+It replays all 12 extension vectors through `verify_a2a_message` and asserts the
+`(result, error_code)` pair `docs/a2a/v1/extension.md` section 5 specifies for
+each, at the verification instant each vector names rather than the wall clock.
+It pins **verdicts**, not bytes: this package signs and canonicalizes nothing of
+its own, and the bytes beneath it are proven by `vaid-mint-conformance`. The
+bundled vectors are byte-identical to `docs/a2a/v1/vectors/`, which CI checks
+by comparing the file listings and then every file.
+
 ## Non-goals
 
 - Does not depend on `a2a-python` or any A2A SDK — `Message` is accepted as a

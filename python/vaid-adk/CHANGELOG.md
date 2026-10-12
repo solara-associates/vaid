@@ -39,11 +39,17 @@ number between them is a coincidence, not a guarantee.
   binding, `issuer_mismatch`, strict unpadded base64url key decoding, and the
   T1/T2/T3 binding cases.
 
+- The packaged firewall (`vaid-adk-conformance`) projects a boundary entry to a
+  resource with `vaid_mint.document.entry_claimed_resource` before passing it as
+  `requested_resource`. It indexed `scope_boundary[0]` and passed the entry
+  through, which fed a `{kind, value}` object to `str.startswith` inside
+  `scope_contains` once entries became typed. Reusing mint's own projection keeps
+  the firewall from branching on `kind` differently from the matcher it tests.
 - The `vaid-mint` dependency ceiling moves to `>=0.10.0,<0.11`. The previous
   `<0.10` was correct and was doing its job: it said this package does not work
   with a typed boundary, which was true until this release.
 
-## [Unreleased]
+## [0.1.0] — released 2026-10-12
 
 Security fix: a trusted kernel key now vouches only for the trust domain it is
 configured for (GHSA-hfjh-v2x2-r58v, reported by Tymofii Pidlisnyi, Agent
@@ -85,8 +91,15 @@ published version carrying the defect and no version bump here.
   (see `vaid_mint.mint.tenant_attenuates`).
 - `python/vaid-adk` is now run by CI's Python job. Its tests, these included,
   were not executed by any CI job before this change.
+- New `vaid-adk-conformance` console entry point (`vaid_adk.conformance`): the
+  packaged firewall. It replays the frozen three-hop chain bundled in
+  `vaid-mint` and asserts one allowed outcome plus seven denials, each with a
+  distinct code, together with the refusal of a trust resolver that cannot bind
+  a domain to a key - the configuration half of the fix above. `release.yml`
+  runs this executable against the published artifact, so the package could not
+  have been released without it.
 
-## [0.1.0]
+### What 0.1.0 ships
 
 Initial release: VAID verification for Google ADK.
 

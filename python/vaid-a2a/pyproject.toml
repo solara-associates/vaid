@@ -35,6 +35,14 @@ dependencies = [
     "vaid-mint>=0.10.0,<0.11",
 ]
 
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can run
+# `vaid-a2a-conformance` to prove the verifier they got reaches the verdict
+# docs/a2a/v1/extension.md specifies for every published extension vector. It pins
+# VERDICTS, not bytes - see the module docstring on why that is the normative
+# surface for a verifier, and why it is a different claim rather than a weaker one.
+vaid-a2a-conformance = "vaid_a2a.conformance:main"
+
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",
@@ -47,6 +55,10 @@ Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-a2a"
 Issues = "https://github.com/solara-associates/vaid/issues"
 
 [tool.hatch.build.targets.wheel]
+# The extension vectors ship inside the wheel (vaid_a2a/vectors/, vendored
+# byte-identically from docs/a2a/v1/vectors/ and cmp-checked in CI) so a
+# consumer's firewall runs against the exact bytes this verifier was proven
+# against - the same reason vaid_pop and vaid_mint bundle theirs.
 packages = ["vaid_a2a"]
 
 [tool.hatch.build.targets.sdist]

@@ -39,6 +39,14 @@ dependencies = [
     "rfc8785>=0.1.2",
 ]
 
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can run
+# `vaid-jwt-bridge-conformance` to prove the bridge they got exchanges a frozen
+# chain for a JWT carrying the frozen claims and chain_sha256, verifiable against
+# its own published JWKS, and signs nothing on any denial path. See the module
+# docstring for which parts are byte claims and which are verdict claims.
+vaid-jwt-bridge-conformance = "vaid_jwt_bridge.conformance:main"
+
 [project.optional-dependencies]
 # The minimal HTTP service (vaid_jwt_bridge.service) is optional: the library
 # (vaid_jwt_bridge.exchange) has no web-framework dependency at all, so a

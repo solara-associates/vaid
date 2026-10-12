@@ -39,11 +39,22 @@ number between them is a coincidence, not a guarantee.
 - Every GHSA-hfjh-v2x2-r58v fix is unchanged: leaf and per-document trust-domain
   binding, `issuer_mismatch`, and strict unpadded base64url key decoding.
 
+- **`FROZEN_CHAIN_SHA256` in the packaged firewall moves to `416b3240...`**, from
+  `daa5c6cf...`. The frozen `chain_v1` chain was re-frozen at `sig_version` 4, so
+  each hop's `scope_boundary` went from `["data.aifactory"]` to
+  `[{"kind": "prefix", "value": "data.aifactory"}]` and the canonical bytes of all
+  three documents moved. The canonicalization itself did not change.
+
+  The new literal was derived rather than transcribed from a failing run:
+  re-deriving it by the documented rule reproduces the previous value byte for
+  byte when pointed at the v3 chain, and the same derivation over the v4 chain
+  gives the new one. A third party recomputing the audit digest over the same
+  three documents still agrees with the bridge; it is the documents that moved.
 - The `vaid-mint` dependency ceiling moves to `>=0.10.0,<0.11`. The previous
   `<0.10` was correct and was doing its job: it said this package does not work
   with a typed boundary, which was true until this release.
 
-## [Unreleased]
+## [0.1.0] — released 2026-10-12
 
 Security fix: a trusted kernel key now vouches only for the trust domain it is
 configured for (GHSA-hfjh-v2x2-r58v, reported by Tymofii Pidlisnyi, Agent
@@ -97,8 +108,15 @@ published version carrying the defect and no version bump here.
 - No change to `vaid_mint`'s public API: the domain-to-key pairing is held here,
   which is the half `vaid_mint` documents as deliberately out of band (see
   `vaid_mint.mint.tenant_attenuates`).
+- New `vaid-jwt-bridge-conformance` console entry point
+  (`vaid_jwt_bridge.conformance`): the packaged firewall. It exchanges the
+  frozen three-hop chain bundled in `vaid-mint`, verifies the issued JWT
+  against the bridge's own published JWKS, and asserts the profile's claims
+  including a frozen `chain_sha256` literal, plus seven denial paths each with
+  a distinct reason. `release.yml` runs this executable against the published
+  artifact, so the package could not have been released without it.
 
-## [0.1.0]
+### What 0.1.0 ships
 
 Initial release: a token bridge that verifies a full VAID delegation chain
 and, only on a full pass, exchanges it (RFC 8693 token exchange) for a
