@@ -417,6 +417,23 @@ impl MintService {
         })?;
         let seed = &request.seed;
 
+        // (1b) DEPTH-1 ENFORCEMENT. The authenticated parent must itself be a
+        // ROOT — i.e. `parent.parent_vaid()` must be `None`. Without this, a
+        // caller authenticated as an already-minted child could present itself
+        // as "parent" and mint a grandchild, defeating any one-level delegation
+        // policy a caller layers on top: this is the only layer that actually
+        // authenticates the caller, so the refusal must live here. Checked
+        // before any other attenuation, so an unauthorized depth-2 delegation
+        // never consumes a PoP nonce or reaches the issuer.
+        if parent.parent_vaid().is_some() {
+            return Err(MintError::Unauthorized(
+                "mint_child: the authenticated parent VAID is itself a delegated \
+                 child (parent_vaid is set); delegation is bounded at depth 1, \
+                 a child may not mint a grandchild"
+                    .into(),
+            ));
+        }
+
         // (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.
         //
         // Shares `tenant_attenuates` with verify-time chain walking, so the two
@@ -1001,6 +1018,45 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("parent_vaid"), "got: {err}");
         assert!(audit.is_empty());
+    }
+
+    // ── DEPTH-1 ENFORCEMENT: a caller authenticated as an already-minted CHILD
+    //    must not be able to mint a grandchild by presenting itself as the
+    //    "parent". ──
+    #[tokio::test]
+    async fn mint_child_with_a_child_as_parent_is_denied() {
+        let (svc, audit) = fixture();
+        let root = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
+        // Build a document shaped exactly like what mint_child would have
+        // issued for a child of `root`: parent_vaid is Some.
+        let child_as_parent = Vaid::with_lineage(
+            AgentId::new(),
+            AgentClass::new("child"),
+            "1.0.0".into(),
+            TenantId::new("aifactory"),
+            Utc::now(),
+            Utc::now() + chrono::Duration::hours(1),
+            vec![],
+            vec![],
+            Some(root.vaid_id()),
+            vec!["data.aifactory".into()],
+            "lineage".into(),
+            vec!["read".into()],
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
+        );
+        let req = signed_child(
+            &child_as_parent,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "depth-2-attempt",
+        );
+        let err = svc
+            .mint_child(req, Some(&child_as_parent))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("bounded at depth"), "got: {err}");
+        assert!(audit.is_empty(), "no grandchild minted → no audit");
     }
 
     #[tokio::test]
