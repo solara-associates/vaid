@@ -11,7 +11,7 @@ the Rust crate is at 0.4.2, and that is correct rather than drift. Byte-identity
 between the three is asserted by the frozen conformance vectors, never by the
 version number.
 
-## [0.10.0]
+## [0.10.0] — UNRELEASED
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
 > moves to `4`.** Every `scope_boundary` entry becomes a typed object rather than a
