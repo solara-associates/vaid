@@ -132,6 +132,16 @@ pub trait VaidIssuer: Send + Sync {
     /// for a caller that needs to distinguish "forged" from "expired" before
     /// calling this. A bad signature is `false`, never an error.
     fn verify_vaid(&self, vaid: &Vaid) -> bool;
+
+    /// Resolve one hop of delegation ancestry for [`MintService::mint_child`]'s
+    /// delegation-depth check (0.11.0) — the same resolution a
+    /// [`LineageResolver`] does for revocation, surfaced on this trait so the
+    /// mint can walk ancestry through `Arc<dyn VaidIssuer>` without a trait
+    /// object upcast. An issuer that is also a [`LineageResolver`] (as
+    /// [`ReferenceIssuer`] is) implements this by delegating to it; the two
+    /// MUST answer identically for the same id, since both read the same
+    /// lineage map.
+    fn resolve_delegation_ancestor(&self, vaid_id: &VaidId) -> ParentResolution;
 }
 
 /// The open reference issuer. Holds an Ed25519 kernel key, an in-memory lineage
@@ -538,6 +548,10 @@ impl LineageResolver for ReferenceIssuer {
 }
 
 impl VaidIssuer for ReferenceIssuer {
+    fn resolve_delegation_ancestor(&self, vaid_id: &VaidId) -> ParentResolution {
+        self.lineage.resolve_parent(vaid_id)
+    }
+
     fn issue_vaid_with_key(
         &self,
         agent_class: AgentClass,

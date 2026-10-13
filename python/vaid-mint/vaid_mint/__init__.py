@@ -98,9 +98,16 @@ from vaid_mint.document import (
     has_conforming_timestamps,
     is_in_scope,
 )
-from vaid_mint.error import AuditError, IdentityError, MintError, UnauthorizedError
+from vaid_mint.error import (
+    AuditError,
+    ConfigError,
+    IdentityError,
+    MintError,
+    UnauthorizedError,
+)
 from vaid_mint.issuer import DEFAULT_VAID_TTL_HOURS, ReferenceIssuer
 from vaid_mint.mint import (
+    DEFAULT_MAX_DELEGATION_DEPTH,
     MINT_POP_FRESHNESS_SECS,
     MintService,
     caps_attenuate,
@@ -109,6 +116,7 @@ from vaid_mint.mint import (
     scope_attenuation_reason,
     AttenuationReason,
     tenant_attenuates,
+    validate_max_delegation_depth,
 )
 from vaid_mint.mint_types import (
     MintChildResponse,
@@ -208,6 +216,9 @@ __all__ = [
     "UnauthorizedError",
     "IdentityError",
     "AuditError",
+    "ConfigError",
+    "DEFAULT_MAX_DELEGATION_DEPTH",
+    "validate_max_delegation_depth",
 ]
 
 __version__ = "0.11.0"

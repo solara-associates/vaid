@@ -132,6 +132,17 @@ export interface VaidIssuer {
    * signature is `false`, never a throw.
    */
   verifyVaid(vaid: Vaid): boolean;
+
+  /**
+   * Resolve one hop of delegation ancestry for {@link MintService.mintChild}'s
+   * delegation-depth check (0.11.0) — the same resolution a
+   * {@link LineageResolver} does for revocation, surfaced on this interface so
+   * the mint can walk ancestry through a plain `VaidIssuer` reference. An
+   * issuer that is also a {@link LineageResolver} (as {@link ReferenceIssuer}
+   * is) implements this by delegating to it; the two MUST answer identically
+   * for the same id, since both read the same lineage map.
+   */
+  resolveDelegationAncestor(vaidId: VaidId): ParentResolution;
 }
 
 /**
@@ -389,6 +400,11 @@ export class ReferenceIssuer implements VaidIssuer, LineageResolver {
    * than mistaking it for a root.
    */
   resolveParent(vaidId: VaidId): ParentResolution {
+    return this.#lineage.resolveParent(vaidId);
+  }
+
+  /** {@inheritDoc VaidIssuer.resolveDelegationAncestor} */
+  resolveDelegationAncestor(vaidId: VaidId): ParentResolution {
     return this.#lineage.resolveParent(vaidId);
   }
 

@@ -11,20 +11,48 @@ language's behavior.
 
 ## [0.11.0] — UNRELEASED
 
-### Version bump only — no functional change in this package
+### Fixed: `mint_child` enforces a configurable maximum delegation depth (SECURITY)
+
+`mint_child` attenuated a new child's tenant, scope, and capability set
+against the authenticated parent VAID, but had no check at all on how many
+delegation hops deep that parent already was. A caller authenticated as an
+already-minted child could present itself as "parent" and mint a
+grandchild, and nothing in this package refused it; the same defect was
+independently found and fixed in Solara's `synthera-bridge` substrate
+reimplementation (synthera PR #172) and in the Rust and TypeScript
+`vaid-mint` implementations.
+
+**Fix:** limiting delegation depth is issuer / mint policy, not a protocol
+rule (spec `docs/spec/delegation.md`). `MintService.__init__` now takes a
+`max_delegation_depth` keyword argument, defaulting to 1.
+`mint_child` refuses whenever minting the requested child would exceed it,
+checked before any other attenuation, so a refused delegation never
+consumes a PoP nonce or reaches the issuer. There is no value meaning
+"unlimited": an invalid depth (zero, negative, non-integer, `None`, or
+above the lineage-depth bound) is rejected at construction via the new
+`validate_max_delegation_depth`, raising `ConfigError`, so a misconfigured
+mint never starts minting. Verification is unchanged: a verifier accepts
+any well-formed chain regardless of what minted it, and the frozen
+conformance vectors (including the depth-2 A2A vector) are unaffected. See
+`test_default_depth_mints_a_root_child_but_refuses_a_grandchild`,
+`test_depth_2_mints_a_grandchild_but_refuses_a_great_grandchild`, and
+`test_delegation_depth_validation.py`.
+
+### Version bump only, otherwise
 
 `scripts/verify-release-version.mjs` requires the Rust, Python and TypeScript
-`vaid-mint` implementations to carry the same version number at release time.
-This release's actual change is Rust-only — `LineageStore::try_record`, a
-fallible counterpart to `record` for a durable store whose write can fail —
-see `crates/vaid-mint/CHANGELOG.md`.
+`vaid-mint` implementations to carry the same version number at release
+time. Besides the delegation-depth fix above, this release's remaining
+change is Rust-only: `LineageStore::try_record`, a fallible counterpart to
+`record` for a durable store whose write can fail. See
+`crates/vaid-mint/CHANGELOG.md`.
 
 It is not mirrored here because the gap it closes does not exist in Python:
 `record` is an ordinary method that can already raise, and
 `ReferenceIssuer._build_and_sign_vaid` already returns the signed document
 only after that call returns normally, so a database-backed store already
 fails the mint closed, by Python's own exception semantics, with no
-signature change required. Nothing to add.
+signature change required. Nothing to add there.
 
 ## [0.10.0] — released 2026-10-13
 

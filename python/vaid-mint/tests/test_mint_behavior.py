@@ -33,11 +33,12 @@ from vaid_mint import (
     compute_lineage_hash,
     has_capability,
     is_in_scope,
+    validate_max_delegation_depth,
 )
-from vaid_mint.error import IdentityError, MintError, UnauthorizedError
+from vaid_mint.error import ConfigError, IdentityError, MintError, UnauthorizedError
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.mint_types import MintPop
-from vaid_mint.revocation import RevocationStatus
+from vaid_mint.revocation import MAX_LINEAGE_DEPTH, RevocationStatus
 from vaid_mint.verify import (
     VaidVerdict,
     parse_vaid_document,
@@ -302,6 +303,158 @@ def test_mint_child_without_byo_key_is_denied():
     seed = child_seed(parent, ["data.aifactory.sub"], ["read"], None)
     with pytest.raises(IdentityError, match="BYO-key required"):
         svc.mint_child(seed, parent, None)
+
+
+# ── DELEGATION-DEPTH ENFORCEMENT (0.11.0): default 1, configurable. ──
+
+
+def mint_real_root(svc: MintService, tenant_id: str) -> dict:
+    """Mint a real root through ``svc``, so the issuer's lineage map records it
+    as a known root. Depth checking beyond the immediate parent walks that
+    map, and a hand-built document the issuer never minted resolves as
+    unknown there, not as a root — so any test exercising depth > 1 must
+    build its whole chain through the mint, never through ``parent_doc``."""
+    return svc.mint_root(
+        VaidSeed(
+            agent_class="root",
+            version="1.0.0",
+            tenant_id=tenant_id,
+            scope_boundary=[prefix_entry("data.aifactory")],
+            capability_set=["read"],
+        )
+    )
+
+
+def mint_real_child(svc: MintService, parent: dict, nonce: str) -> dict:
+    """Mint a real child of ``parent`` through ``svc``, so the issuer's
+    lineage map actually records the hop."""
+    seed, pop = signed_child(parent, ["data.aifactory"], ["read"], nonce)
+    return svc.mint_child(seed, parent, pop).vaid
+
+
+def test_default_depth_mints_a_root_child_but_refuses_a_grandchild():
+    svc, audit, _ = fixture()  # default max_delegation_depth == 1
+    root = mint_real_root(svc, "aifactory")
+
+    # Root (depth 0) -> child (depth 1): allowed.
+    child = mint_real_child(svc, root, "root-to-child")
+    events_after_child = len(audit.entries)
+    assert events_after_child == 2  # root mint + child mint
+
+    # Child (depth 1) -> grandchild (depth 2): refused — exceeds the
+    # default max_delegation_depth of 1.
+    seed, pop = signed_child(child, ["data.aifactory"], ["read"], "child-to-grandchild")
+    with pytest.raises(UnauthorizedError, match="delegation depth"):
+        svc.mint_child(seed, child, pop)
+    assert len(audit.entries) == events_after_child, "no grandchild minted"
+
+
+def test_a_root_child_is_always_allowed_regardless_of_configured_depth():
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
+    svc = MintService(issuer, InMemoryAudit(), max_delegation_depth=1)
+    root = mint_real_root(svc, "aifactory")
+    child = mint_real_child(svc, root, "root-to-child-explicit-1")
+    assert child["parent_vaid"] == root["vaid_id"]
+
+
+def test_depth_2_mints_a_grandchild_but_refuses_a_great_grandchild():
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
+    svc = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+    root = mint_real_root(svc, "aifactory")
+    child = mint_real_child(svc, root, "depth2-root-to-child")
+    # Grandchild (depth 2): allowed under max_delegation_depth = 2.
+    grandchild = mint_real_child(svc, child, "depth2-child-to-grandchild")
+    assert grandchild["parent_vaid"] == child["vaid_id"]
+
+    # Great-grandchild (depth 3): refused.
+    seed, pop = signed_child(
+        grandchild, ["data.aifactory"], ["read"], "depth2-grandchild-to-greatgrandchild"
+    )
+    with pytest.raises(UnauthorizedError, match="delegation depth"):
+        svc.mint_child(seed, grandchild, pop)
+
+
+def test_depth_refusal_happens_before_any_lineage_write():
+    """A depth-exceeding mint_child must be refused before the issuer does any
+    key work or lineage write — proven the same way the PoP-nonce ordering
+    tests do: the audit sink stays empty and the parent's own lineage record
+    is unaffected."""
+    svc, audit, _ = fixture()
+    root = mint_real_root(svc, "aifactory")
+    child = mint_real_child(svc, root, "before-write-root-to-child")
+    events_before = len(audit.entries)
+
+    seed, pop = signed_child(
+        child, ["data.aifactory"], ["read"], "before-write-child-to-grandchild"
+    )
+    with pytest.raises(UnauthorizedError):
+        svc.mint_child(seed, child, pop)
+    assert len(audit.entries) == events_before, "a refused mint must not audit a mint"
+
+
+# ── max_delegation_depth VALIDATION: fails closed at construction, never
+#    "unlimited". ──
+
+
+def test_max_delegation_depth_zero_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(0)
+
+
+def test_max_delegation_depth_negative_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(-1)
+
+
+def test_max_delegation_depth_float_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(1.5)
+
+
+def test_max_delegation_depth_nan_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(float("nan"))
+
+
+def test_max_delegation_depth_infinity_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(float("inf"))
+
+
+def test_max_delegation_depth_none_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(None)
+
+
+def test_max_delegation_depth_string_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth("1")
+
+
+def test_max_delegation_depth_bool_is_rejected():
+    # bool is a subclass of int in Python — must be explicitly excluded, or
+    # True/False would silently pass as 1/0.
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(True)
+
+
+def test_max_delegation_depth_above_the_lineage_bound_is_rejected():
+    with pytest.raises(ConfigError):
+        validate_max_delegation_depth(MAX_LINEAGE_DEPTH + 1)
+
+
+def test_max_delegation_depth_at_the_lineage_bound_is_accepted():
+    assert validate_max_delegation_depth(MAX_LINEAGE_DEPTH) == MAX_LINEAGE_DEPTH
+
+
+def test_max_delegation_depth_one_is_accepted():
+    assert validate_max_delegation_depth(1) == 1
+
+
+def test_constructing_a_mint_with_an_invalid_depth_fails_closed():
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
+    with pytest.raises(ConfigError):
+        MintService(issuer, InMemoryAudit(), max_delegation_depth=0)
 
 
 def test_rejected_attenuation_does_not_consume_the_pop_nonce():

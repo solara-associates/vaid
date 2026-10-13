@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 This package versions **independently** of `vaid-mint`; a shared version
 number between them is a coincidence, not a guarantee.
 
+## [0.2.1] — UNRELEASED
+
+### Changed
+
+- Requires `vaid-mint>=0.11.0,<0.12`. `vaid-mint` 0.11.0 makes delegation
+  depth a configurable `MintService` policy (defaulting to 1); this
+  package's own behavior is otherwise unchanged. The plugin mints and
+  verifies exactly as before, under whatever depth the `MintService` it is
+  handed is configured with. No other change in this release.
+
 ## [0.2.0] — UNRELEASED
 
 > **Read this before upgrading. This release follows `vaid-mint` 0.10.0's

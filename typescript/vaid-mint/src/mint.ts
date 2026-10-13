@@ -34,7 +34,7 @@ import {
   type ScopeBoundaryEntry,
   type Vaid,
 } from './document.js';
-import { IdentityError, MintError, UnauthorizedError } from './error.js';
+import { ConfigError, IdentityError, MintError, UnauthorizedError } from './error.js';
 import type { VaidIssuer } from './issuer.js';
 import {
   buildMintPopPayload,
@@ -43,6 +43,13 @@ import {
   type MintVaidResponse,
   type VaidSeed,
 } from './mintTypes.js';
+import {
+  assembleLineage,
+  MAX_LINEAGE_DEPTH,
+  type LineageResolver,
+  type ParentResolution,
+} from './revocation.js';
+import type { VaidId } from 'vaid-pop';
 
 /**
  * Freshness window for a mint proof-of-possession, in seconds. A PoP whose
@@ -50,6 +57,59 @@ import {
  * captured request is not mintable indefinitely.
  */
 export const MINT_POP_FRESHNESS_SECS = 300;
+
+/**
+ * Default maximum delegation depth (0.11.0): a root (depth 0) may mint a
+ * child (depth 1), and nothing deeper, unless the mint is explicitly
+ * configured otherwise. This is issuer / mint policy, not a protocol rule —
+ * see `docs/spec/delegation.md` — so a verifier accepts a well-formed
+ * multi-hop chain regardless of what any particular mint was configured to
+ * issue.
+ */
+export const DEFAULT_MAX_DELEGATION_DEPTH = 1;
+
+/**
+ * Validate a candidate `maxDelegationDepth`. Fails closed: the value must be
+ * an integer, at least 1, and at most {@link MAX_LINEAGE_DEPTH} — there is no
+ * value meaning "unlimited" (no 0, negative, `NaN`, `Infinity`, or
+ * non-integer is accepted). Used at {@link MintService} construction, and by
+ * any config, environment, or deserialised-input path that produces a depth
+ * limit, so every entry point enforces the identical rule.
+ */
+export function validateMaxDelegationDepth(maxDelegationDepth: number): number {
+  if (!Number.isInteger(maxDelegationDepth)) {
+    throw new ConfigError(
+      `maxDelegationDepth must be an integer, got ${JSON.stringify(maxDelegationDepth)} — ` +
+        'there is no value meaning unlimited',
+    );
+  }
+  if (maxDelegationDepth < 1) {
+    throw new ConfigError(
+      `maxDelegationDepth must be at least 1, got ${maxDelegationDepth} — ` +
+        'there is no value meaning unlimited',
+    );
+  }
+  if (maxDelegationDepth > MAX_LINEAGE_DEPTH) {
+    throw new ConfigError(
+      `maxDelegationDepth ${maxDelegationDepth} exceeds the maximum lineage ` +
+        `depth bound ${MAX_LINEAGE_DEPTH}`,
+    );
+  }
+  return maxDelegationDepth;
+}
+
+/**
+ * Adapts a `VaidIssuer` to {@link LineageResolver} via
+ * `resolveDelegationAncestor`, so {@link assembleLineage} can walk ancestry
+ * through the issuer the mint already holds.
+ */
+function issuerLineageResolver(issuer: VaidIssuer): LineageResolver {
+  return {
+    resolveParent(vaidId: VaidId): ParentResolution {
+      return issuer.resolveDelegationAncestor(vaidId);
+    },
+  };
+}
 
 /**
  * Refuse a seed whose `scopeBoundary` is not a well-formed S.8 boundary, before
@@ -299,17 +359,38 @@ export class MintService {
    */
   readonly #authz: AuthorizationGate;
   readonly #consumedPopNonces = new Set<string>();
+  /**
+   * Maximum delegation depth {@link mintChild} will mint to (0.11.0).
+   * Validated at construction by {@link validateMaxDelegationDepth} — never
+   * "unlimited".
+   */
+  readonly #maxDelegationDepth: number;
 
   /**
-   * Construct with an optional root-mint {@link AuthorizationGate}. Omitting it
-   * selects {@link PermitAll} — convenient for tests and local self-hosting; a
-   * production deployment should supply a real gate. This is the seam that closes
-   * the "mintRoot has no authorization" gap visibly rather than silently.
+   * Construct with an optional root-mint {@link AuthorizationGate} and an
+   * optional maximum delegation depth. Omitting the gate selects
+   * {@link PermitAll} — convenient for tests and local self-hosting; a
+   * production deployment should supply a real gate. This is the seam that
+   * closes the "mintRoot has no authorization" gap visibly rather than
+   * silently.
+   *
+   * Omitting `maxDelegationDepth` selects
+   * {@link DEFAULT_MAX_DELEGATION_DEPTH} (1). An explicit value is validated
+   * by {@link validateMaxDelegationDepth} and the constructor throws
+   * {@link ConfigError} for an invalid one — issuer / mint policy (0.11.0,
+   * see `docs/spec/delegation.md`), not a protocol rule, and a verifier
+   * accepts any well-formed chain regardless of what minted it.
    */
-  constructor(issuer: VaidIssuer, audit: AuditSink, authz: AuthorizationGate = new PermitAll()) {
+  constructor(
+    issuer: VaidIssuer,
+    audit: AuditSink,
+    authz: AuthorizationGate = new PermitAll(),
+    maxDelegationDepth: number = DEFAULT_MAX_DELEGATION_DEPTH,
+  ) {
     this.#issuer = issuer;
     this.#audit = audit;
     this.#authz = authz;
+    this.#maxDelegationDepth = validateMaxDelegationDepth(maxDelegationDepth);
   }
 
   /**
@@ -451,19 +532,36 @@ export class MintService {
     const seed = request.seed;
     const attributes = seedAttributes(seed);
 
-    // (1b) DEPTH-1 ENFORCEMENT. The authenticated parent must itself be a
-    // ROOT — i.e. `parent.parent_vaid` must be `null`. Without this, a
-    // caller authenticated as an already-minted child could present itself
-    // as "parent" and mint a grandchild, defeating any one-level delegation
-    // policy a caller layers on top: this is the only layer that actually
-    // authenticates the caller, so the refusal must live here. Checked
-    // before any other attenuation, so an unauthorized depth-2 delegation
-    // never consumes a PoP nonce or reaches the issuer.
-    if (parent.parent_vaid != null) {
+    // (1b) DELEGATION-DEPTH ENFORCEMENT (0.11.0, configurable via
+    // `maxDelegationDepth`, default 1). Without this, a caller authenticated
+    // as an already-minted child could present itself as "parent" and mint a
+    // grandchild beyond whatever depth this mint is configured to allow:
+    // this is the only layer that actually authenticates the caller, so the
+    // refusal must live here. Checked before any other attenuation, so a
+    // refused delegation never consumes a PoP nonce or reaches the issuer.
+    //
+    // The parent's own depth is the length of its assembled ancestry minus
+    // one (a root assembles to itself alone: depth 0, no resolver calls
+    // needed). Assembly walks through the issuer's lineage map exactly as
+    // revocation does, and inherits the same fail-closed non-durability
+    // caveat: after a process restart that map is empty, an ancestor above
+    // the immediate parent cannot be resolved, assembly is incomplete (`null`),
+    // and the mint refuses rather than guess at a depth it cannot prove.
+    const assembled = assembleLineage(parent, issuerLineageResolver(this.#issuer));
+    if (assembled === null) {
       throw new UnauthorizedError(
-        'mint_child: the authenticated parent VAID is itself a delegated ' +
-          'child (parent_vaid is set); delegation is bounded at depth 1, ' +
-          'a child may not mint a grandchild',
+        "mint_child: the authenticated parent's delegation depth could not " +
+          'be determined (lineage assembly incomplete) — fail closed',
+      );
+    }
+    const parentDepth = assembled.length - 1;
+    const childDepth = parentDepth + 1;
+    if (childDepth > this.#maxDelegationDepth) {
+      throw new UnauthorizedError(
+        'mint_child: minting this child would reach delegation depth ' +
+          `${childDepth}, exceeding this mint's configured maximum of ` +
+          `${this.#maxDelegationDepth} (the authenticated parent is already ` +
+          `at depth ${parentDepth})`,
       );
     }
 

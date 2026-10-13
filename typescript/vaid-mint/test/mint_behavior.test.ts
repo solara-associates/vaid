@@ -31,15 +31,19 @@ import {
   buildUnsignedVaidDocument,
   canonicalVaidSigningBytes,
   computeLineageHash,
+  ConfigError,
   DenyAll,
   IdentityError,
   InMemoryAudit,
+  MAX_LINEAGE_DEPTH,
   MINT_POP_FRESHNESS_SECS,
   MintError,
   MintService,
   parseVaidDocument,
+  PermitAll,
   ReferenceIssuer,
   UnauthorizedError,
+  validateMaxDelegationDepth,
   verifyVaidAuthenticity,
   type MintPop,
   type MintVaidRequest,
@@ -299,20 +303,123 @@ test('a child claiming a different parent_vaid is denied', async () => {
   assert.equal(audit.isEmpty(), true);
 });
 
-test('mintChild with a child as the parent is denied (depth-1 enforcement)', async () => {
-  const { service, audit } = fixture();
-  const root = parentDoc('aifactory', ['data.aifactory'], ['read']);
-  const childAsParent = ReferenceIssuer.ephemeral(1).issueVaidWithLineage({
-    agentClass: 'child',
-    version: '1.0.0',
-    tenantId: 'aifactory',
-    parentVaid: root.vaid_id,
-    scopeBoundary: [prefixEntry('data.aifactory')],
-    capabilitySet: ['read'],
+// ── DELEGATION-DEPTH ENFORCEMENT (0.11.0): default 1, configurable. ──
+
+async function mintRealRoot(service: MintService, tenantId: string): Promise<Vaid> {
+  const { vaid } = await service.mintRoot({
+    seed: {
+      agentClass: 'root',
+      version: '1.0.0',
+      tenantId,
+      scopeBoundary: [prefixEntry('data.aifactory')],
+      capabilitySet: ['read'],
+    },
   });
-  const request = signedChild(childAsParent, ['data.aifactory'], ['read'], 'depth-2-attempt');
-  await assert.rejects(service.mintChild(request, childAsParent), /bounded at depth/);
-  assert.equal(audit.entries().length, 0, 'no grandchild minted → no audit');
+  return vaid;
+}
+
+async function mintRealChild(service: MintService, parent: Vaid, nonce: string): Promise<Vaid> {
+  const { vaid } = await service.mintChild(
+    signedChild(parent, ['data.aifactory'], ['read'], nonce),
+    parent,
+  );
+  return vaid;
+}
+
+test('default depth mints a root child but refuses a grandchild', async () => {
+  const { service, audit } = fixture(); // default maxDelegationDepth === 1
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'root-to-child');
+  const eventsAfterChild = audit.length;
+  assert.equal(eventsAfterChild, 2); // root mint + child mint
+
+  const request = signedChild(child, ['data.aifactory'], ['read'], 'child-to-grandchild');
+  await assert.rejects(service.mintChild(request, child), /delegation depth/);
+  assert.equal(audit.length, eventsAfterChild, 'no grandchild minted');
+});
+
+test('a root child is always allowed regardless of configured depth', async () => {
+  const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 1);
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'root-to-child-explicit-1');
+  assert.equal(child.parent_vaid, root.vaid_id);
+});
+
+test('depth 2 mints a grandchild but refuses a great-grandchild', async () => {
+  const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 2);
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'depth2-root-to-child');
+  const grandchild = await mintRealChild(service, child, 'depth2-child-to-grandchild');
+  assert.equal(grandchild.parent_vaid, child.vaid_id);
+
+  const request = signedChild(
+    grandchild,
+    ['data.aifactory'],
+    ['read'],
+    'depth2-grandchild-to-greatgrandchild',
+  );
+  await assert.rejects(service.mintChild(request, grandchild), /delegation depth/);
+});
+
+test('depth refusal happens before any lineage write', async () => {
+  const { service, audit } = fixture();
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'before-write-root-to-child');
+  const eventsBefore = audit.length;
+
+  const request = signedChild(
+    child,
+    ['data.aifactory'],
+    ['read'],
+    'before-write-child-to-grandchild',
+  );
+  await assert.rejects(service.mintChild(request, child));
+  assert.equal(audit.length, eventsBefore, 'a refused mint must not audit a mint');
+});
+
+// ── maxDelegationDepth VALIDATION: fails closed at construction, never
+//    "unlimited". ──
+
+test('maxDelegationDepth zero is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(0), ConfigError);
+});
+
+test('maxDelegationDepth negative is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(-1), ConfigError);
+});
+
+test('maxDelegationDepth non-integer is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(1.5), ConfigError);
+});
+
+test('maxDelegationDepth NaN is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(NaN), ConfigError);
+});
+
+test('maxDelegationDepth Infinity is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(Infinity), ConfigError);
+});
+
+test('maxDelegationDepth above the lineage bound is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(MAX_LINEAGE_DEPTH + 1), ConfigError);
+});
+
+test('maxDelegationDepth at the lineage bound is accepted', () => {
+  assert.equal(validateMaxDelegationDepth(MAX_LINEAGE_DEPTH), MAX_LINEAGE_DEPTH);
+});
+
+test('maxDelegationDepth one is accepted', () => {
+  assert.equal(validateMaxDelegationDepth(1), 1);
+});
+
+test('constructing a mint with an invalid depth fails closed', () => {
+  const issuer = ReferenceIssuer.ephemeral(1);
+  assert.throws(
+    () => new MintService(issuer, new InMemoryAudit(), new PermitAll(), 0),
+    ConfigError,
+  );
 });
 
 test('mintChild without a verified parent in context is denied', async () => {
@@ -524,6 +631,7 @@ test('an issuer that ignores the ceiling is caught and the child withheld', asyn
       inner.issueVaidWithLineage(attributes),
     verifyVaid: (v: Vaid) => inner.verifyVaid(v),
     resolveParent: (id: string) => inner.resolveParent(id),
+    resolveDelegationAncestor: (id: string) => inner.resolveDelegationAncestor(id),
   };
   const service = new MintService(ignoresTheCeiling, new InMemoryAudit());
   const parent = parentExpiringIn(600);

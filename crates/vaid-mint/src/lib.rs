@@ -135,8 +135,8 @@ pub use document::{
 pub use error::{MintError, MintResult};
 pub use issuer::{ReferenceIssuer, VaidIssuer, DEFAULT_VAID_TTL_HOURS};
 pub use mint::{
-    scope_attenuates_within, scope_attenuation_reason, AttenuationReason, MintService,
-    MINT_POP_FRESHNESS_SECS,
+    scope_attenuates_within, scope_attenuation_reason, validate_max_delegation_depth,
+    AttenuationReason, MintService, DEFAULT_MAX_DELEGATION_DEPTH, MINT_POP_FRESHNESS_SECS,
 };
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{

@@ -27,3 +27,12 @@ export class IdentityError extends MintError {
 export class AuditError extends MintError {
   override readonly name = 'AuditError';
 }
+
+/**
+ * A mint was constructed with an invalid configuration value (e.g.
+ * `maxDelegationDepth`). Raised at construction, before any request is served,
+ * so a misconfigured mint never starts minting.
+ */
+export class ConfigError extends MintError {
+  override readonly name = 'ConfigError';
+}

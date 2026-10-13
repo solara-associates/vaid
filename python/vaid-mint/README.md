@@ -12,6 +12,14 @@ The Python mirror of the Rust `vaid-mint` crate: the open, self-hostable
   document, and `.expiry_bounded_by_parent` says whether the parent's expiry cut the
   child short.
 
+`MintService` also enforces a **configurable maximum delegation depth**
+(`max_delegation_depth`, defaulting to 1): a root may mint a child, but
+minting a grandchild is refused unless the mint is constructed with a
+deeper limit. This is issuer policy — see `docs/spec/delegation.md` — not
+a protocol rule, and has no effect on what a verifier accepts. There is no
+value meaning "unlimited"; an invalid depth is rejected at construction
+(raises `ConfigError`), so a misconfigured mint never starts minting.
+
 ## Trust model — read this before using the mint
 
 > **Upgrading from 0.1.1?** Expiry enforcement is a ⚠️ **breaking behavioral

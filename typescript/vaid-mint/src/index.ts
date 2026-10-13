@@ -92,7 +92,7 @@ export {
   type VaidId,
 } from './document.js';
 
-export { AuditError, IdentityError, MintError, UnauthorizedError } from './error.js';
+export { AuditError, ConfigError, IdentityError, MintError, UnauthorizedError } from './error.js';
 
 export {
   DEFAULT_VAID_TTL_HOURS,
@@ -103,9 +103,11 @@ export {
 
 export {
   capsAttenuate,
+  DEFAULT_MAX_DELEGATION_DEPTH,
   MINT_POP_FRESHNESS_SECS,
   MintService,
   mintPopTimestamp,
+  validateMaxDelegationDepth,
   scopeAttenuates,
   // The detached predicate — containment of one bare boundary within another,
   // with no document involved. Exported because the attenuation half of

@@ -39,7 +39,7 @@ from vaid_mint.document import (
     is_well_formed_scope_boundary,
     scope_contains,
 )
-from vaid_mint.error import IdentityError, MintError, UnauthorizedError
+from vaid_mint.error import ConfigError, IdentityError, MintError, UnauthorizedError
 from vaid_mint.issuer import ReferenceIssuer
 from vaid_mint.mint_types import (
     MintChildResponse,
@@ -47,9 +47,47 @@ from vaid_mint.mint_types import (
     VaidSeed,
     build_mint_pop_payload,
 )
+from vaid_mint.revocation import MAX_LINEAGE_DEPTH, assemble_lineage
 
 # Freshness window for a mint proof-of-possession, in seconds.
 MINT_POP_FRESHNESS_SECS = 300
+
+#: Default maximum delegation depth (0.11.0): a root (depth 0) may mint a
+#: child (depth 1), and nothing deeper, unless the mint is explicitly
+#: configured otherwise. This is issuer / mint policy, not a protocol rule —
+#: see ``docs/spec/delegation.md`` — so a verifier accepts a well-formed
+#: multi-hop chain regardless of what any particular mint was configured to
+#: issue.
+DEFAULT_MAX_DELEGATION_DEPTH = 1
+
+
+def validate_max_delegation_depth(max_delegation_depth: object) -> int:
+    """Validate a candidate ``max_delegation_depth``. Fails closed: the value
+    must be an ``int`` (not a ``bool``, not a ``float``), at least 1, and at
+    most :data:`MAX_LINEAGE_DEPTH` — there is no value meaning "unlimited"
+    (no 0, negative, ``NaN``, ``float('inf')``, ``None``, or non-integer is
+    accepted). Used at :class:`MintService` construction, and by any config,
+    environment, or deserialised-input path that produces a depth limit, so
+    every entry point enforces the identical rule.
+    """
+    # `bool` is a subclass of `int` in Python, so it must be excluded
+    # explicitly or `True`/`False` would silently pass as 1/0.
+    if isinstance(max_delegation_depth, bool) or not isinstance(max_delegation_depth, int):
+        raise ConfigError(
+            f"max_delegation_depth must be an int, got {max_delegation_depth!r} "
+            "— there is no value meaning unlimited"
+        )
+    if max_delegation_depth < 1:
+        raise ConfigError(
+            f"max_delegation_depth must be at least 1, got {max_delegation_depth} "
+            "— there is no value meaning unlimited"
+        )
+    if max_delegation_depth > MAX_LINEAGE_DEPTH:
+        raise ConfigError(
+            f"max_delegation_depth {max_delegation_depth} exceeds the maximum "
+            f"lineage depth bound {MAX_LINEAGE_DEPTH}"
+        )
+    return max_delegation_depth
 
 
 def scope_attenuates(parent: dict, child_scope: list[dict]) -> bool:
@@ -204,14 +242,28 @@ class MintService:
         issuer: ReferenceIssuer,
         audit: AuditSink,
         authz: AuthorizationGate | None = None,
+        max_delegation_depth: int | None = None,
     ) -> None:
         """Construct the mint. ``authz`` defaults to :class:`PermitAll` — a
         reference choice, NOT a security recommendation; a production deployment
-        supplies a real gate here."""
+        supplies a real gate here.
+
+        ``max_delegation_depth`` defaults to :data:`DEFAULT_MAX_DELEGATION_DEPTH`
+        (1) when omitted or ``None``. An explicit value is validated by
+        :func:`validate_max_delegation_depth`, which raises :class:`ConfigError`
+        for an invalid one — issuer / mint policy (0.11.0, see
+        ``docs/spec/delegation.md``), not a protocol rule, and a verifier accepts
+        any well-formed chain regardless of what minted it.
+        """
         self._issuer = issuer
         self._audit = audit
         self._authz: AuthorizationGate = authz if authz is not None else PermitAll()
         self._consumed_pop_nonces: set[str] = set()
+        self._max_delegation_depth = validate_max_delegation_depth(
+            DEFAULT_MAX_DELEGATION_DEPTH
+            if max_delegation_depth is None
+            else max_delegation_depth
+        )
 
     def _verify_pop_at_mint(
         self, seed: VaidSeed, registered_key: bytes, pop: MintPop | None
@@ -351,6 +403,40 @@ class MintService:
             raise UnauthorizedError(
                 "no verified parent VAID in context — delegation requires an "
                 "authenticated parent principal, fail-closed"
+            )
+
+        # (1b) DELEGATION-DEPTH ENFORCEMENT (0.11.0, configurable via
+        # max_delegation_depth, default 1). Without this, a caller
+        # authenticated as an already-minted child could present itself as
+        # "parent" and mint a grandchild beyond whatever depth this mint is
+        # configured to allow: this is the only layer that actually
+        # authenticates the caller, so the refusal must live here. Checked
+        # before any other attenuation, so a refused delegation never
+        # consumes a PoP nonce or reaches the issuer.
+        #
+        # The parent's own depth is the length of its assembled ancestry
+        # minus one (a root assembles to itself alone: depth 0, no resolver
+        # calls needed). Assembly walks through the issuer's lineage map
+        # exactly as revocation does, and inherits the same fail-closed
+        # non-durability caveat: after a process restart that map is empty,
+        # an ancestor above the immediate parent cannot be resolved, assembly
+        # is incomplete (``None``), and the mint refuses rather than guess at
+        # a depth it cannot prove.
+        assembled = assemble_lineage(parent, self._issuer)
+        if assembled is None:
+            raise UnauthorizedError(
+                "mint_child: the authenticated parent's delegation depth "
+                "could not be determined (lineage assembly incomplete) — "
+                "fail closed"
+            )
+        parent_depth = len(assembled) - 1
+        child_depth = parent_depth + 1
+        if child_depth > self._max_delegation_depth:
+            raise UnauthorizedError(
+                f"mint_child: minting this child would reach delegation "
+                f"depth {child_depth}, exceeding this mint's configured "
+                f"maximum of {self._max_delegation_depth} (the authenticated "
+                f"parent is already at depth {parent_depth})"
             )
 
         # (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.

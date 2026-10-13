@@ -101,10 +101,21 @@ def vouching_revocation():
 
 
 @pytest.fixture
-def three_hop_chain(mint):
+def three_hop_chain(issuer):
     """root -> child -> leaf, all same tenant/trust-domain, scope/caps
     narrowing at each hop, all minted under the fixed kernel key and fixed
-    per-hop key seeds. Returns (root, child, leaf)."""
+    per-hop key seeds. Returns (root, child, leaf).
+
+    Builds its own `MintService` rather than reusing the `mint` fixture:
+    since vaid-mint 0.11.0 the default `max_delegation_depth` is 1 (one hop
+    past a root), and this fixture mints a second hop (`leaf`, a
+    grandchild of `root`), so it must configure a deeper limit explicitly.
+    Depth-limiting is mint policy — see `docs/spec/delegation.md` — and has
+    no effect on verification, which is what this suite actually tests; the
+    `mint` fixture's own default is left alone for everything else that uses
+    it.
+    """
+    mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
     root = mint.mint_root(
         VaidSeed(
             agent_class="orchestrator",

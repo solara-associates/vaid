@@ -6,6 +6,19 @@ here. This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0
 This package versions **independently** of `vaid-mint`; a shared version
 number between them is a coincidence, not a guarantee.
 
+## [0.2.1] — UNRELEASED
+
+### Changed
+
+- Requires `vaid-mint>=0.11.0,<0.12`. `vaid-mint` 0.11.0 makes delegation
+  depth a configurable `MintService` policy (defaulting to 1); this
+  package's own behavior is otherwise unchanged. `exchange()` verifies
+  exactly as before, under whatever depth the `MintService` a caller mints
+  with is configured with. The test fixture that mints a three-hop chain
+  (`tests/conftest.py`'s `three_hop_chain`) now configures
+  `max_delegation_depth=2` explicitly, since the previous default minted a
+  grandchild with no depth check at all. No other change in this release.
+
 ## [0.2.0] — UNRELEASED
 
 > **Read this before upgrading. This release follows `vaid-mint` 0.10.0's

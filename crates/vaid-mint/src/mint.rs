@@ -24,15 +24,56 @@ use vaid_pop::vaid_pop::verify_signed_payload;
 
 use crate::audit::AuditSink;
 use crate::authz::{AuthorizationGate, PermitAll};
-use crate::document::{AgentClass, ScopeBoundaryEntry, TenantId, Vaid};
+use crate::document::{AgentClass, ScopeBoundaryEntry, TenantId, Vaid, VaidId};
 use crate::error::{MintError, MintResult};
 use crate::issuer::VaidIssuer;
 use crate::mint_types::{MintPop, MintVaidRequest, MintVaidResponse, VaidSeed};
+use crate::revocation::MAX_LINEAGE_DEPTH;
+use crate::revocation::{assemble_lineage, LineageAssembly, LineageResolver, ParentResolution};
 
 /// Freshness window for a mint proof-of-possession, in seconds. A PoP whose
 /// `issued_at` is more than this from now (either direction) is rejected, so a
 /// captured request is not mintable indefinitely.
 pub const MINT_POP_FRESHNESS_SECS: i64 = 300;
+
+/// Default maximum delegation depth (0.11.0): a root (depth 0) may mint a child
+/// (depth 1), and nothing deeper, unless the mint is explicitly configured
+/// otherwise. This is issuer / mint policy, not a protocol rule — see
+/// `docs/spec/delegation.md` — so a verifier accepts a well-formed multi-hop
+/// chain regardless of what any particular mint was configured to issue.
+pub const DEFAULT_MAX_DELEGATION_DEPTH: usize = 1;
+
+/// Validate a candidate `max_delegation_depth`. Fails closed: the value must be
+/// at least 1 and at most [`MAX_LINEAGE_DEPTH`] — there is no value meaning
+/// "unlimited". Used at [`MintService`] construction, and by any config,
+/// environment, or deserialised-input path that produces a depth limit, so
+/// every entry point enforces the identical rule.
+pub fn validate_max_delegation_depth(max_delegation_depth: usize) -> MintResult<usize> {
+    if max_delegation_depth < 1 {
+        return Err(MintError::Config(format!(
+            "max_delegation_depth must be at least 1, got {max_delegation_depth} \
+             — there is no value meaning unlimited"
+        )));
+    }
+    if max_delegation_depth > MAX_LINEAGE_DEPTH {
+        return Err(MintError::Config(format!(
+            "max_delegation_depth {max_delegation_depth} exceeds the maximum \
+             lineage depth bound {MAX_LINEAGE_DEPTH}"
+        )));
+    }
+    Ok(max_delegation_depth)
+}
+
+/// Adapts an `&dyn VaidIssuer` to [`LineageResolver`] via
+/// [`VaidIssuer::resolve_delegation_ancestor`], so [`assemble_lineage`] can walk
+/// ancestry through the trait object the mint already holds.
+struct IssuerLineageResolver<'a>(&'a dyn VaidIssuer);
+
+impl LineageResolver for IssuerLineageResolver<'_> {
+    fn resolve_parent(&self, vaid_id: &VaidId) -> ParentResolution {
+        self.0.resolve_delegation_ancestor(vaid_id)
+    }
+}
 
 /// Scope attenuation: is every entry of `child_scope` within `parent`'s scope?
 /// Uses ONLY [`Vaid::is_in_scope`] — the single scope matcher.
@@ -234,30 +275,61 @@ pub struct MintService {
     /// [`crate::authz`].
     authz: Arc<dyn AuthorizationGate>,
     consumed_pop_nonces: Mutex<HashSet<String>>,
+    /// Maximum delegation depth [`MintService::mint_child`] will mint to
+    /// (0.11.0). Validated at construction by
+    /// [`validate_max_delegation_depth`] — never "unlimited".
+    max_delegation_depth: usize,
 }
 
 impl MintService {
-    /// Construct with the default root-mint authorization gate ([`PermitAll`]).
-    /// Convenience for tests and local self-hosting; a production deployment
-    /// should use [`MintService::with_authorization`] to supply a real gate.
+    /// Construct with the default root-mint authorization gate ([`PermitAll`])
+    /// and the default maximum delegation depth
+    /// ([`DEFAULT_MAX_DELEGATION_DEPTH`], i.e. 1). Convenience for tests and
+    /// local self-hosting; a production deployment should use
+    /// [`MintService::with_authorization`] or
+    /// [`MintService::with_max_delegation_depth`] to supply a real gate or a
+    /// non-default depth.
     pub fn new(issuer: Arc<dyn VaidIssuer>, audit: Arc<dyn AuditSink>) -> Self {
         Self::with_authorization(issuer, audit, Arc::new(PermitAll))
     }
 
-    /// Construct with an explicit root-mint [`AuthorizationGate`]. This is the
-    /// seam that closes the "mint_root has no authorization" gap visibly rather
-    /// than silently.
+    /// Construct with an explicit root-mint [`AuthorizationGate`] and the
+    /// default maximum delegation depth ([`DEFAULT_MAX_DELEGATION_DEPTH`]).
+    /// This is the seam that closes the "mint_root has no authorization" gap
+    /// visibly rather than silently.
     pub fn with_authorization(
         issuer: Arc<dyn VaidIssuer>,
         audit: Arc<dyn AuditSink>,
         authz: Arc<dyn AuthorizationGate>,
     ) -> Self {
-        Self {
+        Self::with_max_delegation_depth(issuer, audit, authz, DEFAULT_MAX_DELEGATION_DEPTH)
+            .expect("DEFAULT_MAX_DELEGATION_DEPTH is always a valid depth")
+    }
+
+    /// Construct with an explicit maximum delegation depth (0.11.0): issuer /
+    /// mint policy, not a protocol rule — the reference mint refuses to mint a
+    /// child that would exceed it, but a verifier accepts any well-formed
+    /// chain regardless of what minted it (bounded only by
+    /// [`MAX_LINEAGE_DEPTH`]).
+    ///
+    /// Fails closed on an invalid depth — see [`validate_max_delegation_depth`]
+    /// for exactly which values are rejected; there is no value meaning
+    /// "unlimited". A rejected depth means the mint is not constructed at all,
+    /// so a misconfigured mint never starts minting.
+    pub fn with_max_delegation_depth(
+        issuer: Arc<dyn VaidIssuer>,
+        audit: Arc<dyn AuditSink>,
+        authz: Arc<dyn AuthorizationGate>,
+        max_delegation_depth: usize,
+    ) -> MintResult<Self> {
+        let max_delegation_depth = validate_max_delegation_depth(max_delegation_depth)?;
+        Ok(Self {
             issuer,
             audit,
             authz,
             consumed_pop_nonces: Mutex::new(HashSet::new()),
-        }
+            max_delegation_depth,
+        })
     }
 
     /// Proof-of-possession at mint. Verifies the caller controls the private key
@@ -417,21 +489,41 @@ impl MintService {
         })?;
         let seed = &request.seed;
 
-        // (1b) DEPTH-1 ENFORCEMENT. The authenticated parent must itself be a
-        // ROOT — i.e. `parent.parent_vaid()` must be `None`. Without this, a
-        // caller authenticated as an already-minted child could present itself
-        // as "parent" and mint a grandchild, defeating any one-level delegation
-        // policy a caller layers on top: this is the only layer that actually
+        // (1b) DELEGATION-DEPTH ENFORCEMENT (0.11.0, configurable via
+        // `max_delegation_depth`, default 1). Without this, a caller
+        // authenticated as an already-minted child could present itself as
+        // "parent" and mint a grandchild beyond whatever depth this mint is
+        // configured to allow: this is the only layer that actually
         // authenticates the caller, so the refusal must live here. Checked
-        // before any other attenuation, so an unauthorized depth-2 delegation
-        // never consumes a PoP nonce or reaches the issuer.
-        if parent.parent_vaid().is_some() {
-            return Err(MintError::Unauthorized(
-                "mint_child: the authenticated parent VAID is itself a delegated \
-                 child (parent_vaid is set); delegation is bounded at depth 1, \
-                 a child may not mint a grandchild"
-                    .into(),
-            ));
+        // before any other attenuation, so a refused delegation never consumes
+        // a PoP nonce or reaches the issuer.
+        //
+        // The parent's own depth is the length of its assembled ancestry minus
+        // one (a root assembles to itself alone: depth 0, no resolver calls
+        // needed). Assembly walks through the issuer's lineage map exactly as
+        // revocation does, and inherits the same fail-closed non-durability
+        // caveat: after a process restart that map is empty, an ancestor above
+        // the immediate parent cannot be resolved, assembly is `Incomplete`,
+        // and the mint refuses rather than guess at a depth it cannot prove.
+        let parent_depth =
+            match assemble_lineage(parent, &IssuerLineageResolver(self.issuer.as_ref())) {
+                LineageAssembly::Complete(chain) => chain.len() - 1,
+                LineageAssembly::Incomplete => {
+                    return Err(MintError::Unauthorized(
+                        "mint_child: the authenticated parent's delegation depth could \
+                     not be determined (lineage assembly incomplete) — fail closed"
+                            .into(),
+                    ));
+                }
+            };
+        let child_depth = parent_depth + 1;
+        if child_depth > self.max_delegation_depth {
+            return Err(MintError::Unauthorized(format!(
+                "mint_child: minting this child would reach delegation depth \
+                 {child_depth}, exceeding this mint's configured maximum of {} \
+                 (the authenticated parent is already at depth {parent_depth})",
+                self.max_delegation_depth
+            )));
         }
 
         // (2) Same tenant, grounded in the parent's VERIFIED VAID — never the body.
@@ -1020,43 +1112,168 @@ mod tests {
         assert!(audit.is_empty());
     }
 
-    // ── DEPTH-1 ENFORCEMENT: a caller authenticated as an already-minted CHILD
-    //    must not be able to mint a grandchild by presenting itself as the
-    //    "parent". ──
+    // ── DELEGATION-DEPTH ENFORCEMENT (0.11.0): default 1, configurable. ──
+
+    /// Mint a real root through `svc`, so the issuer's lineage map records it
+    /// as a known root. Depth checking beyond the immediate parent walks that
+    /// map, and a hand-built `Vaid` the issuer never minted resolves as
+    /// `Unknown` there, not as a root — so any test exercising depth > 1 must
+    /// build its whole chain through the mint, never through `parent_doc`.
+    async fn mint_real_root(svc: &MintService, tenant: &str) -> Vaid {
+        let req = MintVaidRequest {
+            seed: VaidSeed {
+                agent_class: "root".into(),
+                version: "1.0.0".into(),
+                tenant_id: tenant.into(),
+                parent_vaid: None,
+                scope_boundary: vec!["data.aifactory".into()],
+                capability_set: vec!["read".into()],
+                public_key_der: None,
+            },
+            pop: None,
+        };
+        svc.mint_root(req).await.unwrap().vaid
+    }
+
+    /// Mint a real child of `parent` through `svc`, so the issuer's lineage map
+    /// actually records the hop.
+    async fn mint_real_child(svc: &MintService, parent: &Vaid, nonce: &str) -> Vaid {
+        let req = signed_child(parent, vec!["data.aifactory"], vec!["read"], nonce);
+        svc.mint_child(req, Some(parent)).await.unwrap().vaid
+    }
+
     #[tokio::test]
-    async fn mint_child_with_a_child_as_parent_is_denied() {
-        let (svc, audit) = fixture();
-        let root = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
-        // Build a document shaped exactly like what mint_child would have
-        // issued for a child of `root`: parent_vaid is Some.
-        let child_as_parent = Vaid::with_lineage(
-            AgentId::new(),
-            AgentClass::new("child"),
-            "1.0.0".into(),
-            TenantId::new("aifactory"),
-            Utc::now(),
-            Utc::now() + chrono::Duration::hours(1),
-            vec![],
-            vec![],
-            Some(root.vaid_id()),
-            vec!["data.aifactory".into()],
-            "lineage".into(),
-            vec!["read".into()],
-            "vaid.example".into(),
-            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
-        );
+    async fn default_depth_mints_a_root_child_but_refuses_a_grandchild() {
+        let (svc, audit) = fixture(); // default max_delegation_depth == 1
+        let root = mint_real_root(&svc, "aifactory").await;
+
+        // Root (depth 0) -> child (depth 1): allowed.
+        let child = mint_real_child(&svc, &root, "root-to-child").await;
+        let events_after_child = audit.len();
+        assert_eq!(events_after_child, 2); // root mint + child mint
+
+        // Child (depth 1) -> grandchild (depth 2): refused — exceeds the
+        // default max_delegation_depth of 1.
         let req = signed_child(
-            &child_as_parent,
+            &child,
             vec!["data.aifactory"],
             vec!["read"],
-            "depth-2-attempt",
+            "child-to-grandchild",
         );
-        let err = svc
-            .mint_child(req, Some(&child_as_parent))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("bounded at depth"), "got: {err}");
-        assert!(audit.is_empty(), "no grandchild minted → no audit");
+        let err = svc.mint_child(req, Some(&child)).await.unwrap_err();
+        assert!(err.to_string().contains("delegation depth"), "got: {err}");
+        assert_eq!(audit.len(), events_after_child, "no grandchild minted");
+    }
+
+    #[tokio::test]
+    async fn a_root_child_is_always_allowed_regardless_of_configured_depth() {
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        let audit = Arc::new(InMemoryAudit::new());
+        let svc = MintService::with_max_delegation_depth(
+            issuer,
+            audit,
+            Arc::new(crate::authz::PermitAll),
+            1,
+        )
+        .unwrap();
+        let root = mint_real_root(&svc, "aifactory").await;
+        let child = mint_real_child(&svc, &root, "root-to-child-explicit-1").await;
+        assert!(child.parent_vaid() == Some(root.vaid_id()));
+    }
+
+    #[tokio::test]
+    async fn depth_2_mints_a_grandchild_but_refuses_a_great_grandchild() {
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        let audit = Arc::new(InMemoryAudit::new());
+        let svc = MintService::with_max_delegation_depth(
+            issuer,
+            audit,
+            Arc::new(crate::authz::PermitAll),
+            2,
+        )
+        .unwrap();
+        let root = mint_real_root(&svc, "aifactory").await;
+        let child = mint_real_child(&svc, &root, "depth2-root-to-child").await;
+        // Grandchild (depth 2): allowed under max_delegation_depth = 2.
+        let grandchild = mint_real_child(&svc, &child, "depth2-child-to-grandchild").await;
+        assert_eq!(grandchild.parent_vaid(), Some(child.vaid_id()));
+
+        // Great-grandchild (depth 3): refused.
+        let req = signed_child(
+            &grandchild,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "depth2-grandchild-to-greatgrandchild",
+        );
+        let err = svc.mint_child(req, Some(&grandchild)).await.unwrap_err();
+        assert!(err.to_string().contains("delegation depth"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn depth_refusal_happens_before_any_lineage_write() {
+        // A depth-exceeding mint_child must be refused before the issuer does
+        // any key work or lineage write — proven the same way the PoP-nonce
+        // ordering tests do: the audit sink stays empty and the parent's own
+        // lineage record is unaffected.
+        let (svc, audit) = fixture();
+        let root = mint_real_root(&svc, "aifactory").await;
+        let child = mint_real_child(&svc, &root, "before-write-root-to-child").await;
+        let events_before = audit.len();
+
+        let req = signed_child(
+            &child,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "before-write-child-to-grandchild",
+        );
+        assert!(svc.mint_child(req, Some(&child)).await.is_err());
+        assert_eq!(
+            audit.len(),
+            events_before,
+            "a refused mint must not audit a mint"
+        );
+    }
+
+    // ── max_delegation_depth VALIDATION: fails closed at construction, never
+    //    "unlimited". ──
+
+    #[test]
+    fn max_delegation_depth_zero_is_rejected() {
+        assert!(validate_max_delegation_depth(0).is_err());
+    }
+
+    #[test]
+    fn max_delegation_depth_above_the_lineage_bound_is_rejected() {
+        assert!(validate_max_delegation_depth(MAX_LINEAGE_DEPTH + 1).is_err());
+    }
+
+    #[test]
+    fn max_delegation_depth_at_the_lineage_bound_is_accepted() {
+        assert_eq!(
+            validate_max_delegation_depth(MAX_LINEAGE_DEPTH).unwrap(),
+            MAX_LINEAGE_DEPTH
+        );
+    }
+
+    #[test]
+    fn max_delegation_depth_one_is_accepted() {
+        assert_eq!(validate_max_delegation_depth(1).unwrap(), 1);
+    }
+
+    #[test]
+    fn constructing_a_mint_with_an_invalid_depth_fails_closed() {
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        let audit = Arc::new(InMemoryAudit::new());
+        let result = MintService::with_max_delegation_depth(
+            issuer,
+            audit,
+            Arc::new(crate::authz::PermitAll),
+            0,
+        );
+        match result {
+            Err(err) => assert!(matches!(err, MintError::Config(_)), "got: {err}"),
+            Ok(_) => panic!("expected a Config error for max_delegation_depth = 0"),
+        }
     }
 
     #[tokio::test]
@@ -1375,6 +1592,10 @@ mod tests {
 
             fn verify_vaid(&self, vaid: &Vaid) -> bool {
                 self.0.verify_vaid(vaid)
+            }
+
+            fn resolve_delegation_ancestor(&self, vaid_id: &VaidId) -> ParentResolution {
+                self.0.resolve_delegation_ancestor(vaid_id)
             }
         }
 
