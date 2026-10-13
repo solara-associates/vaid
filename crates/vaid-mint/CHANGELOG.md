@@ -3,7 +3,7 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.1] — 2026-10-13
 
 ### Fixed — `mint_child` enforces delegation depth 1 (SECURITY)
 

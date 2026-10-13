@@ -11,11 +11,11 @@ the Rust crate is at 0.4.2, and that is correct rather than drift. Byte-identity
 between the three is asserted by the frozen conformance vectors, never by the
 version number.
 
-## [Unreleased]
+## [0.10.1] — 2026-10-13
 
 ### Fixed — `mintChild` enforces delegation depth 1 (SECURITY)
 
-Same defect and fix as the Rust crate's `[Unreleased]` entry: `mintChild`
+Same defect and fix as the Rust crate's `[0.10.1]` entry: `mintChild`
 never checked whether the authenticated parent was itself already a
 delegated child, so a holder of a validly-minted child VAID could mint a
 grandchild. Refuse `mintChild` whenever `parent.parent_vaid` is not
