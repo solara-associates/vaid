@@ -1510,4 +1510,185 @@ mod tests {
             json!(parent.expires_at_as_presented())
         );
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Fallible lineage writes (0.11.0) — a durable store (a real database,
+    // say) implementing ONLY `try_record`, the new fallible counterpart of
+    // `LineageStore::record`. See `crate::revocation::LineageStore`.
+    // ════════════════════════════════════════════════════════════════════
+
+    use crate::revocation::{
+        InMemoryRevocationList, LineageResolver, LineageStore, LineageWriteError, ParentResolution,
+        RevocationBackend,
+    };
+
+    /// A lineage store whose write always fails — stands in for a real database
+    /// that is down. Implements ONLY `try_record`; never `record`, the thing a
+    /// fallible store cannot honestly provide.
+    struct FailingLineageStore;
+
+    impl LineageResolver for FailingLineageStore {
+        fn resolve_parent(&self, _vaid_id: &VaidId) -> ParentResolution {
+            ParentResolution::Unknown
+        }
+    }
+
+    impl LineageStore for FailingLineageStore {
+        fn try_record(
+            &self,
+            _vaid_id: VaidId,
+            _parent: Option<VaidId>,
+        ) -> Result<(), LineageWriteError> {
+            Err(LineageWriteError("simulated database write failure".into()))
+        }
+    }
+
+    /// A lineage store whose write always succeeds, implementing ONLY
+    /// `try_record` and delegating to an inner [`InMemoryLineageStore`] — the
+    /// shape a real, working database-backed store takes. Proves the new
+    /// fallible-only authoring path mints exactly like the infallible default.
+    struct SucceedingFallibleLineageStore(crate::revocation::InMemoryLineageStore);
+
+    impl LineageResolver for SucceedingFallibleLineageStore {
+        fn resolve_parent(&self, vaid_id: &VaidId) -> ParentResolution {
+            self.0.resolve_parent(vaid_id)
+        }
+    }
+
+    impl LineageStore for SucceedingFallibleLineageStore {
+        fn try_record(
+            &self,
+            vaid_id: VaidId,
+            parent: Option<VaidId>,
+        ) -> Result<(), LineageWriteError> {
+            self.0.record(vaid_id, parent);
+            Ok(())
+        }
+    }
+
+    /// An issuer whose lineage half is `store`. The revocation half is the
+    /// pre-0.9.0 vouching posture, asked for by name — these tests are about the
+    /// lineage WRITE, not revocation, and a bare issuer's absent revocation store
+    /// would reject every mint before the write under test is ever reached.
+    fn issuer_with_lineage_store(store: Arc<dyn LineageStore>) -> ReferenceIssuer {
+        ReferenceIssuer::ephemeral(1, "vaid.example")
+            .unwrap()
+            .with_revocation_backend(RevocationBackend::new(
+                Arc::new(InMemoryRevocationList::assume_nothing_revoked()),
+                store,
+            ))
+    }
+
+    fn fixture_with_lineage_store(
+        store: Arc<dyn LineageStore>,
+    ) -> (MintService, Arc<InMemoryAudit>) {
+        let audit = Arc::new(InMemoryAudit::new());
+        let issuer = Arc::new(issuer_with_lineage_store(store));
+        (MintService::new(issuer, audit.clone()), audit)
+    }
+
+    /// A failed durable lineage write must fail `mint_root` closed with
+    /// `MintError::Lineage`, never return a VAID whose lineage went unrecorded,
+    /// and never reach the audit sink.
+    #[tokio::test]
+    async fn root_mint_fails_closed_when_lineage_write_fails() {
+        let (svc, audit) = fixture_with_lineage_store(Arc::new(FailingLineageStore));
+
+        let err = svc
+            .mint_root(MintVaidRequest {
+                seed: VaidSeed {
+                    agent_class: "researcher".into(),
+                    version: "1.0.0".into(),
+                    tenant_id: "acme".into(),
+                    parent_vaid: None,
+                    scope_boundary: vec![],
+                    capability_set: vec![],
+                    public_key_der: None,
+                },
+                pop: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, MintError::Lineage(_)), "got: {err:?}");
+        assert!(
+            err.to_string().contains("simulated database write failure"),
+            "got: {err}"
+        );
+        assert!(
+            audit.is_empty(),
+            "a mint whose lineage write failed must never reach the audit sink"
+        );
+    }
+
+    /// Same property for `mint_child` — the attenuated-delegation path.
+    #[tokio::test]
+    async fn child_mint_fails_closed_when_lineage_write_fails() {
+        let (svc, audit) = fixture_with_lineage_store(Arc::new(FailingLineageStore));
+        let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read"]);
+        let req = signed_child(&parent, vec!["data.aifactory.sub"], vec!["read"], "fail-1");
+
+        let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
+
+        assert!(matches!(err, MintError::Lineage(_)), "got: {err:?}");
+        assert!(
+            audit.is_empty(),
+            "a mint whose lineage write failed must never reach the audit sink"
+        );
+    }
+
+    /// A store that only implements `try_record` — never `record` — mints
+    /// exactly as the infallible default does, when the write succeeds.
+    #[tokio::test]
+    async fn a_store_implementing_only_try_record_mints_normally() {
+        let store = Arc::new(SucceedingFallibleLineageStore(
+            crate::revocation::InMemoryLineageStore::new(),
+        ));
+        let (svc, audit) = fixture_with_lineage_store(store);
+        let parent = parent_doc("aifactory", vec!["data.aifactory"], vec!["read", "write"]);
+        let req = signed_child(
+            &parent,
+            vec!["data.aifactory.sub"],
+            vec!["read"],
+            "ok-fallible",
+        );
+
+        let resp = svc.mint_child(req, Some(&parent)).await.unwrap();
+
+        assert_eq!(resp.vaid.parent_vaid(), Some(parent.vaid_id()));
+        assert_eq!(audit.entries()[0].details["delegated"], json!(true));
+    }
+
+    /// The child-expiry clamp (vaid#79) still applies when lineage is recorded
+    /// through a fallible, `try_record`-only store, not just the infallible
+    /// default — the clamp lives in `build_and_sign_vaid`, upstream of the write,
+    /// and must not have been disturbed by it.
+    #[tokio::test]
+    async fn expiry_clamp_still_applies_through_a_fallible_lineage_store() {
+        let store = Arc::new(SucceedingFallibleLineageStore(
+            crate::revocation::InMemoryLineageStore::new(),
+        ));
+        let (svc, _) = fixture_with_lineage_store(store);
+        let parent = parent_expiring_in(600);
+
+        let req = signed_child(&parent, vec!["data.x"], vec!["read"], "clamp-fallible");
+        let child = svc.mint_child(req, Some(&parent)).await.unwrap().vaid;
+
+        assert_eq!(
+            child.expires_at_as_presented(),
+            parent.expires_at_as_presented(),
+            "the clamp must still bind the child to the parent's expiry"
+        );
+    }
+
+    /// Calling `record` directly on a store that only implements `try_record`
+    /// panics loudly rather than silently losing the write — the default
+    /// `record` body routes through `try_record`. This is the behaviour for a
+    /// caller that bypasses `MintService`/`ReferenceIssuer`; the mint itself
+    /// never calls `record`, only `try_record` (see the tests above).
+    #[test]
+    #[should_panic(expected = "simulated database write failure")]
+    fn record_on_a_failing_store_panics_rather_than_silently_dropping_the_write() {
+        FailingLineageStore.record(VaidId::new(), None);
+    }
 }

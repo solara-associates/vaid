@@ -511,7 +511,13 @@ impl ReferenceIssuer {
         // Record EVERY mint — roots as `None`, children as `Some(parent)` — so the
         // resolver can distinguish a known root from an id it has never seen. This
         // is the bookkeeping spec R.4.2 depends on; it changes no document bytes.
-        self.lineage.record(vaid.vaid_id(), parent_vaid);
+        //
+        // `try_record` (0.11.0), not `record`: a durable store's write can fail,
+        // and a failure here must withhold the signed document rather than return
+        // a VAID whose lineage was never recorded.
+        self.lineage
+            .try_record(vaid.vaid_id(), parent_vaid)
+            .map_err(|e| MintError::Lineage(e.to_string()))?;
 
         Ok(vaid)
     }

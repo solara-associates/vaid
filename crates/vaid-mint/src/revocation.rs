@@ -295,21 +295,75 @@ impl RevocationCheck for InMemoryRevocationList {
 // check does not perform lookups and is not given the means to." A pair of
 // `Arc`s requires both without handing either one the other's job.
 
+/// A durable lineage write failed (0.11.0). Carries only a human-readable
+/// message; [`crate::issuer::ReferenceIssuer`] turns this into
+/// [`crate::error::MintError::Lineage`] and withholds the VAID it was about to
+/// return — see [`LineageStore::try_record`].
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("lineage write failed: {0}")]
+pub struct LineageWriteError(pub String);
+
 /// The write half of the lineage resolver (spec R.4.2).
 ///
 /// [`LineageResolver`] is read-only, and a read-only durable resolver is inert:
 /// nothing would ever populate it, because the issuer records every mint into
-/// its own map. A durable resolver therefore needs [`record`](Self::record) —
-/// this is the method whose absence made durable lineage unimplementable from
+/// its own map. A durable resolver therefore needs a write method — this is
+/// the capability whose absence made durable lineage unimplementable from
 /// outside the crate.
 ///
 /// Implementations MUST record roots as `None` rather than omitting them. An
 /// unrecorded root is [`ParentResolution::Unknown`], and a store that omits
 /// roots turns every root VAID into `Unavailable` at verification.
+///
+/// ## Two methods, one obligation (0.11.0)
+///
+/// [`record`](Self::record) is infallible by signature, which is honest for a
+/// store like [`InMemoryLineageStore`] whose write cannot fail, but not for one
+/// backed by a real database connection — such a store has nothing to return
+/// on failure and could previously only fail open (claim success and lose the
+/// record) or panic. [`try_record`](Self::try_record) is the fallible
+/// counterpart: implement it for a store whose write can fail, and the mint
+/// (via [`crate::issuer::ReferenceIssuer`]) calls it, turning a failure into
+/// [`crate::error::MintError::Lineage`] — the mint fails closed, and never
+/// returns a VAID whose lineage was not recorded.
+///
+/// Each method defaults to the other, so an implementation need only provide
+/// ONE: a store whose write is honestly infallible implements `record`, as
+/// before; a store whose write can fail implements `try_record`. `record`'s
+/// default panics if the underlying `try_record` fails — a loud failure for
+/// the rare direct caller of `record` that bypasses the mint's `try_record`
+/// path, rather than a silently lost lineage write.
 pub trait LineageStore: LineageResolver + Send + Sync {
     /// Record one mint: `parent` is `Some(id)` for a child and `None` for a
     /// root. Called on every successful mint, before the document is returned.
-    fn record(&self, vaid_id: VaidId, parent: Option<VaidId>);
+    ///
+    /// Implement this for a store whose write is honestly infallible (an
+    /// in-memory map, say). The default routes through
+    /// [`try_record`](Self::try_record) and panics if it fails.
+    fn record(&self, vaid_id: VaidId, parent: Option<VaidId>) {
+        if let Err(e) = self.try_record(vaid_id, parent) {
+            panic!(
+                "LineageStore::record called directly on a store whose write failed \
+                 ({e}) — implement try_record for a fallible store and reach it \
+                 through MintService/ReferenceIssuer, which fails the mint closed \
+                 on the error instead of panicking"
+            );
+        }
+    }
+
+    /// Fallible record (0.11.0): the write half of a durable lineage store
+    /// whose write can fail — a real database connection, say.
+    /// [`crate::issuer::ReferenceIssuer`] calls this, not `record`, and
+    /// surfaces a failure as [`crate::error::MintError::Lineage`] before any
+    /// VAID is returned.
+    ///
+    /// The default delegates to [`record`](Self::record) and always succeeds
+    /// — this preserves today's behaviour for every implementation that only
+    /// provides `record`.
+    fn try_record(&self, vaid_id: VaidId, parent: Option<VaidId>) -> Result<(), LineageWriteError> {
+        self.record(vaid_id, parent);
+        Ok(())
+    }
 }
 
 /// The reference lineage store: an in-process map, non-durable, empty after
