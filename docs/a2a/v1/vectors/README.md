@@ -124,6 +124,18 @@ and both careless verifiers wrongly ALLOW; only the real verifier reaches the
 vector's recorded verdict. Without that, "the vector passes the reference
 verifier" would be the only evidence either vector is discriminating at all.
 
+## Implementations that agree
+
+Outside implementers who have run this vector set against their own
+verifier and agreed to be listed:
+
+| implementation | vector set / version | result | report |
+|---|---|---|---|
+| [giskard09/argentum-core](https://github.com/giskard09/argentum-core) | 0.1.1, then main / 0.2.0 | 12/12, then 14/14 (all verdicts and error codes matching) | [a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6125938510) |
+
+If you run these vectors against your own implementation, open a PR or
+issue with your results and we will add you here.
+
 ## Reproducing
 
 ```sh
