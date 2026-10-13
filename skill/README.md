@@ -193,10 +193,10 @@ with the mutation that must break it.
 - Trust anchor — <https://solara.associates/.well-known/synthera-kernel-keys.json>
 - SDKs — `vaid-mint`, `vaid-pop`, `vaid-client` on crates.io, PyPI and npm
 
-**On PyPI, pin the minor.** Cargo's `"0.9"` and npm's `^0.9.0` both pin the minor on
+**On PyPI, pin the minor.** Cargo's `"0.9"` and npm's `^0.10.0` both pin the minor on
 a `0.x` release; pip has no equivalent convention, so a bare `vaid-mint` or
 `vaid-mint>=` anything resolves straight onto the next breaking release. Use
-`pip install 'vaid-mint~=0.9.0'` or `'vaid-mint==0.9.0'`. `vaid-mint` 0.9.0 changed
+`pip install 'vaid-mint~=0.10.0'` or `'vaid-mint==0.10.0'`. `vaid-mint` 0.9.0 changed
 the default revocation posture from fail-open to fail-closed
 (`GHSA-p336-fc9m-vcq4`), which is the kind of change an unpinned install crosses in
 silence.

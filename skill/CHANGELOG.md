@@ -2,6 +2,41 @@
 
 All notable changes to `vaid-skill`. This project follows semantic versioning.
 
+## 0.2.0 — 2026-10-13
+
+### Changed (breaking, pre-1.0)
+
+- **`vaid-mint` dependency bumped to `^0.10.0`.** 0.10.0 ships typed
+  `scope_boundary` entries (ADR-0009, spec S.8): `{ "kind": "prefix", "value": "…" }`
+  rather than a bare string, under a new `sig_version` 4. A v3 credential minted by
+  an older build of this skill, or by anything else on `vaid-mint` < 0.10.0, is no
+  longer accepted by `vaid verify` — `sig_version` is checked first and a v3
+  document fails the signature-scheme check outright. This is the correct refusal,
+  not a regression: a v4 verifier reading a v3 bare-string boundary as a v4 typed
+  one would be guessing at a shape the document never committed to.
+
+- **`vaid mint --scope` now sends typed entries.** `--scope a,b` becomes
+  `[prefixEntry('a'), prefixEntry('b')]` via vaid-mint's own helper, never a bare
+  string. `vaid mint`'s display and `--help` text are unchanged in the common case
+  — a `prefix` entry still prints as its bare value.
+
+- **`vaid verify` now refuses an unrecognised scope-boundary kind.** A new `scope`
+  finding checks every entry's `kind` against what this build recognises
+  (`boundaryIsEvaluable`, S.10) and fails closed: a well-formed but unrecognised
+  kind is reported `REJECTED` with its own summary, never silently displayed as
+  though it were an ordinary `prefix` entry. This did not exist before 0.10.0
+  because no verifier here had a way to mint a document with such an entry.
+
+### Not changed
+
+`formatBoundary()`'s bare-string display branch is kept, deliberately — a decision
+#116 asked to be recorded rather than left an oversight. `vaid mint` only ever
+calls it on the document it just minted, which is always typed now, so today's one
+call site cannot actually feed it a bare string. It is kept anyway because it costs
+nothing and the alternative — printing `[object Object]` — is strictly worse the
+day a second call site (for example, showing scope in `vaid verify`'s output) reuses
+this function against an externally-supplied document.
+
 ## 0.1.3 — 2026-08-10
 
 ### Fixed
