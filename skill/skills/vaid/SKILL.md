@@ -170,12 +170,12 @@ verification, session-only suits a page a stranger opens once.
   <https://solara.associates/.well-known/synthera-kernel-keys.json>
 - SDKs: `vaid-mint`, `vaid-pop`, `vaid-client` on crates.io, PyPI and npm.
 
-  **On PyPI, pin the minor.** Cargo reads `"0.9"` and npm reads `^0.9.0` as pinning
+  **On PyPI, pin the minor.** Cargo reads `"0.9"` and npm reads `^0.10.0` as pinning
   the minor, so neither crosses a breaking `0.x` release on its own. pip has no
   equivalent convention: a bare `vaid-mint`, or `vaid-mint>=` anything, resolves
   straight onto the next breaking release without telling you, and these packages do
-  make breaking changes in `0.x` minors. Use `pip install 'vaid-mint~=0.9.0'` or
-  `'vaid-mint==0.9.0'`.
+  make breaking changes in `0.x` minors. Use `pip install 'vaid-mint~=0.10.0'` or
+  `'vaid-mint==0.10.0'`.
 
   This is not stylistic. `vaid-mint` 0.9.0 changes the default revocation posture
   from fail-open to fail-closed (`GHSA-p336-fc9m-vcq4`): a bare `ReferenceIssuer`

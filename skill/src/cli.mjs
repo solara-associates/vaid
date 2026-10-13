@@ -21,6 +21,7 @@ import {
   ReferenceIssuer,
   kernelKeyThumbprint,
   isSpecialUseTrustDomain,
+  prefixEntry,
 } from 'vaid-mint';
 
 import { packEnvelope, parseEnvelope } from './envelope.mjs';
@@ -30,19 +31,20 @@ import { Finding, Headline, loadAnchor, verifyEnvelope } from './verify-core.mjs
 /**
  * Render a `scope_boundary` for a human.
  *
- * Handles BOTH wire forms deliberately, and this is display rather than
- * verification, so that is not a legacy acceptance of anything. This package
- * installs the PUBLISHED SDK (release-map.json), so it must render a v3 bare-string
- * boundary while that is what the registry serves and a v4 typed entry once
- * ADR-0009 ships. Hard-coding either one prints `[object Object]` or `undefined` on
- * the other side of that release, over a credential the user is being asked to
- * read before sending.
+ * `mint` only ever constructs typed `prefix` entries now (vaid-mint 0.10.0,
+ * ADR-0009), and the one call site below feeds this only the document it just
+ * minted — so the bare-string branch cannot be reached through any path in this
+ * CLI today. It stays anyway (#116: a recorded decision, not an oversight):
+ * keeping it costs nothing, and the day a second call site reuses this function
+ * against an externally-supplied document — `vaid verify` showing scope in its
+ * output, say — a v3 credential would otherwise print `[object Object]` instead
+ * of its value.
  *
  * A `prefix` entry prints as its value, so the common case reads exactly as the
  * bare-string form did. Any other kind prints as `kind=value`: a credential the
  * SDK cannot evaluate must not be displayed as though it were ordinary, because
- * `vaid verify` will refuse it as `unknown_scope_kind` and the display has to be
- * legible enough for a reader to see why.
+ * `vaid verify` refuses it as `unknown_scope_kind` (checked in verify-core.mjs)
+ * and the display has to be legible enough for a reader to see why.
  */
 function formatBoundary(boundary) {
   if (!boundary?.length) return dim('(none)');
@@ -178,12 +180,9 @@ async function cmdMint(flags) {
     version: String(flags.version ?? '1.0.0'),
     tenantId: String(flags.tenant ?? 'local'),
     // `--scope` is a comma-separated list of resource prefixes, which is the one
-    // boundary kind ADR-0009 S.8 defines. It is passed to the SDK in the SDK's own
-    // form, and this package installs the PUBLISHED SDK rather than this repo's
-    // sources on purpose (release-map.json), so it cannot send typed entries until
-    // the typed SDK is on the registry. See BACKLOG: this line moves to
-    // `.map(prefixEntry)` in the same change that bumps the dependency.
-    scopeBoundary: list(flags.scope),
+    // boundary kind ADR-0009 S.8 defines. Each one becomes a typed `prefix` entry
+    // via vaid-mint's own helper, never a bare string — v4's wire form.
+    scopeBoundary: list(flags.scope).map(prefixEntry),
     capabilitySet: list(flags.caps),
   };
 

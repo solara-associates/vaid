@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { InMemoryAudit, MintService, ReferenceIssuer, kernelKeyThumbprint } from 'vaid-mint';
+import { InMemoryAudit, MintService, ReferenceIssuer, kernelKeyThumbprint, prefixEntry } from 'vaid-mint';
 import { packEnvelope, parseEnvelope, EnvelopeError } from '../src/envelope.mjs';
 import { mintAttenuatedChild } from '../src/delegate.mjs';
 import { Finding, Headline, loadAnchor, verifyEnvelope } from '../src/verify-core.mjs';
@@ -43,7 +43,7 @@ async function mintRoot(issuer, over = {}) {
       agentClass: 'orchestrator',
       version: '1.0.0',
       tenantId: 'acme',
-      scopeBoundary: ['data.acme'],
+      scopeBoundary: [prefixEntry('data.acme')],
       capabilitySet: ['read', 'write'],
       ...over,
     },
@@ -105,7 +105,7 @@ test('CONTROL — tampering with any signed field is rejected', async () => {
   // One case per signed field a forger would actually want to change.
   const mutations = {
     'widened capabilities': { capability_set: ['read', 'write', 'admin'] },
-    'widened scope': { scope_boundary: ['data.acme', 'data.everyone'] },
+    'widened scope': { scope_boundary: [prefixEntry('data.acme'), prefixEntry('data.everyone')] },
     'a different tenant': { tenant_id: 'victim' },
     'a longer life': { expires_at: '2099-01-01T00:00:00Z' },
     'a different agent class': { agent_class: 'root' },
@@ -175,7 +175,7 @@ test('a presented chain verifies, and the same leaf alone does not', async () =>
     agentClass: 'worker',
     version: '1.0.0',
     tenantId: 'acme',
-    scopeBoundary: ['data.acme'],
+    scopeBoundary: [prefixEntry('data.acme')],
     capabilitySet: ['read'],
   });
   const anchor = anchorFor(issuer);
@@ -199,10 +199,10 @@ test('CONTROL — an incomplete chain is Fail, never quietly accepted', async ()
   const svc = new MintService(issuer, new InMemoryAudit());
   const root = await mintRoot(issuer);
   const { vaid: mid } = await mintAttenuatedChild(svc, root, {
-    agentClass: 'mid', version: '1.0.0', tenantId: 'acme', scopeBoundary: ['data.acme'], capabilitySet: ['read'],
+    agentClass: 'mid', version: '1.0.0', tenantId: 'acme', scopeBoundary: [prefixEntry('data.acme')], capabilitySet: ['read'],
   });
   const { vaid: leaf } = await mintAttenuatedChild(svc, mid, {
-    agentClass: 'leaf', version: '1.0.0', tenantId: 'acme', scopeBoundary: ['data.acme'], capabilitySet: ['read'],
+    agentClass: 'leaf', version: '1.0.0', tenantId: 'acme', scopeBoundary: [prefixEntry('data.acme')], capabilitySet: ['read'],
   });
 
   // The middle document is presented; the root is not, so the chain cannot reach
@@ -213,9 +213,89 @@ test('CONTROL — an incomplete chain is Fail, never quietly accepted', async ()
   assert.equal(r.headline, Headline.Rejected);
 });
 
+// --- typed scope_boundary (ADR-0009, vaid-mint 0.10.0) -----------------------
+
+test('a typed scope boundary round-trips through mint, the envelope and verify', async () => {
+  const issuer = ReferenceIssuer.fromSeed(new Uint8Array(32).fill(10), 24, 'agents.acme.com');
+  const vaid = await mintRoot(issuer, { scopeBoundary: [prefixEntry('data.acme'), prefixEntry('data.shared')] });
+
+  // The envelope carries the typed entries byte-for-byte; nothing downstream
+  // flattens them back to bare strings.
+  const parsed = parseEnvelope(packEnvelope(vaid));
+  assert.deepEqual(parsed.vaid.scope_boundary, [prefixEntry('data.acme'), prefixEntry('data.shared')]);
+
+  const r = verifyEnvelope(packEnvelope(vaid), anchorFor(issuer), new Date(vaid.issued_at));
+  assert.equal(findingFor(r, 'scope').state, Finding.Pass);
+  assert.equal(r.headline, Headline.Valid);
+});
+
+test('CONTROL — a malformed scope boundary entry is refused at mint, never signed', async () => {
+  const issuer = ReferenceIssuer.fromSeed(new Uint8Array(32).fill(11), 24, 'agents.acme.com');
+  const svc = new MintService(issuer, new InMemoryAudit());
+
+  for (const malformed of [
+    ['data.acme'], // the v3 bare-string form — no longer a well-formed entry
+    [{ kind: 'prefix', value: 42 }], // wrong value type for its own kind
+    [{ kind: 'prefix', value: 'x', extra: 1 }], // an entry may carry no other member
+  ]) {
+    await assert.rejects(
+      () =>
+        svc.mintRoot({
+          seed: {
+            agentClass: 'orchestrator',
+            version: '1.0.0',
+            tenantId: 'acme',
+            scopeBoundary: malformed,
+            capabilitySet: [],
+          },
+        }),
+      /well-formed S\.8 boundary/,
+      `${JSON.stringify(malformed)} was not refused at mint`,
+    );
+  }
+});
+
+test('CONTROL — an unknown scope kind is refused at verify, never silently shown as a prefix', async () => {
+  // Forward compatibility means mint accepts a kind it does not itself recognise
+  // (ADR-0009): a future kind must be mintable by an old mint without it being
+  // stripped. Refusal belongs at verify (S.10), which is what this asserts.
+  const issuer = ReferenceIssuer.fromSeed(new Uint8Array(32).fill(12), 24, 'agents.acme.com');
+  const svc = new MintService(issuer, new InMemoryAudit());
+  const { vaid } = await svc.mintRoot({
+    seed: {
+      agentClass: 'orchestrator',
+      version: '1.0.0',
+      tenantId: 'acme',
+      scopeBoundary: [{ kind: 'future_kind', value: 'data.acme' }],
+      capabilitySet: [],
+    },
+  });
+
+  const r = verifyEnvelope(packEnvelope(vaid), anchorFor(issuer), new Date(vaid.issued_at));
+  // Authentic — the signature and every structural check pass; only the scope
+  // kind is unrecognised, which is a narrower and later refusal than a forgery.
+  assert.equal(findingFor(r, 'authenticity').state, Finding.Pass);
+  assert.equal(findingFor(r, 'scope').state, Finding.Fail);
+  assert.match(findingFor(r, 'scope').detail, /unknown_scope_kind/);
+  assert.equal(r.headline, Headline.Rejected);
+});
+
 // --- the real production document -------------------------------------------
 
-test('a real substrate-minted VAID verifies against the published anchor', () => {
+// BLOCKED on the production substrate adopting vaid-mint >= 0.10.0 (ADR-0009,
+// sig_version 4). This fixture is sig_version 3, frozen from a real GET
+// /operator/vaid capture. vaid-mint 0.10.0 refuses any document whose
+// sig_version is not the current one (unsupported_sig_version), by design — a
+// v3 document was never a commitment to a v4 shape. That refusal is correct
+// against a FORGERY; against this fixture it almost certainly means the
+// production substrate has not yet been redeployed on vaid-mint 0.10.0 and is
+// still minting v3 documents, which this skill (now on vaid-mint ^0.10.0,
+// closes #116) will reject as `unsupported_sig_version` rather than accept.
+// See vaid#138 for the resolution: either confirm production is
+// upgraded and refresh this fixture with a genuine v4 capture, or hold
+// `vaid-skill` 0.2.0's publish until it is. Do not weaken this check to make
+// the skip disappear — the gap is real; only the production redeploy closes it.
+test('a real substrate-minted VAID verifies against the published anchor', { skip: 'BLOCKED on production substrate adopting vaid-mint >= 0.10.0 — fixture is sig_version 3, see comment above and vaid#138' }, () => {
   // Not a fixture: a document minted by the deployed production substrate and
   // fetched from GET /operator/vaid, checked against the anchor this package
   // ships. If this breaks, third-party verification of production is broken.

@@ -18,9 +18,10 @@ export VAID_HOME
 VAID_HOME="$(mktemp -d)"
 trap 'rm -rf "$VAID_HOME"' EXIT
 
-pass=0; fail=0
-ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
-bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }
+pass=0; fail=0; blocked=0
+ok()      { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
+bad()     { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }
+skipped() { printf '  \033[33m·\033[0m %s — \033[33mBLOCKED\033[0m: %s\n' "$1" "$2"; blocked=$((blocked+1)); }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected $3, got $2)"; fi; }
 
 printf '\n\033[1mCONTROLS — these must fail before any pass means anything\033[0m\n\n'
@@ -34,15 +35,16 @@ $VAID verify 'vaid1:aGVsbG8' >/dev/null 2>&1
 check "a vaid1: token holding junk is refused" "$?" "4"
 
 # A real production VAID, minted by the deployed substrate, checked against the
-# anchor this package ships. It is a year past its one-hour life, so the honest
-# answer is EXPIRED — exit 1, not exit 0.
-$VAID verify test/vectors/production-vaid.json >/dev/null 2>&1
-check "the real substrate VAID is EXPIRED today (exit 1)" "$?" "1"
-
-# ...and at its own issue time it is accepted. Same bytes, same anchor, different
-# clock: proof the exit code above is about expiry and not about failure to parse.
-$VAID verify test/vectors/production-vaid.json --at "$(node -p "require('./test/vectors/production-vaid.json').issued_at")" >/dev/null 2>&1
-check "the same document at its issue time is accepted (exit 0)" "$?" "0"
+# anchor this package ships. It is `sig_version` 3, frozen before the substrate
+# (almost certainly) adopted vaid-mint 0.10.0's sig_version 4 (ADR-0009) — see
+# vaid#138. vaid-mint 0.10.0 refuses ANY non-current sig_version outright
+# (unsupported_sig_version), so BOTH checks below are blocked, not just the
+# second: the first still happens to exit 1 today, but for `Rejected`, not
+# `Expired` — the exit code only coincides with what it used to mean, which is
+# worse than a clean failure because it would read as passing. Do not "fix" these
+# by changing the expected exit code; the fix is a fresh v4 production capture.
+skipped "the real substrate VAID is EXPIRED today (exit 1)" "vaid#138 — now Rejected (unsupported_sig_version), exit 1 only by coincidence"
+skipped "the same document at its issue time is accepted (exit 0)" "vaid#138 — fixture is sig_version 3, refused by vaid-mint 0.10.0"
 
 printf '\n\033[1mACCEPTANCE ONE — mint here, verify in another process\033[0m\n\n'
 
@@ -164,8 +166,10 @@ REV=$($VAID verify "$ROOT" --trust "$KEYLINE" --json 2>/dev/null \
 check "revocation is still reported NOT CHECKED after a local revoke" "$REV" "not_checked"
 
 printf '\n'
+blocked_suffix=""
+[ "$blocked" -gt 0 ] && blocked_suffix=" (\033[33m${blocked} BLOCKED\033[0m — see vaid#138, not counted as pass or fail)"
 if [ "$fail" -eq 0 ]; then
-  printf '\033[32m%s passed, 0 failed\033[0m\n\n' "$pass"; exit 0
+  printf "\033[32m%s passed, 0 failed\033[0m${blocked_suffix}\n\n" "$pass"; exit 0
 else
-  printf '\033[31m%s passed, %s FAILED\033[0m\n\n' "$pass" "$fail"; exit 1
+  printf "\033[31m%s passed, %s FAILED\033[0m${blocked_suffix}\n\n" "$pass" "$fail"; exit 1
 fi

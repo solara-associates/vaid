@@ -24,13 +24,14 @@
  * "valid", and the parts nobody checked ride along inside that word.
  *
  * So {@link verifyEnvelope} returns a list of named findings, each with its own
- * state, plus a headline derived from them. Four of the findings are checks that
+ * state, plus a headline derived from them. Five of the findings are checks that
  * ran. One — revocation — is a check that did **not** run and cannot, and it is
  * in the same list rather than in a footnote, because a reader who skips the
  * footnote is exactly the reader the footnote is for.
  */
 
 import {
+  boundaryIsEvaluable,
   isExpired,
   isSpecialUseTrustDomain,
   kernelKeyThumbprint,
@@ -253,6 +254,27 @@ export function verifyEnvelope(input, anchor, now = new Date()) {
     ),
   );
 
+  // --- 3.5. Scope boundary evaluability (ADR-0009 S.10) -----------------------
+  // Placed after expiry, matching vaid-mint's own `verifyVaidStanding` ordering:
+  // after authenticity because a content complaint about unauthenticated bytes is
+  // meaningless, after expiry because expiry is the cheaper and more actionable
+  // fact where both hold. A boundary entry naming a kind this build does not
+  // recognise must be refused, never silently treated as unrestricted or as a
+  // `prefix` entry it happens to resemble.
+  const evaluable = boundaryIsEvaluable(vaid.scope_boundary);
+  findings.push(
+    finding(
+      'scope',
+      'Scope boundary',
+      evaluable ? Finding.Pass : Finding.Fail,
+      evaluable
+        ? 'Every scope_boundary entry names a kind this verifier recognises.'
+        : 'scope_boundary carries a boundary kind this verifier does not recognise ' +
+            '(unknown_scope_kind, ADR-0009 S.10). The document may be genuine and its real scope narrower ' +
+            'than a newer verifier would read — this build cannot evaluate it and refuses rather than guessing.',
+    ),
+  );
+
   // --- 4. Issuer identity ----------------------------------------------------
   // A conforming verifier SHOULD NOT bind a trust bundle to an RFC 6761
   // special-use name. Reporting this as a pass because the signature checked out
@@ -375,7 +397,12 @@ function assemble(findings, vaid, chain, bare) {
     summary = 'Genuine, but expired.';
   } else {
     headline = Headline.Rejected;
-    summary = failed[0].id === 'key' ? 'Signed by a key this verifier does not accept.' : 'Not accepted.';
+    summary =
+      failed[0].id === 'key'
+        ? 'Signed by a key this verifier does not accept.'
+        : failed[0].id === 'scope'
+          ? 'Scope boundary names a kind this verifier does not recognise.'
+          : 'Not accepted.';
   }
 
   return {
