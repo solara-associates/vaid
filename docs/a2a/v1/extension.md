@@ -129,6 +129,19 @@ These rules apply before anything in section 5 runs: a `trustedIssuers` list
 that violates any one of them is a defect in the agent's own configuration,
 not a property of any particular incoming request.
 
+**An entry carrying a member other than `kernelPublicKey` and `trustDomain`.**
+This spec does not forbid one, and the reference loader (`vaid-a2a` Python,
+`vaid_a2a.verifier._build_key_resolver`) does not detect one either: it reads
+`kernelPublicKey` and `trustDomain` from the entry by key and never inspects
+the entry's full key set, so any additional member is read by neither check
+above and is silently ignored. An entry
+`{"kernelPublicKey": "...", "trustDomain": "...", "notes": "internal only"}`
+is accepted exactly as its two-member equivalent would be, with `notes`
+discarded. This is current, observed behaviour of the reference
+implementation, not a conformance requirement on other implementations —
+another loader could reject an unrecognised member instead, and this
+section does not take a position on which is correct.
+
 ## 3. Activation
 
 Standard A2A per-request activation: a client that wants a VAID-bearing request

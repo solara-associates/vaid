@@ -7,7 +7,7 @@ This package versions **independently** of `vaid-pop`, `vaid-mint` and
 `vaid-langchain`; a shared version number between them is a coincidence, not
 a guarantee.
 
-## [0.2.0]
+## [0.2.0] — UNRELEASED
 
 > **Read this before upgrading. This release follows `vaid-mint` 0.10.0's
 > BREAKING WIRE CHANGE and requires `sig_version` 4.** A `scope_boundary` entry

@@ -3,7 +3,7 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.0]
+## [0.10.0] — UNRELEASED
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
 > moves to `4`.** Every `scope_boundary` entry becomes a typed object rather than a
