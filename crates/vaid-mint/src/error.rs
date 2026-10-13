@@ -11,6 +11,9 @@
 //!   BYO-key).
 //! - [`MintError::Audit`] — the audit sink refused a write. A mint that cannot be
 //!   recorded is a failed mint, so this is an error, not a warning.
+//! - [`MintError::Lineage`] — the durable lineage write failed (0.11.0). A VAID
+//!   whose lineage was not recorded must never be returned, so this is an error,
+//!   not a warning — see [`crate::revocation::LineageStore::try_record`].
 //!
 //! A signature *verification* result is NOT an error here — a bad signature is a
 //! `false` from `vaid_pop::verify_signed_payload` that the mint turns into a
@@ -33,6 +36,12 @@ pub enum MintError {
     /// The audit sink refused the write — the mint is treated as failed.
     #[error("audit: {0}")]
     Audit(String),
+
+    /// The durable lineage write failed (0.11.0) — the mint fails closed and
+    /// withholds the VAID it was about to return; its lineage was never
+    /// recorded. See [`crate::revocation::LineageStore::try_record`].
+    #[error("lineage: {0}")]
+    Lineage(String),
 }
 
 /// Result alias carrying a [`MintError`].
