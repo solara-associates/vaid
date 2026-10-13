@@ -3,7 +3,7 @@
 All notable changes to `vaid-mint` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] — UNRELEASED
 
 ### Fixed — `mint_child` enforces delegation depth 1 (SECURITY)
 
@@ -21,7 +21,46 @@ checked before any other attenuation, so an unauthorized depth-2
 delegation never consumes a PoP nonce or reaches the issuer. See
 `mint_child_with_a_child_as_parent_is_denied`.
 
-## [0.10.0] — UNRELEASED
+### Added
+
+- **`LineageStore::try_record`** — a fallible counterpart to
+  [`record`](crate::revocation::LineageStore::record). A durable lineage store
+  backed by a real database has a write that can fail, and `record`'s
+  infallible signature (`fn record(&self, ...)`) gave such a store nothing
+  honest to return on failure — it could only fail open (claim success and
+  lose the record) or panic, so it could not be used with `MintService` /
+  `ReferenceIssuer` at all. `try_record` returns
+  `Result<(), LineageWriteError>`; `ReferenceIssuer::build_and_sign_vaid` now
+  calls it instead of `record`, and a failure becomes `MintError::Lineage` —
+  the mint fails closed and the VAID it was about to issue is withheld, never
+  returned with its lineage unrecorded.
+
+  Backward compatible by construction: each method defaults to the other, so
+  an existing implementation that provides only `record` is unaffected (its
+  `try_record` delegates to `record` and always succeeds), and a new fallible
+  store need only implement `try_record` (its `record` default panics if
+  invoked directly and the write fails — the inverse of a lost write is a
+  loud one, for the rare caller that bypasses the mint). No wire-format or
+  conformance-vector change.
+
+- **`MintError::Lineage(String)`** — the new error variant a failed durable
+  lineage write surfaces as.
+
+### Not mirrored in Python or TypeScript, and why
+
+Cross-language parity is normally mandatory (CONTRIBUTING: "a change to one
+SDK that affects output bytes must land in the other"), but this change does
+not affect output bytes, and the gap it closes is Rust-specific. In Python and
+TypeScript, `record`/`try_record` is an ordinary method that can already
+raise/throw, and `_build_and_sign_vaid` / `#buildAndSign` already return the
+document only after that call returns normally — a database-backed store
+there already fails the mint closed, by the language's own exception
+semantics, with no signature change required. The gap is Rust's `fn
+record(&self, ...)` committing to an infallible return type at the type
+level, which neither Python's nor TypeScript's method signatures do. Nothing
+to add on those two sides.
+
+## [0.10.0] — released 2026-10-13
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
 > moves to `4`.** Every `scope_boundary` entry becomes a typed object rather than a

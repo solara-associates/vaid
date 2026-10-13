@@ -141,8 +141,8 @@ pub use mint::{
 pub use mint_types::{MintPop, MintPopPayload, MintVaidRequest, MintVaidResponse, VaidSeed};
 pub use revocation::{
     assemble_lineage, InMemoryLineageStore, InMemoryRevocationList, LineageAssembly,
-    LineageResolver, LineageStore, ParentResolution, RevocationBackend, RevocationCheck,
-    RevocationStatus,
+    LineageResolver, LineageStore, LineageWriteError, ParentResolution, RevocationBackend,
+    RevocationCheck, RevocationStatus,
 };
 pub use verify::{
     verify_lineage_hash, verify_vaid_authenticity, verify_vaid_authenticity_graded,

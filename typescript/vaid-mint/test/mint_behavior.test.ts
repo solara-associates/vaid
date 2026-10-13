@@ -299,6 +299,22 @@ test('a child claiming a different parent_vaid is denied', async () => {
   assert.equal(audit.isEmpty(), true);
 });
 
+test('mintChild with a child as the parent is denied (depth-1 enforcement)', async () => {
+  const { service, audit } = fixture();
+  const root = parentDoc('aifactory', ['data.aifactory'], ['read']);
+  const childAsParent = ReferenceIssuer.ephemeral(1).issueVaidWithLineage({
+    agentClass: 'child',
+    version: '1.0.0',
+    tenantId: 'aifactory',
+    parentVaid: root.vaid_id,
+    scopeBoundary: [prefixEntry('data.aifactory')],
+    capabilitySet: ['read'],
+  });
+  const request = signedChild(childAsParent, ['data.aifactory'], ['read'], 'depth-2-attempt');
+  await assert.rejects(service.mintChild(request, childAsParent), /bounded at depth/);
+  assert.equal(audit.entries().length, 0, 'no grandchild minted → no audit');
+});
+
 test('mintChild without a verified parent in context is denied', async () => {
   const { service } = fixture();
   const parent = parentDoc('aifactory', ['data.aifactory'], ['read']);

@@ -11,7 +11,32 @@ the Rust crate is at 0.4.2, and that is correct rather than drift. Byte-identity
 between the three is asserted by the frozen conformance vectors, never by the
 version number.
 
-## [0.10.0] — UNRELEASED
+## [0.11.0] — UNRELEASED
+
+### Fixed — `mintChild` enforces delegation depth 1 (SECURITY)
+
+Same defect and fix as the Rust crate's entry: `mintChild` never checked
+whether the authenticated parent was itself already a delegated child, so
+a holder of a validly-minted child VAID could mint a grandchild. Refuse
+`mintChild` whenever `parent.parent_vaid` is not `null`, before any other
+attenuation. See the 'mintChild with a child as the parent is denied
+(depth-1 enforcement)' test.
+
+### No `try_record` here, and why
+
+The Rust crate adds `LineageStore::try_record`, a fallible counterpart to
+`record` for a durable store whose write can fail — see
+`crates/vaid-mint/CHANGELOG.md`. Not mirrored here: the gap it closes does
+not exist in TypeScript. `record` is an ordinary method that can already
+throw, and `#buildAndSign` already returns the signed document only after
+that call returns normally, so a database-backed store already fails the
+mint closed, by TypeScript's own exception semantics, with no signature
+change required. The version bump to 0.11.0 is otherwise required by
+`scripts/verify-release-version.mjs`, which pins the Rust, Python and
+TypeScript `vaid-mint` implementations to one version number at release
+time.
+
+## [0.10.0] — released 2026-10-13
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
 > moves to `4`.** Every `scope_boundary` entry becomes a typed object rather than a

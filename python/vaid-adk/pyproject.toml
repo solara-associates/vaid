@@ -33,7 +33,7 @@ classifiers = [
 # relies on; a future ADK major is a deliberate re-verification, not a silent
 # version-range upgrade.
 dependencies = [
-    "vaid-mint>=0.10.0,<0.11",
+    "vaid-mint>=0.10.0,<0.12",
     "google-adk>=2.0,<3",
 ]
 
