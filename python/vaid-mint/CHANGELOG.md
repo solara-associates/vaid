@@ -9,7 +9,24 @@ their changelogs are separate files (`crates/vaid-mint/CHANGELOG.md` covers Rust
 Where a change lands in both, as 0.1.2 does, each changelog documents its own
 language's behavior.
 
-## [0.10.0] — UNRELEASED
+## [0.11.0] — UNRELEASED
+
+### Version bump only — no functional change in this package
+
+`scripts/verify-release-version.mjs` requires the Rust, Python and TypeScript
+`vaid-mint` implementations to carry the same version number at release time.
+This release's actual change is Rust-only — `LineageStore::try_record`, a
+fallible counterpart to `record` for a durable store whose write can fail —
+see `crates/vaid-mint/CHANGELOG.md`.
+
+It is not mirrored here because the gap it closes does not exist in Python:
+`record` is an ordinary method that can already raise, and
+`ReferenceIssuer._build_and_sign_vaid` already returns the signed document
+only after that call returns normally, so a database-backed store already
+fails the mint closed, by Python's own exception semantics, with no
+signature change required. Nothing to add.
+
+## [0.10.0] — released 2026-10-13
 
 > **Read this before upgrading. This is a BREAKING WIRE CHANGE and `sig_version`
 > moves to `4`.** Every `scope_boundary` entry becomes a typed object rather than a
