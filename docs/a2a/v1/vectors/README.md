@@ -132,6 +132,19 @@ verifier and agreed to be listed:
 | implementation | vector set / version | result | report |
 |---|---|---|---|
 | [giskard09/argentum-core](https://github.com/giskard09/argentum-core) | 0.1.1, then main / 0.2.0 | 12/12, then 14/14 (all verdicts and error codes matching) | [a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6125938510) |
+| [aeoess/Agent Passport System](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6148659932) | 0.1.1, sig_version 3 vectors only (01-12) | 12/12 | [aps-conformance-suite @ 1a25e5f](https://github.com/Agent-Authority-Conformance/aps-conformance-suite/tree/1a25e5fc4b002c1eaec46db4cfd9e36822a8cac4/interop/vaid-a2a-0.1.1-cleanroom-ca6077a2) |
+
+Two conditions apply to the Agent Passport System row above, as agreed in
+[a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6148659932):
+
+- **Scope.** The result covers only the 12 `sig_version` 3 vectors in
+  vaid-a2a 0.1.1. It does not cover `sig_version` 4, and it does not cover
+  vectors 13 and 14.
+- **Independence.** Vectors 01 to 06 were checked by a clean-room verifier
+  written from the spec, importing nothing from VAID, so those results are
+  independent. Vectors 07 to 12 came from Agent Passport System's own
+  proposals and report, so the results on those vectors are the author's own
+  runs, not independent checks.
 
 If you run these vectors against your own implementation, open a PR or
 issue with your results and we will add you here.
