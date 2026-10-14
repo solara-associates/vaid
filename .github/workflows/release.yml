@@ -647,8 +647,38 @@ jobs:
           V: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
+
+          # RETRY THE INSTALL ITSELF, not just the preceding poll (issue #137).
+          #
+          # "Wait for the new version to be resolvable" above queries crates.io's
+          # sparse index with its own `curl` request; the install below is a
+          # SEPARATE HTTP request, seconds later, and registry index pages are
+          # served from multiple CDN edges whose cache purges propagate
+          # independently. A runner whose outbound path is pinned to a
+          # slower-converging edge can see the poll succeed and then have the very
+          # next request hit that SAME stale edge — repeatably, for minutes, not a
+          # one-off hiccup a single poll retry would catch (observed on the
+          # vaid-adk 0.2.1 release: two attempts, two minutes apart, identical
+          # failure, while an install from off-runner succeeded throughout).
+          # Retrying the install itself means the thing being retried is the thing
+          # that actually has to succeed, so it cannot diverge from what the poll
+          # checked.
+          retry_install() {
+            for i in $(seq 1 12); do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$i" -eq 12 ]]; then
+                echo "::error::could not resolve $PKG $V from crates.io after 12 attempts (2 minutes) — the publish reported success, investigate before re-running."
+                return 1
+              fi
+              echo "attempt $i failed — crates.io's sparse index may not have converged on this runner's CDN edge yet; retrying in 10s"
+              sleep 10
+            done
+          }
+
           if [[ "$PKG" == "vaid-pop" || "$PKG" == "vaid-mint" ]]; then
-            cargo install "$PKG" --version "$V" --locked --root "$RUNNER_TEMP/vi" --bin "$PKG-conformance"
+            retry_install cargo install "$PKG" --version "$V" --locked --root "$RUNNER_TEMP/vi" --bin "$PKG-conformance"
             "$RUNNER_TEMP/vi/bin/$PKG-conformance"
           else
             # No packaged firewall (vaid-client ships none): prove it at least
@@ -656,7 +686,7 @@ jobs:
             # vaid-mint 0.3.0 dependency-floor defect.
             cargo new "$RUNNER_TEMP/consumer" --name consumer
             cd "$RUNNER_TEMP/consumer"
-            cargo add "$PKG@=$V"
+            retry_install cargo add "$PKG@=$V"
             cargo build
           fi
 
@@ -676,7 +706,32 @@ jobs:
           python -m venv "$RUNNER_TEMP/verify"
           # Deliberately NOT --no-deps: resolving the real dependency graph from the
           # registry is the whole point. A wrong floor only shows up here.
-          "$RUNNER_TEMP/verify/bin/pip" install --quiet "$PKG==$V"
+          #
+          # RETRY THE INSTALL ITSELF, not just the preceding poll (issue #137).
+          #
+          # "Wait for the new version to be resolvable" above queries PyPI's simple
+          # index with its own `curl` request; `pip install` below is a SEPARATE
+          # HTTP request, seconds later, and PyPI's simple pages are served from
+          # multiple CDN edges whose cache purges propagate independently. A runner
+          # whose outbound path is pinned to a slower-converging edge can see the
+          # poll succeed and then have `pip install` hit that SAME stale edge —
+          # repeatably, for minutes (observed on the vaid-adk 0.2.1 release: two
+          # attempts two minutes apart, identical "from versions: 0.1.0, 0.2.0"
+          # failure, while an install from off-runner succeeded throughout) — not a
+          # one-off hiccup a single poll retry would catch. Retrying the install
+          # itself means the thing being retried is the thing that actually has to
+          # succeed, so it cannot diverge from what the poll checked.
+          for i in $(seq 1 12); do
+            if "$RUNNER_TEMP/verify/bin/pip" install --quiet "$PKG==$V"; then
+              break
+            fi
+            if [[ "$i" -eq 12 ]]; then
+              echo "::error::pip could not resolve $PKG==$V after 12 attempts (2 minutes) — the publish reported success, investigate before re-running."
+              exit 1
+            fi
+            echo "pip install attempt $i failed — PyPI's simple index may not have converged on this runner's CDN edge yet; retrying in 10s"
+            sleep 10
+          done
           if [[ -x "$RUNNER_TEMP/verify/bin/$PKG-conformance" ]]; then
             "$RUNNER_TEMP/verify/bin/$PKG-conformance"
           else
@@ -759,7 +814,22 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/verify" && cd "$RUNNER_TEMP/verify"
           npm init -y >/dev/null
-          npm install "$PKG@$V"
+          # RETRY THE INSTALL ITSELF, not just the preceding poll (issue #137) — see
+          # the Python arm's comment above for the full rationale: a separate poll
+          # request and the actual install can land on different, independently
+          # propagating registry CDN edges, so only retrying the install (not just
+          # the poll) guarantees the thing retried is the thing that has to succeed.
+          for i in $(seq 1 12); do
+            if npm install "$PKG@$V"; then
+              break
+            fi
+            if [[ "$i" -eq 12 ]]; then
+              echo "::error::npm could not resolve $PKG@$V after 12 attempts (2 minutes) — the publish reported success, investigate before re-running."
+              exit 1
+            fi
+            echo "npm install attempt $i failed — the registry packument may not have converged on this runner's CDN edge yet; retrying in 10s"
+            sleep 10
+          done
           # How this package is checked from a clean consumer install is declared in
           # release-map.json, because not every package ships a conformance firewall.
           # `vaid-skill` implements no cryptography — the byte-identity a firewall
