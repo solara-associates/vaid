@@ -8,6 +8,8 @@ number between them is a coincidence, not a guarantee.
 
 ## [0.2.1] — UNRELEASED
 
+This release exists because of [GHSA-3664-9ghr-pjqc](https://github.com/solara-associates/vaid/security/advisories/GHSA-3664-9ghr-pjqc), the `vaid-mint` 0.11.0 delegation-depth fix.
+
 ### Changed
 
 - Requires `vaid-mint>=0.11.0,<0.12`. `vaid-mint` 0.11.0 makes delegation
