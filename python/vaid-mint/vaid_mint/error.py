@@ -8,6 +8,9 @@ Three kinds, matching the Rust enum variants:
   replayed nonce, a signature that does not verify, a missing BYO-key).
 - :class:`AuditError` — the audit sink refused a write; the mint is treated as
   failed.
+- :class:`ConfigError` — a mint was constructed with an invalid configuration
+  value (e.g. ``max_delegation_depth``). Raised at construction, before any
+  request is served, so a misconfigured mint never starts minting.
 
 A signature *verification* result is NOT an error: a bad signature is a ``False``
 from the PoP verifier that the mint turns into an :class:`IdentityError`.
@@ -30,3 +33,7 @@ class IdentityError(MintError):
 
 class AuditError(MintError):
     """The audit sink refused the write."""
+
+
+class ConfigError(MintError):
+    """A mint was constructed with an invalid configuration value."""

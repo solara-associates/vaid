@@ -31,18 +31,28 @@ import {
   buildUnsignedVaidDocument,
   canonicalVaidSigningBytes,
   computeLineageHash,
+  ConfigError,
   DenyAll,
   IdentityError,
   InMemoryAudit,
+  InMemoryRevocationList,
+  MAX_LINEAGE_DEPTH,
   MINT_POP_FRESHNESS_SECS,
   MintError,
   MintService,
+  parentResolutionOf,
+  parentResolutionRoot,
+  parentResolutionUnknown,
   parseVaidDocument,
+  PermitAll,
   ReferenceIssuer,
+  RevocationBackend,
   UnauthorizedError,
+  validateMaxDelegationDepth,
   verifyVaidAuthenticity,
   type MintPop,
   type MintVaidRequest,
+  type ParentResolution,
   type Vaid,
   type VaidSeed,
 } from '../src/index.js';
@@ -299,20 +309,296 @@ test('a child claiming a different parent_vaid is denied', async () => {
   assert.equal(audit.isEmpty(), true);
 });
 
-test('mintChild with a child as the parent is denied (depth-1 enforcement)', async () => {
+// ── DELEGATION-DEPTH ENFORCEMENT (0.11.0): default 1, configurable. ──
+
+async function mintRealRoot(service: MintService, tenantId: string): Promise<Vaid> {
+  const { vaid } = await service.mintRoot({
+    seed: {
+      agentClass: 'root',
+      version: '1.0.0',
+      tenantId,
+      scopeBoundary: [prefixEntry('data.aifactory')],
+      capabilitySet: ['read'],
+    },
+  });
+  return vaid;
+}
+
+async function mintRealChild(service: MintService, parent: Vaid, nonce: string): Promise<Vaid> {
+  const { vaid } = await service.mintChild(
+    signedChild(parent, ['data.aifactory'], ['read'], nonce),
+    parent,
+  );
+  return vaid;
+}
+
+test('default depth mints a root child but refuses a grandchild', async () => {
+  const { service, audit } = fixture(); // default maxDelegationDepth === 1
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'root-to-child');
+  const eventsAfterChild = audit.length;
+  assert.equal(eventsAfterChild, 2); // root mint + child mint
+
+  const request = signedChild(child, ['data.aifactory'], ['read'], 'child-to-grandchild');
+  await assert.rejects(service.mintChild(request, child), /delegation depth/);
+  assert.equal(audit.length, eventsAfterChild, 'no grandchild minted');
+});
+
+test('a root child is always allowed regardless of configured depth', async () => {
+  const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 1);
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'root-to-child-explicit-1');
+  assert.equal(child.parent_vaid, root.vaid_id);
+});
+
+test('depth 2 mints a grandchild but refuses a great-grandchild', async () => {
+  const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
+  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 2);
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'depth2-root-to-child');
+  const grandchild = await mintRealChild(service, child, 'depth2-child-to-grandchild');
+  assert.equal(grandchild.parent_vaid, child.vaid_id);
+
+  const request = signedChild(
+    grandchild,
+    ['data.aifactory'],
+    ['read'],
+    'depth2-grandchild-to-greatgrandchild',
+  );
+  await assert.rejects(service.mintChild(request, grandchild), /delegation depth/);
+});
+
+test('depth refusal happens before any lineage write', async () => {
   const { service, audit } = fixture();
-  const root = parentDoc('aifactory', ['data.aifactory'], ['read']);
-  const childAsParent = ReferenceIssuer.ephemeral(1).issueVaidWithLineage({
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'before-write-root-to-child');
+  const eventsBefore = audit.length;
+
+  const request = signedChild(
+    child,
+    ['data.aifactory'],
+    ['read'],
+    'before-write-child-to-grandchild',
+  );
+  await assert.rejects(service.mintChild(request, child));
+  assert.equal(audit.length, eventsBefore, 'a refused mint must not audit a mint');
+});
+
+// ── maxDelegationDepth VALIDATION: fails closed at construction, never
+//    "unlimited". ──
+
+test('maxDelegationDepth zero is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(0), ConfigError);
+});
+
+test('maxDelegationDepth negative is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(-1), ConfigError);
+});
+
+test('maxDelegationDepth non-integer is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(1.5), ConfigError);
+});
+
+test('maxDelegationDepth NaN is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(NaN), ConfigError);
+});
+
+test('maxDelegationDepth Infinity is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(Infinity), ConfigError);
+});
+
+test('maxDelegationDepth above the lineage bound is rejected', () => {
+  assert.throws(() => validateMaxDelegationDepth(MAX_LINEAGE_DEPTH + 1), ConfigError);
+});
+
+test('maxDelegationDepth at the lineage bound is accepted', () => {
+  assert.equal(validateMaxDelegationDepth(MAX_LINEAGE_DEPTH), MAX_LINEAGE_DEPTH);
+});
+
+test('maxDelegationDepth one is accepted', () => {
+  assert.equal(validateMaxDelegationDepth(1), 1);
+});
+
+test('constructing a mint with an invalid depth fails closed', () => {
+  const issuer = ReferenceIssuer.ephemeral(1);
+  assert.throws(
+    () => new MintService(issuer, new InMemoryAudit(), new PermitAll(), 0),
+    ConfigError,
+  );
+});
+
+// ── DELEGATION DEPTH FAILS CLOSED when ancestry cannot be fully resolved
+//    (334 follow-up, 14 Oct 2026). Four properties: ──
+
+/**
+ * A hand-built doc with no real mint behind it, carrying `parent_vaid`.
+ * Depth checking must never need the referenced parent to actually exist
+ * anywhere; it only needs the LEAF's own signed field, which is why this is
+ * enough for every test below. Signed by a throwaway issuer whose own
+ * lineage store is irrelevant to the test — only the document's own fields
+ * matter here.
+ */
+function docWithParent(tenant: string, parentVaid: string): Vaid {
+  return ReferenceIssuer.ephemeral(1).issueVaidWithLineage({
     agentClass: 'child',
     version: '1.0.0',
-    tenantId: 'aifactory',
-    parentVaid: root.vaid_id,
+    tenantId: tenant,
+    parentVaid,
     scopeBoundary: [prefixEntry('data.aifactory')],
     capabilitySet: ['read'],
   });
-  const request = signedChild(childAsParent, ['data.aifactory'], ['read'], 'depth-2-attempt');
-  await assert.rejects(service.mintChild(request, childAsParent), /bounded at depth/);
-  assert.equal(audit.entries().length, 0, 'no grandchild minted → no audit');
+}
+
+/** A fresh, unique id to name as "the parent" below — nothing is minted for it. */
+function freshVaidId(): string {
+  return ReferenceIssuer.ephemeral(1).issueVaidWithLineage({
+    agentClass: 'root',
+    version: '1.0.0',
+    tenantId: 'aifactory',
+    parentVaid: null,
+    scopeBoundary: [],
+    capabilitySet: [],
+  }).vaid_id;
+}
+
+test('depth 1 refuses when the grandparent cannot be resolved after a restart', async () => {
+  // 1. RESTART TRUNCATION, default depth 1. A real root -> child chain is
+  // minted, then the issuer's lineage map is cleared (the ops/test
+  // primitive that models a process restart). `child`'s OWN document
+  // still names its parent, but the map can no longer vouch that the
+  // named parent is a genuine root. The naive bug this guards is treating
+  // "can't resolve" as "assume it's a root", which would wrongly compute
+  // parentDepth = 0 here and ALLOW the mint. The correct answer is
+  // incomplete assembly, and refusal.
+  const issuer = ReferenceIssuer.ephemeral(1);
+  const audit = new InMemoryAudit();
+  const service = new MintService(issuer, audit); // default depth 1
+  const root = await mintRealRoot(service, 'aifactory');
+  const child = await mintRealChild(service, root, 'restart-root-to-child');
+
+  issuer.clearLineage(); // "process restart": the map forgets everything
+
+  const request = signedChild(
+    child,
+    ['data.aifactory'],
+    ['read'],
+    'restart-child-to-grandchild',
+  );
+  await assert.rejects(service.mintChild(request, child), /could not be determined/);
+});
+
+test('depth 2 refuses when an ancestor beyond the first hop is unresolvable', async () => {
+  // 2. An ancestor SEVERAL HOPS UP is unresolvable, after resolution has
+  // already succeeded partway. A naive implementation might stop at the
+  // first unresolved hop and accept the chain built so far as complete
+  // (treating it as shorter than it really is). Here the resolver knows
+  // `child`'s parent is `root` (one hop resolves cleanly) but has no
+  // record of `root` itself, so the assembly must still fail as a whole,
+  // never settle for "2 hops, that's enough".
+  class PartialLineageStore {
+    constructor(private readonly known: Map<string, ParentResolution>) {}
+    record(_vaidId: string, _parent: string | null): void {}
+    resolveParent(vaidId: string): ParentResolution {
+      return this.known.get(vaidId) ?? parentResolutionUnknown();
+    }
+  }
+
+  const rootId = freshVaidId();
+  const child = docWithParent('aifactory', rootId);
+  const grandchild = docWithParent('aifactory', child.vaid_id);
+
+  // The resolver knows child -> root (one hop resolves), but has NO entry
+  // for rootId at all: it cannot vouch root is a genuine root, nor
+  // resolve any further. This must be incomplete, not "stop here".
+  const store = new PartialLineageStore(
+    new Map([[child.vaid_id, parentResolutionOf(rootId)]]),
+  );
+
+  const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+    new RevocationBackend(InMemoryRevocationList.assumeNothingRevoked(), store),
+  );
+  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 2);
+
+  const request = signedChild(
+    grandchild,
+    ['data.aifactory'],
+    ['read'],
+    'partial-grandchild-to-greatgrandchild',
+  );
+  await assert.rejects(service.mintChild(request, grandchild), /could not be determined/);
+});
+
+test('depth 1 refuses regardless of what a lying resolver claims', async () => {
+  // 3. The CHEAP, STATE-INDEPENDENT rule at depth 1: if the presented
+  // parent's own document names a parentVaid at all, the mint must
+  // refuse, regardless of what the lineage resolver answers about that
+  // named id. Proven with a deliberately WRONG resolver that claims every
+  // id is a genuine root: even then, the presented parent's OWN
+  // parentVaid field contributes one guaranteed hop the resolver did not
+  // invent, so the assembled chain is still length 2 and depth 1 is still
+  // exceeded.
+  class AlwaysRootLineageStore {
+    record(_vaidId: string, _parent: string | null): void {}
+    resolveParent(_vaidId: string): ParentResolution {
+      return parentResolutionRoot(); // wrong for every id but a real root
+    }
+  }
+
+  const rootId = freshVaidId();
+  const childAsParent = docWithParent('aifactory', rootId);
+
+  const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+    new RevocationBackend(
+      InMemoryRevocationList.assumeNothingRevoked(),
+      new AlwaysRootLineageStore(),
+    ),
+  );
+  const service = new MintService(issuer, new InMemoryAudit()); // default depth 1
+
+  const request = signedChild(
+    childAsParent,
+    ['data.aifactory'],
+    ['read'],
+    'lying-resolver-depth-2-attempt',
+  );
+  await assert.rejects(service.mintChild(request, childAsParent), /delegation depth/);
+});
+
+test('depth check refuses with the existing typed error on a lineage store failure', async () => {
+  // 4. A lineage READ failure (the store cannot be consulted at all, not
+  // merely "doesn't know this id yet") refuses with the SAME typed error
+  // as every other denial in mintChild: UnauthorizedError, never a silent
+  // allow and never an unhandled exception escaping. Modelled by a
+  // resolver that always answers "unknown" — the only representable
+  // "failure" a resolver can report, mirroring how revocation fails
+  // closed: there is no distinct "errored" case to swallow, UNKNOWN is
+  // the fail-closed signal.
+  class FailingLineageStore {
+    record(_vaidId: string, _parent: string | null): void {}
+    resolveParent(_vaidId: string): ParentResolution {
+      return parentResolutionUnknown();
+    }
+  }
+
+  const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
+    new RevocationBackend(
+      InMemoryRevocationList.assumeNothingRevoked(),
+      new FailingLineageStore(),
+    ),
+  );
+  const audit = new InMemoryAudit();
+  const service = new MintService(issuer, audit);
+
+  const rootId = freshVaidId();
+  const parent = docWithParent('aifactory', rootId);
+  const request = signedChild(parent, ['data.aifactory'], ['read'], 'store-failure-attempt');
+
+  await assert.rejects(
+    service.mintChild(request, parent),
+    (e: Error) => e instanceof UnauthorizedError,
+  );
+  assert.equal(audit.length, 0, 'a refused mint must not audit a mint');
 });
 
 test('mintChild without a verified parent in context is denied', async () => {
@@ -524,6 +810,7 @@ test('an issuer that ignores the ceiling is caught and the child withheld', asyn
       inner.issueVaidWithLineage(attributes),
     verifyVaid: (v: Vaid) => inner.verifyVaid(v),
     resolveParent: (id: string) => inner.resolveParent(id),
+    resolveDelegationAncestor: (id: string) => inner.resolveDelegationAncestor(id),
   };
   const service = new MintService(ignoresTheCeiling, new InMemoryAudit());
   const parent = parentExpiringIn(600);

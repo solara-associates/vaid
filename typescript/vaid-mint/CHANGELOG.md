@@ -13,19 +13,33 @@ version number.
 
 ## [0.11.0] — UNRELEASED
 
-### Fixed — `mintChild` enforces delegation depth 1 (SECURITY)
+### Fixed: `mintChild` enforces a configurable maximum delegation depth (SECURITY)
 
-Same defect and fix as the Rust crate's entry: `mintChild` never checked
-whether the authenticated parent was itself already a delegated child, so
-a holder of a validly-minted child VAID could mint a grandchild. Refuse
-`mintChild` whenever `parent.parent_vaid` is not `null`, before any other
-attenuation. See the 'mintChild with a child as the parent is denied
-(depth-1 enforcement)' test.
+Same defect as the Rust crate's entry: `mintChild` never checked whether
+the authenticated parent was itself already a delegated child, so a
+holder of a validly-minted child VAID could mint a grandchild.
+
+**Fix:** limiting delegation depth is issuer / mint policy, not a protocol
+rule (spec `docs/spec/delegation.md`). `MintService`'s constructor now
+takes an optional `maxDelegationDepth`, defaulting to 1 (`DEFAULT_MAX_DELEGATION_DEPTH`).
+`mintChild` refuses whenever minting the requested child would exceed it,
+checked before any other attenuation, so a refused delegation never
+consumes a PoP nonce or reaches the issuer. There is no value meaning
+"unlimited": an invalid depth (zero, negative, `NaN`, `Infinity`, or
+non-integer, or above the lineage-depth bound) is rejected at construction
+via the new `validateMaxDelegationDepth`, throwing `ConfigError`, so a
+misconfigured mint never starts minting. This supersedes the hard depth-1
+check added earlier in this same unreleased cycle; verification is
+unchanged either way: a verifier accepts any well-formed chain
+regardless of what minted it, and the frozen conformance vectors
+(including the depth-2 A2A vector) are unaffected. See 'default depth
+mints a root child but refuses a grandchild', 'depth 2 mints a grandchild
+but refuses a great-grandchild', and `delegation_depth_validation.test.ts`.
 
 ### No `try_record` here, and why
 
 The Rust crate adds `LineageStore::try_record`, a fallible counterpart to
-`record` for a durable store whose write can fail — see
+`record` for a durable store whose write can fail. See
 `crates/vaid-mint/CHANGELOG.md`. Not mirrored here: the gap it closes does
 not exist in TypeScript. `record` is an ordinary method that can already
 throw, and `#buildAndSign` already returns the signed document only after

@@ -14,6 +14,14 @@ The TypeScript mirror of the Rust `vaid-mint` crate: the open, self-hostable
 - **`verifyVaidAuthenticity`** — confirm a document is real from the issuer's
   **public key alone**: no issuer instance, no private key.
 
+`MintService` also enforces a **configurable maximum delegation depth**
+(`maxDelegationDepth`, defaulting to 1): a root may mint a child, but minting
+a grandchild is refused unless the mint is constructed with a deeper limit.
+This is issuer policy — see `docs/spec/delegation.md` — not a protocol rule,
+and has no effect on what a verifier accepts. There is no value meaning
+"unlimited"; an invalid depth is rejected at construction (throws
+`ConfigError`), so a misconfigured mint never starts minting.
+
 ## Install
 
 ```

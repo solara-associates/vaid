@@ -5,7 +5,7 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
 
 ## [0.11.0] — UNRELEASED
 
-### Fixed — `mint_child` enforces delegation depth 1 (SECURITY)
+### Fixed: `mint_child` enforces a configurable maximum delegation depth (SECURITY)
 
 `mint_child` attenuated a new child's tenant, scope, and capability set
 against the authenticated parent VAID, but never checked whether that
@@ -16,10 +16,23 @@ built on top of this library; the same defect was independently found and
 fixed in Solara's `synthera-bridge` substrate reimplementation (synthera
 PR #172).
 
-**Fix:** refuse `mint_child` whenever `parent.parent_vaid()` is `Some`,
-checked before any other attenuation, so an unauthorized depth-2
-delegation never consumes a PoP nonce or reaches the issuer. See
-`mint_child_with_a_child_as_parent_is_denied`.
+**Fix:** limiting delegation depth is issuer / mint policy, not a protocol
+rule (spec `docs/spec/delegation.md`). `MintService` now takes a
+`max_delegation_depth`, defaulting to 1, via the new
+`MintService::with_max_delegation_depth` constructor.
+`mint_child` refuses whenever minting the requested child would exceed it,
+checked before any other attenuation, so a refused delegation never
+consumes a PoP nonce or reaches the issuer. There is no value meaning
+"unlimited": an invalid depth (zero, or above the lineage-depth bound) is
+rejected at construction via `validate_max_delegation_depth`, so a
+misconfigured mint never starts minting. This supersedes the hard depth-1
+check added earlier in this same unreleased cycle; verification is
+unchanged either way: a verifier accepts any well-formed chain regardless
+of what minted it, and the frozen conformance vectors (including the
+depth-2 A2A vector) are unaffected. See
+`default_depth_mints_a_root_child_but_refuses_a_grandchild`,
+`depth_2_mints_a_grandchild_but_refuses_a_great_grandchild`, and
+`delegation_depth_validation.rs`.
 
 ### Added
 

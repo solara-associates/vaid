@@ -181,6 +181,18 @@ not get to put an over-long child into circulation through this mint.
 Scope, capabilities and expiry use the **single** matchers on the VAID document, so
 mint-time containment and any runtime check cannot drift.
 
+### Delegation depth (mint policy, not a protocol rule)
+
+`MintService` also enforces a **configurable maximum delegation depth**,
+defaulting to 1: a root may mint a child, but minting a grandchild is refused
+unless the mint is constructed with a deeper limit via
+`MintService::with_max_delegation_depth`. This is issuer policy — see
+`docs/spec/delegation.md` — and has no effect on what a verifier accepts: a
+well-formed multi-hop chain verifies regardless of which depth any particular
+mint was configured to issue. There is no value meaning "unlimited"; an invalid
+depth (zero, or above the lineage-depth bound) is rejected at construction, so
+a misconfigured mint never starts minting.
+
 ## Reuse, not reimplementation
 
 Proof-of-possession reuses the `vaid-pop` primitive verbatim (RFC 8785 JCS →
