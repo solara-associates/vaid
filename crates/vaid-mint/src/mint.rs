@@ -1276,6 +1276,239 @@ mod tests {
         }
     }
 
+    // ── DELEGATION DEPTH FAILS CLOSED when ancestry cannot be fully resolved
+    //    (334 follow-up, 14 Oct 2026). Four properties: ──
+
+    /// A hand-built doc with no mint behind it, carrying `parent_vaid`.
+    /// Depth checking must never need the referenced parent to actually
+    /// exist anywhere — it only needs the LEAF's own signed field, which is
+    /// why this is enough for every test below.
+    fn doc_with_parent(tenant: &str, parent_vaid: VaidId) -> Vaid {
+        Vaid::with_lineage(
+            AgentId::new(),
+            AgentClass::new("child"),
+            "1.0.0".into(),
+            TenantId::new(tenant),
+            Utc::now(),
+            Utc::now() + chrono::Duration::hours(1),
+            vec![],
+            vec![],
+            Some(parent_vaid),
+            vec!["data.aifactory".into()],
+            "lineage".into(),
+            vec!["read".into()],
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
+        )
+    }
+
+    fn fresh_vaid_id() -> VaidId {
+        doc_with_parent_free_root().vaid_id()
+    }
+
+    /// A rootless doc, used only to mint a fresh, unique [`VaidId`] to name as
+    /// "the parent" in the tests below — its own fields are otherwise unused.
+    fn doc_with_parent_free_root() -> Vaid {
+        Vaid::with_lineage(
+            AgentId::new(),
+            AgentClass::new("root"),
+            "1.0.0".into(),
+            TenantId::new("aifactory"),
+            Utc::now(),
+            Utc::now() + chrono::Duration::hours(1),
+            vec![],
+            vec![],
+            None,
+            vec![],
+            "lineage".into(),
+            vec![],
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
+        )
+    }
+
+    /// 1. RESTART TRUNCATION, default depth 1. A real root -> child chain is
+    /// minted, then the issuer's lineage map is cleared (the ops/test
+    /// primitive that models a process restart — see
+    /// `InMemoryLineageStore::clear`). `child`'s OWN document still names its
+    /// parent, but the map can no longer vouch that the named parent is a
+    /// genuine root. The naive bug this guards is treating "can't resolve" as
+    /// "assume it's a root" — which would wrongly compute `parent_depth = 0`
+    /// here and ALLOW the mint. The correct answer is Incomplete, and refusal.
+    #[tokio::test]
+    async fn depth_1_refuses_when_the_grandparent_cannot_be_resolved_after_a_restart() {
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        let audit = Arc::new(InMemoryAudit::new());
+        let svc = MintService::new(issuer.clone(), audit.clone()); // default depth 1
+        let root = mint_real_root(&svc, "aifactory").await;
+        let child = mint_real_child(&svc, &root, "restart-root-to-child").await;
+
+        issuer.clear_lineage(); // "process restart": the map forgets everything
+
+        let req = signed_child(
+            &child,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "restart-child-to-grandchild",
+        );
+        let err = svc.mint_child(req, Some(&child)).await.unwrap_err();
+        assert!(matches!(err, MintError::Unauthorized(_)), "got: {err}");
+        assert!(
+            err.to_string().contains("could not be determined"),
+            "must refuse because resolution is INCOMPLETE, not merely because \
+             a (wrongly shallow) depth count exceeded the limit — got: {err}"
+        );
+    }
+
+    /// 2. An ancestor SEVERAL HOPS UP is unresolvable, after resolution has
+    /// already succeeded partway. A naive implementation might stop at the
+    /// first unresolved hop and accept the chain built so far as complete
+    /// (treating it as shorter than it really is, rather than Incomplete).
+    /// Here the resolver knows `child`'s parent is `root` (one hop resolves
+    /// cleanly) but has no record of `root` itself, so the assembly must
+    /// still fail as a whole, never settle for "2 hops, that's enough".
+    #[tokio::test]
+    async fn depth_2_refuses_when_an_ancestor_beyond_the_first_hop_is_unresolvable() {
+        struct PartialLineageStore {
+            known: std::collections::HashMap<VaidId, ParentResolution>,
+        }
+        impl LineageResolver for PartialLineageStore {
+            fn resolve_parent(&self, vaid_id: &VaidId) -> ParentResolution {
+                self.known
+                    .get(vaid_id)
+                    .copied()
+                    .unwrap_or(ParentResolution::Unknown)
+            }
+        }
+        impl crate::revocation::LineageStore for PartialLineageStore {
+            fn try_record(
+                &self,
+                _vaid_id: VaidId,
+                _parent: Option<VaidId>,
+            ) -> Result<(), crate::revocation::LineageWriteError> {
+                Ok(())
+            }
+        }
+
+        let root_id = fresh_vaid_id();
+        let child = doc_with_parent("aifactory", root_id);
+        let grandchild = doc_with_parent("aifactory", child.vaid_id());
+
+        // The resolver knows child -> root (one hop resolves), but has NO
+        // entry for root_id at all: it cannot vouch root is a genuine root,
+        // nor resolve any further. This must be Incomplete, not "stop here".
+        let mut known = std::collections::HashMap::new();
+        known.insert(child.vaid_id(), ParentResolution::Parent(root_id));
+        let store = Arc::new(PartialLineageStore { known });
+
+        let issuer = Arc::new(issuer_with_lineage_store(store));
+        let audit = Arc::new(InMemoryAudit::new());
+        let svc = MintService::with_max_delegation_depth(
+            issuer,
+            audit,
+            Arc::new(crate::authz::PermitAll),
+            2,
+        )
+        .unwrap();
+
+        let req = signed_child(
+            &grandchild,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "partial-grandchild-to-greatgrandchild",
+        );
+        let err = svc.mint_child(req, Some(&grandchild)).await.unwrap_err();
+        assert!(matches!(err, MintError::Unauthorized(_)), "got: {err}");
+        assert!(
+            err.to_string().contains("could not be determined"),
+            "partial resolution (child->root known, root's own ancestry \
+             unknown) must still be Incomplete as a WHOLE, never truncated \
+             to the hops that happened to resolve — got: {err}"
+        );
+    }
+
+    /// 3. The CHEAP, STATE-INDEPENDENT rule at depth 1: if the presented
+    /// parent's own document names a `parent_vaid` at all, the mint must
+    /// refuse — regardless of what the lineage resolver answers about that
+    /// named id. Proven with a deliberately WRONG resolver that claims every
+    /// id is a genuine root: even then, the presented parent's OWN
+    /// `parent_vaid` field contributes one guaranteed hop the resolver did
+    /// not invent, so the assembled chain is still length 2 and depth 1 is
+    /// still exceeded. The resolver's answer never shortens the leaf's own
+    /// recorded ancestry.
+    #[tokio::test]
+    async fn depth_1_refuses_regardless_of_what_a_lying_resolver_claims() {
+        struct AlwaysRootLineageStore;
+        impl LineageResolver for AlwaysRootLineageStore {
+            fn resolve_parent(&self, _vaid_id: &VaidId) -> ParentResolution {
+                ParentResolution::Root // wrong for every id except a real root
+            }
+        }
+        impl crate::revocation::LineageStore for AlwaysRootLineageStore {
+            fn try_record(
+                &self,
+                _vaid_id: VaidId,
+                _parent: Option<VaidId>,
+            ) -> Result<(), crate::revocation::LineageWriteError> {
+                Ok(())
+            }
+        }
+
+        let root_id = fresh_vaid_id();
+        let child_as_parent = doc_with_parent("aifactory", root_id);
+
+        let issuer = Arc::new(issuer_with_lineage_store(Arc::new(AlwaysRootLineageStore)));
+        let audit = Arc::new(InMemoryAudit::new());
+        let svc = MintService::new(issuer, audit); // default depth 1
+
+        let req = signed_child(
+            &child_as_parent,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "lying-resolver-depth-2-attempt",
+        );
+        let err = svc
+            .mint_child(req, Some(&child_as_parent))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MintError::Unauthorized(_)), "got: {err}");
+        assert!(
+            err.to_string().contains("delegation depth"),
+            "the leaf's OWN parent_vaid must count as one hop regardless of \
+             the resolver's answer — got: {err}"
+        );
+    }
+
+    /// 4. A lineage READ failure (the store cannot be consulted at all, not
+    /// merely "doesn't know this id yet") refuses with the SAME typed error
+    /// as every other denial in `mint_child` — [`MintError::Unauthorized`] —
+    /// never a silent allow and never an unhandled panic. `FailingLineageStore`
+    /// already exists below for the fallible-WRITE tests; its read side
+    /// models an unreachable backend by always answering `Unknown`, which is
+    /// the only representable "failure" a [`LineageResolver`] can report
+    /// (mirroring how `RevocationCheck` fails closed: there is no distinct
+    /// "errored" case to swallow — Unknown IS the fail-closed signal).
+    #[tokio::test]
+    async fn depth_check_refuses_with_the_existing_typed_error_on_a_lineage_store_failure() {
+        let (svc, audit) = fixture_with_lineage_store(Arc::new(FailingLineageStore));
+        let root_id = fresh_vaid_id();
+        let parent = doc_with_parent("aifactory", root_id);
+
+        let req = signed_child(
+            &parent,
+            vec!["data.aifactory"],
+            vec!["read"],
+            "store-failure-attempt",
+        );
+        let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
+        assert!(
+            matches!(err, MintError::Unauthorized(_)),
+            "a lineage read failure must refuse with MintError::Unauthorized, \
+             never allow the mint — got: {err}"
+        );
+        assert!(audit.is_empty(), "a refused mint must not audit a mint");
+    }
+
     #[tokio::test]
     async fn mint_child_without_parent_context_is_denied() {
         let (svc, _) = fixture();
