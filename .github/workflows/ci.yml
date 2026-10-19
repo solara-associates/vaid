@@ -24,10 +24,17 @@ on:
 permissions:
   contents: read
 
+# A second push to a PR supersedes the first rather than both running to
+# completion; main's own queue just serializes instead of overlapping.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     name: Rust conformance (cargo test --workspace)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -41,6 +48,7 @@ jobs:
   python:
     name: Python conformance (pytest)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -93,6 +101,7 @@ jobs:
   typescript:
     name: TypeScript conformance (node --test)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -110,6 +119,7 @@ jobs:
   quickstart:
     name: Quickstart runs against the PUBLISHED package
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -145,6 +155,7 @@ jobs:
   name-guard:
     name: No added line reintroduces a guarded term
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # fetch-depth: 0 because the check is over ADDED LINES, which needs a real
       # merge base. A shallow clone resolves no merge base, and the script exits 2
@@ -177,6 +188,7 @@ jobs:
   readme-drift:
     name: README describes the repository that exists
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -195,6 +207,7 @@ jobs:
   release-workflow:
     name: Release workflow structure (verify-artifact stays a consumer)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -213,6 +226,7 @@ jobs:
   release-map:
     name: Every publishable package is reachable by the release workflow
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -230,6 +244,7 @@ jobs:
   skill:
     name: Agent Skill (vaid-skill) — unit, acceptance, anchor parity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -259,6 +274,7 @@ jobs:
   conformance-drift:
     name: PoP conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -314,6 +330,7 @@ jobs:
   mint-conformance-drift:
     name: Mint conformance drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -365,6 +382,7 @@ jobs:
   chain-conformance-drift:
     name: Chain-presentation drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -432,6 +450,7 @@ jobs:
   attestation-conformance-drift:
     name: Consent-attestation drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -530,6 +549,7 @@ jobs:
   mint-pop-conformance-drift:
     name: Mint-PoP drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -579,6 +599,7 @@ jobs:
   pathquery-conformance-drift:
     name: Path-with-query drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -622,6 +643,7 @@ jobs:
   completion-conformance-drift:
     name: Completion-record drift-check (Rust == Python == TypeScript == vector, byte-identical)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -664,6 +686,7 @@ jobs:
   unknown-scope-kind-agreement:
     name: Unknown-scope-kind verdict agreement (Rust == Python == TypeScript)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -711,6 +734,7 @@ jobs:
   integration-packaged-firewalls:
     name: Integration packaged firewalls (vaid-a2a, vaid-adk, vaid-jwt-bridge) + A2A vector drift
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -792,6 +816,7 @@ jobs:
   capabilities:
     name: Capabilities manifest & claims-register verified
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
