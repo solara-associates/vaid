@@ -261,6 +261,43 @@ conformance surface starts and stops.
   revocation sits outside the conformance surface
   ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)).
 
+## Delegation chain integrity: how VAID maps
+
+A delegation chain is often described by ten properties a reader expects it to
+hold. The table below maps each one onto VAID's actual fields, the functions
+that check them, and the tests that prove it. "Carried and verified" means the
+property has a field or a seam and code that enforces it, cited by file and
+line. "Partially carried" names what is missing. Two of the ten are gaps today,
+stated plainly rather than argued around.
+
+| Property | Status | Where it lives |
+|---|---|---|
+| 1. Original principal | **Not carried today.** | There is no field naming who originally started the chain. The root VAID (the one whose `parent_vaid` is present-null, see [`document.rs:274-289`](crates/vaid-mint/src/document.rs)) stands in for it by convention (depth 0 in [`docs/spec/delegation.md`](docs/spec/delegation.md)), but nothing binds a human or external identity to that root beyond its own `agent_id`. An issuer that needs "who is accountable for this chain" has to keep that mapping itself, outside the document. |
+| 2. Current agent identity | **Carried and verified.** | `agent_id` and `vaid_id` ([`document.rs:257-258`](crates/vaid-mint/src/document.rs)), bound into the kernel-signed bytes and checked by [`verify_vaid_authenticity`](crates/vaid-mint/src/verify.rs) (`verify.rs:79`). Tests: `document_verify.rs`, `mint_conformance.rs`. |
+| 3. Delegated scope | **Carried and verified.** | `scope_boundary` ([`document.rs:290-293`](crates/vaid-mint/src/document.rs)), checked for containment by [`scope_attenuates`](crates/vaid-mint/src/mint.rs) / `scope_attenuates_within` (`mint.rs:86`, `mint.rs:103`) at mint time and again, independently, at verify time in [`verify_chain_at`](crates/vaid-mint/src/chain.rs). Tests: `child_scope_exceeding_parent_is_denied` (`mint.rs:293`), `child_exceeding_parent_scope_is_not_attenuated` (`chain_verification.rs:326`), `scope_conformance.rs`. |
+| 4. Purpose | **Not carried today (the likely gap).** | VAID carries *what* a delegate may touch (`scope_boundary`) and *what it may do* (`capability_set`), never *why* the delegation was made. There is no "intended task" or declared-intent field anywhere in the document, the mint request, or the spec. A deployment that wants an auditable reason for each hop has to carry it outside VAID and correlate by `vaid_id`. |
+| 5. Expiry | **Carried and verified.** | `expires_at` ([`document.rs:271`](crates/vaid-mint/src/document.rs)), read through `Vaid::is_expired` and never widened past the parent's: [`expiry_attenuates`](crates/vaid-mint/src/mint.rs) / `expiry_attenuates_within` (`mint.rs:251`, `mint.rs:258`) clamp a child's lifetime to its parent's at mint time, reported back via `expiry_bounded_by_parent` ([`mint_types.rs:97-116`](crates/vaid-mint/src/mint_types.rs)). Tests: `child_is_clamped_to_its_parents_expiry` (`mint.rs:952`), `delegating_from_an_already_expired_parent_is_refused` (`mint.rs:1019`), `chain_expiry_conformance.rs`. |
+| 6. Parent delegation | **Carried and verified.** | `parent_vaid`, a present-but-possibly-null three-state field so a root is distinguishable from a document with the member stripped ([`document.rs:274-289`](crates/vaid-mint/src/document.rs), ADR-0006 Req. 3), plus `lineage_hash` checked by [`verify_lineage_hash`](crates/vaid-mint/src/verify.rs) (`verify.rs:92`). A third party reconstructs the chain from presented ancestor documents via [`PresentedBundle`](crates/vaid-mint/src/chain.rs) and [`assemble_lineage`](crates/vaid-mint/src/revocation.rs) (`revocation.rs:142`). Tests: `tampered_parent_vaid_is_inauthentic` (`chain_verification.rs:247`), `bundle_assembles_ordered_lineage_root_first` (`chain_verification.rs:601`). |
+| 7. Revocation state | **Partially carried.** | Revocation is deliberately outside the signed document and outside the conformance surface ([ADR-0001](docs/adr/0001-revocation-outside-conformance-surface.md)): the [`RevocationCheck`](crates/vaid-mint/src/revocation.rs) seam is three-valued (`NotRevoked` / `Revoked` / `Unavailable`) and fails closed on `Unavailable` rather than defaulting to not-revoked. What is missing is anything in the VAID document itself; a verifier that does not wire up a revocation store sees no revocation state at all. The reference in-memory store is explicitly non-durable; [ADR-0008](docs/adr/0008-durable-revocation-is-two-stores-injected-as-one.md) covers a durable backend. Tests: `revoking_makes_a_store_available_and_reports_any_hop` (`revocation.rs:505`), `revocation_seam.rs`. |
+| 8. Authority only narrows downstream (scope, capabilities, lifetime) | **Carried and verified.** | A child must be contained in its parent on all three axes or the mint refuses and the verifier reports `NotAttenuated`: [`scope_attenuates`](crates/vaid-mint/src/mint.rs), [`caps_attenuate`](crates/vaid-mint/src/mint.rs) (`mint.rs:217`), [`expiry_attenuates`](crates/vaid-mint/src/mint.rs) (`mint.rs:251`). Tests: `child_caps_exceeding_parent_are_denied` (`mint.rs:333`), `child_exceeding_parent_capabilities_is_not_attenuated` (`chain_verification.rs:370`). |
+| 9. Each hop validates independently, never trusting the previous agent | **Carried and verified.** | [`verify_chain_at`](crates/vaid-mint/src/chain.rs) authenticates every presented document (leaf and each ancestor) against the kernel key that actually signed it, and recomputes containment at every hop rather than accepting a leaf's claim about its lineage. A forged or widened claim introduced mid-chain is caught even when the leaf and the other hops are untouched. Tests: `mid_chain_scope_escalation_is_not_attenuated` (`chain_verification.rs:347`), `tampered_parent_vaid_is_inauthentic` (`chain_verification.rs:247`). |
+| 10. Revoking the root invalidates the whole chain | **Carried and verified.** | `RevocationStatus` is computed over the *whole assembled lineage*, not the leaf alone: revoked if any id anywhere in the chain is revoked ([`revocation.rs:92-96`](crates/vaid-mint/src/revocation.rs)). This only holds if the lineage assembles completely: an unresolvable ancestor fails closed to `Unavailable` rather than silently checking only the leaf. Test: `revoking_makes_a_store_available_and_reports_any_hop` (`revocation.rs:505-514`), which revokes a root id directly and shows the leaf's lineage comes back `Revoked`. |
+
+**Revocation trade-offs.** A live revocation check gives a verifier the newest
+answer, at the cost of a lookup the verifier cannot always make: when the store
+is unreachable, VAID's reference seam reports `Unavailable` and verification
+fails closed, so an outage in the revocation path denies traffic rather than
+silently approving it. Short-lived credentials move the trade-off the other
+way: a VAID's lifetime is clamped to never outlive its parent's at mint time
+(property 5 above), so a compromised or no-longer-wanted delegate's authority
+expires on its own, without needing a live check at all, at the cost of
+however long its remaining TTL is. VAID is built to support both: a deployment
+can run live checks for the hops it wants to kill immediately, lean on short
+expiries for the ones it doesn't, or do both at once. Neither one is forced,
+and R.4.5 of [`docs/spec/revocation.md`](docs/spec/revocation.md) is explicit
+that a fail-open posture may be configured, but a deployment has to ask for it
+by name; it is never the default.
+
 ## What it does
 
 ### Sign and verify directly with the primitive
