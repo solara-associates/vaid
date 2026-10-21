@@ -15,3 +15,7 @@ guarantee.
   `mint_demo_chain_tool`. Stdio transport only. Depends on
   `vaid-mint>=0.11.0,<0.12` for every cryptographic and attenuation check;
   implements none of its own.
+- `key_url` fetch hardened against SSRF: `https://` only, the resolved
+  address is checked before every request and every redirect hop (refusing
+  loopback, private, link-local — including cloud metadata endpoints —
+  multicast and reserved targets), with a response size cap and a timeout.
