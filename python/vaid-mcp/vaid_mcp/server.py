@@ -52,7 +52,10 @@ def verify_chain(chain: dict, public_key: str | None = None, key_url: str | None
     64 hex characters or unpadded base64url) or `key_url` (an https:// URL to a
     document shaped like this repo's `docs/kernel-keys.json`, i.e.
     `{"keys": {"<thumbprint>": {<JWK>}}}`). `key_url` is the only network call
-    this tool makes, and only to the URL the caller gave it.
+    this tool makes, and only to the URL the caller gave it. It must resolve to
+    a public address: loopback, private, link-local (including cloud metadata
+    endpoints), multicast and reserved targets are refused, on the initial
+    request and on every redirect hop, with a size cap and a timeout.
 
     Returns the overall verdict, a plain-English reason, and a per-hop
     authenticity breakdown.

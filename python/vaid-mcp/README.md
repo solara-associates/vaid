@@ -88,7 +88,13 @@ can claim anything about its own signer. See
   `{"keys": {"<thumbprint>": {"kty": "OKP", "crv": "Ed25519", "x": "..."}}}`.
 
 `key_url` is the only network call any tool in this package makes, and it is
-only ever made to the URL you gave it.
+only ever made to the URL you gave it. It is hardened against being pointed
+somewhere it should not go: only `https://` is accepted (no plain `http://`),
+the resolved address is checked before every request — including each
+redirect hop — and refused if it is loopback, private, link-local (which
+covers cloud metadata endpoints like `169.254.169.254`), multicast, or
+otherwise reserved, and the response is capped in size and bounded by a
+timeout.
 
 ## What this is not
 
