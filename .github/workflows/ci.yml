@@ -142,7 +142,7 @@ jobs:
       - name: Install the published vaid-mint, as the README tells a reader to
         run: |
           python -m pip install --upgrade pip
-          python -m pip install 'vaid-mint>=0.9,<0.10'
+          python -m pip install 'vaid-mint>=0.11,<0.12'
       # The script asserts its own narrative and exits non-zero when any step stops
       # behaving the way its prose says it does, so a change in the published
       # package's behaviour fails HERE rather than being discovered by whoever is
