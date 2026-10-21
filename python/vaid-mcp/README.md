@@ -1,5 +1,7 @@
 # vaid-mcp
 
+<!-- mcp-name: io.github.solara-associates/vaid-mcp -->
+
 An MCP server for the open [VAID](../../README.md) agent-identity standard.
 Four tools, stdio transport, no setup required to try it.
 

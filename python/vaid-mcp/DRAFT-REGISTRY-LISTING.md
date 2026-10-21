@@ -13,22 +13,41 @@ approval in the GitHub UI, same as a PyPI release of this package.
 
 ## Namespace
 
-`io.github.solara-associates/vaid-mcp` — verified at publish time via GitHub
-OAuth/OIDC membership in the `solara-associates` org, per the registry's
-reverse-DNS namespace rule. No domain verification needed.
+`io.github.solara-associates/vaid-mcp` — the `io.github.<account>/*` form,
+required by the registry for GitHub-based auth
+([registry docs](https://modelcontextprotocol.io/registry/authentication)).
+`mcp-publisher login github` runs a GitHub OAuth device-code flow; the
+registry grants publish rights to whatever `io.github.<account>` namespace
+that authenticated identity is authorized for. The docs don't spell out the
+org-membership check beyond that — in practice it means: log in as a
+`solara-associates` member (or org owner), and publishing under
+`io.github.solara-associates/*` will fail at that step if the account isn't
+one. No DNS/domain verification is needed for this path.
 
-## Publishing, when approved
+## Submission steps, confirmed against the current registry docs — NOT RUN
 
-```sh
-# one-time: authenticate as a solara-associates org member
-mcp-publisher login github
+1. **Publish `vaid-mcp` 0.1.0 to PyPI first.** The registry's publish step
+   does a live lookup against `https://pypi.org/pypi/vaid-mcp/json` and
+   fetches the PyPI-rendered README to check for the required marker (next
+   step) — it does not accept an unpublished package. This needs Allan's
+   approval same as any release in this repo.
+2. **README marker, already added** (`python/vaid-mcp/README.md` line 3):
+   `<!-- mcp-name: io.github.solara-associates/vaid-mcp -->`. Must appear
+   in the README exactly as rendered on PyPI, matching `server.json`'s
+   `name` field.
+3. **Authenticate:**
+   ```sh
+   mcp-publisher login github
+   ```
+   (device-code OAuth flow; the signed-in account must be a
+   `solara-associates` member for the namespace below to be accepted.)
+4. **Validate, then publish:**
+   ```sh
+   mcp-publisher validate server.json
+   mcp-publisher publish server.json
+   ```
 
-# validate server.json against the schema, then publish
-mcp-publisher validate server.json
-mcp-publisher publish server.json
-```
-
-This requires `vaid-mcp` 0.1.0 to already be on PyPI (the `packages[0]`
-entry in `server.json` names the PyPI package `mcp-publisher` will check
-against). Do not run either command until Allan has approved the PyPI
-release itself.
+Do not run any of steps 1, 3 or 4 until Allan has explicitly approved the
+PyPI release and the registry submission separately — the PyPI publish is
+itself the first irreversible step (a yanked PyPI release still occupies
+the version number) and the registry publish references it directly.
