@@ -35,6 +35,29 @@ This is a real gap in the published package, not a workaround to route around
 silently: it should be reported upstream and `vaid-mint` should use
 `vaid-pop`'s hash the way `document.ts` already does. See the PR description.
 
+## "Check a Solara production credential"
+
+A separate button from the four synthetic examples. On click, and only on
+click, it fetches `https://solara.associates/.well-known/synthera-kernel-keys.json`
+(Solara's published production trust anchor) and verifies a real credential
+production actually minted (`samples/production-credential.json`, captured
+read-only from the live `solara.associates/vaid/verify` page's own "LOAD A
+REAL ONE" sample on 2026-10-21).
+
+That credential is `sig_version: 3`; this package verifies `sig_version: 4`
+only, so it correctly reports `Fail: Authenticity` with the reason "this page
+does not recognize" that signature format, alongside `Fail: Expiry` (it is
+also, genuinely, long past its `expires_at`). Both are real, honest findings
+about the credential, not bugs in this page.
+
+**Known limitation:** `solara.associates/.well-known/synthera-kernel-keys.json`
+is not served with CORS headers, so this fetch only succeeds when this page is
+hosted on the same origin as `solara.associates` (or the endpoint later adds
+`Access-Control-Allow-Origin`). Elsewhere, the button fails gracefully with a
+clear message. The fetch-and-verify logic itself is confirmed working against
+a same-origin mirror of the real key file; only the cross-origin fetch is
+host-dependent.
+
 ## Samples
 
 `scripts/generate-samples.mjs` mints the four "Try an example" fixtures using
