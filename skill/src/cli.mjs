@@ -21,6 +21,7 @@ import {
   ReferenceIssuer,
   kernelKeyThumbprint,
   isSpecialUseTrustDomain,
+  prefixEntry,
 } from 'vaid-mint';
 
 import { packEnvelope, parseEnvelope } from './envelope.mjs';
@@ -31,12 +32,12 @@ import { Finding, Headline, loadAnchor, verifyEnvelope } from './verify-core.mjs
  * Render a `scope_boundary` for a human.
  *
  * Handles BOTH wire forms deliberately, and this is display rather than
- * verification, so that is not a legacy acceptance of anything. This package
- * installs the PUBLISHED SDK (release-map.json), so it must render a v3 bare-string
- * boundary while that is what the registry serves and a v4 typed entry once
- * ADR-0009 ships. Hard-coding either one prints `[object Object]` or `undefined` on
- * the other side of that release, over a credential the user is being asked to
- * read before sending.
+ * verification, so that is not a legacy acceptance of anything. `mint` now
+ * always builds v4 typed entries (ADR-0009, vaid-mint ^0.11.0), but `verify`
+ * and `present` still read whatever a holder presents, including an older
+ * v3 bare-string document minted before this package bumped. Hard-coding
+ * either form prints `[object Object]` or `undefined` on the other one, over
+ * a credential the user is being asked to read before sending.
  *
  * A `prefix` entry prints as its value, so the common case reads exactly as the
  * bare-string form did. Any other kind prints as `kind=value`: a credential the
@@ -178,12 +179,9 @@ async function cmdMint(flags) {
     version: String(flags.version ?? '1.0.0'),
     tenantId: String(flags.tenant ?? 'local'),
     // `--scope` is a comma-separated list of resource prefixes, which is the one
-    // boundary kind ADR-0009 S.8 defines. It is passed to the SDK in the SDK's own
-    // form, and this package installs the PUBLISHED SDK rather than this repo's
-    // sources on purpose (release-map.json), so it cannot send typed entries until
-    // the typed SDK is on the registry. See BACKLOG: this line moves to
-    // `.map(prefixEntry)` in the same change that bumps the dependency.
-    scopeBoundary: list(flags.scope),
+    // boundary kind ADR-0009 S.8 defines. Each one becomes a typed `prefix` entry,
+    // the v4 wire form the published SDK (vaid-mint ^0.11.0) requires.
+    scopeBoundary: list(flags.scope).map(prefixEntry),
     capabilitySet: list(flags.caps),
   };
 
