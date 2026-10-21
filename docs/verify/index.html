@@ -171,8 +171,8 @@
   <p class="tagline">
     Check whether an agent credential is genuine, what it allows, and whether a chain of
     delegations holds together. Everything below runs in your browser. This page makes
-    no network request while you verify. The only exception is "Fetch key from URL",
-    which only runs when you click it.
+    no network request while you verify. The only exceptions are "Fetch key from URL" and
+    "Check a Solara production credential", and only when you click one of them.
   </p>
 
   <div class="panel">
@@ -186,6 +186,17 @@
 
     <label for="chain-input">Paste a VAID credential, or a chain (a JSON array, root first)</label>
     <textarea id="chain-input" spellcheck="false" placeholder='{"vaid_id": "...", ...}  or  [ {root}, {child}, {leaf} ]'></textarea>
+  </div>
+
+  <div class="panel">
+    <label>Check a real credential</label>
+    <button type="button" id="check-production-button">Check a Solara production credential</button>
+    <div id="check-production-status"></div>
+    <p class="no-network-note">
+      This fetches Solara's production public key from its published
+      .well-known endpoint, the one request this button makes, only when you click it,
+      and checks it against a credential that production actually minted.
+    </p>
   </div>
 
   <div class="panel">

@@ -3,9 +3,10 @@
  *
  * Uses the published `vaid-mint` npm package directly — the same open-source
  * reference verifier anyone can `npm install vaid-mint` and run themselves.
- * Makes no network request of its own. The only network call this page can
- * ever make is fetching a `.well-known/vaid-keys.json` URL, and only when you
- * click "Fetch key from URL".
+ * Makes no network request of its own. The only two network calls this page
+ * can ever make are fetching a `.well-known/vaid-keys.json` URL ("Fetch key
+ * from URL") and fetching Solara's production key ("Check a Solara
+ * production credential"), each only when you click its button.
  */
 import './polyfills/buffer-global.js';
 import {
@@ -30,11 +31,19 @@ import validTwoHop from '../samples/valid-two-hop.json';
 import scopeWidens from '../samples/scope-widens.json';
 import expiredCredential from '../samples/expired-credential.json';
 import tamperedByte from '../samples/tampered-byte.json';
+import productionCredential from '../samples/production-credential.json';
 
 interface SampleFile {
   label: string;
   kernelPublicKeyHex: string;
   documents: Vaid[];
+}
+
+interface ProductionCredentialFile {
+  label: string;
+  source: string;
+  notes: string;
+  document: Vaid;
 }
 
 const SAMPLES: Record<string, SampleFile> = {
@@ -44,6 +53,9 @@ const SAMPLES: Record<string, SampleFile> = {
   'tampered-byte': tamperedByte as SampleFile,
 };
 
+const PRODUCTION_CREDENTIAL = productionCredential as ProductionCredentialFile;
+const PRODUCTION_KEYS_URL = 'https://solara.associates/.well-known/synthera-kernel-keys.json';
+
 const chainInput = document.getElementById('chain-input') as HTMLTextAreaElement;
 const keyInput = document.getElementById('key-input') as HTMLTextAreaElement;
 const keyUrlInput = document.getElementById('key-url-input') as HTMLInputElement;
@@ -52,6 +64,8 @@ const keyUrlStatus = document.getElementById('key-url-status') as HTMLElement;
 const verifyButton = document.getElementById('verify-button') as HTMLButtonElement;
 const resultsEl = document.getElementById('results') as HTMLElement;
 const summaryEl = document.getElementById('summary') as HTMLElement;
+const checkProductionButton = document.getElementById('check-production-button') as HTMLButtonElement;
+const checkProductionStatus = document.getElementById('check-production-status') as HTMLElement;
 
 function setSample(name: keyof typeof SAMPLES): void {
   const sample = SAMPLES[name];
@@ -108,6 +122,36 @@ async function fetchKeyUrl(): Promise<void> {
         : 'Fetched 1 key and filled it in below.';
   } catch (err) {
     keyUrlStatus.textContent = `Could not fetch or read that URL: ${(err as Error).message}`;
+  }
+}
+
+checkProductionButton.addEventListener('click', () => {
+  void checkProductionCredential();
+});
+
+async function checkProductionCredential(): Promise<void> {
+  checkProductionStatus.textContent = `Fetching ${PRODUCTION_KEYS_URL} ...`;
+  try {
+    const res = await fetch(PRODUCTION_KEYS_URL);
+    if (!res.ok) {
+      checkProductionStatus.textContent = `Could not fetch the production key (status ${res.status}).`;
+      return;
+    }
+    const json = await res.json();
+    const keys = parseKeysDocument(json);
+    const wantedThumbprint = PRODUCTION_CREDENTIAL.document.kernel_key_thumbprint;
+    const match = keys.find((k) => k.thumbprint === wantedThumbprint) ?? keys[0];
+    if (!match) {
+      checkProductionStatus.textContent = 'Fetched the production key file, but it did not contain a recognizable key.';
+      return;
+    }
+    keyInput.value = toHexKey(match.publicKey);
+    chainInput.value = JSON.stringify(PRODUCTION_CREDENTIAL.document, null, 2);
+    runVerify();
+    checkProductionStatus.textContent =
+      `Fetched the production key and loaded ${PRODUCTION_CREDENTIAL.label.toLowerCase()}. ${PRODUCTION_CREDENTIAL.notes}`;
+  } catch (err) {
+    checkProductionStatus.textContent = `Could not fetch the production key: ${(err as Error).message}`;
   }
 }
 
