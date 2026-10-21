@@ -1,10 +1,24 @@
+"""A minted root+child chain tests can mutate before verifying, plus the
+matching trust key.
+
+Deliberately NOT a `conftest.py`. Every other package's test directory in
+this repo that defines one (`vaid-mint/conftest.py`, `vaid-jwt-bridge/tests/
+conftest.py`) is loaded by pytest's rootdir-insertion with no further
+namespace above it, so two conftest.py files both named "tests" (or both
+bare "conftest") collide the moment CI runs every package's tests in one
+`pytest` invocation (`ci.yml`'s combined "pytest conformance suite" step) —
+`ValueError: Plugin already registered under a different name`. A uniquely
+named plain module sidesteps that: it is imported directly by each test file
+(`from vaid_mcp_chain_fixture import ChainFixture`), never through pytest's
+conftest machinery, so its module name is never forced into collision with
+another package's.
+"""
+
 from __future__ import annotations
 
 import base64
 import os
-from datetime import datetime, timedelta, timezone
 
-import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from vaid_pop import canonical_request_signing_bytes, utc_whole_second_rfc3339
 
@@ -65,8 +79,3 @@ class ChainFixture:
 
     def keys(self):
         return resolve_keys(public_key=self.public_key.hex(), key_url=None)
-
-
-@pytest.fixture
-def chain_fixture():
-    return ChainFixture()
