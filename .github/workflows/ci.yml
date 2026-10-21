@@ -152,6 +152,38 @@ jobs:
       - name: Run the quickstart (fails the job on any non-zero exit)
         run: python examples/quickstart/quickstart.py
 
+  package-quickstarts:
+    name: Package quickstarts run against their PUBLISHED dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each entry installs ONLY what PyPI serves (no ./python/<pkg> local
+          # install — see the `quickstart` job above for why that is deliberate),
+          # so a breaking change in a published dependency fails here instead of
+          # being discovered by whoever runs this example first.
+          - name: vaid-jwt-bridge
+            install: "vaid-jwt-bridge 'pyjwt[crypto]>=2.8'"
+            script: python/vaid-jwt-bridge/examples/quickstart.py
+          - name: vaid-langchain
+            install: "'vaid-langchain[langchain]'"
+            script: python/vaid-langchain/examples/quickstart.py
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install ${{ matrix.name }} from PyPI
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ${{ matrix.install }}
+      - name: Run ${{ matrix.name }}'s quickstart (fails the job on any non-zero exit)
+        run: python ${{ matrix.script }}
+
   name-guard:
     name: No added line reintroduces a guarded term
     runs-on: ubuntu-latest
