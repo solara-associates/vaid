@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from vaid_mcp.explain import explain_vaid
 
+from vaid_mcp_chain_fixture import ChainFixture
 
-def test_explains_root_credential(chain_fixture):
+
+def test_explains_root_credential():
+    chain_fixture = ChainFixture()
     explanation = explain_vaid(chain_fixture.root)
     assert explanation.is_root
     assert explanation.parent_vaid is None
@@ -12,7 +15,8 @@ def test_explains_root_credential(chain_fixture):
     assert "This is a DECODING, not a verification" in explanation.warning
 
 
-def test_explains_delegated_child(chain_fixture):
+def test_explains_delegated_child():
+    chain_fixture = ChainFixture()
     explanation = explain_vaid(chain_fixture.child)
     assert not explanation.is_root
     assert explanation.parent_vaid == chain_fixture.root["vaid_id"]
