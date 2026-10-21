@@ -1,0 +1,33 @@
+# A2 — this repo's single region declaration.
+#
+# vaid ships no deployed service of its own (it is a set of libraries: Rust
+# crates, Python packages, TypeScript packages, and a spec/skill). A grep of
+# this repo's infra, terraform, deploy and CI config (.github/workflows/,
+# and the rest of the tree) found no region literal in any such config, and
+# no GCP infra lives in this repo to declare a region for.
+#
+# The one place a region string does appear is prose: skill/trust-anchor.json,
+# docs/kernel-keys.json, docs/claims-register.json and BACKLOG.md each quote
+# "europe-west1" describing the EXTERNAL production substrate
+# (synthera-substrate-prod) that a phase1e-conformance Cloud Run job verifies
+# against — not a region vaid itself deploys to. Treating that as this repo's
+# own declared region would be wrong: it names a system vaid audits, not one
+# it runs.
+#
+# With no infra region of its own to read, this falls back to the estate
+# convention documented in the architectural-rules repo's own regions.yaml:
+# europe-west2. This is a documented ASSUMPTION, not a reading — flagged for
+# an owner decision if vaid ever gains its own deployed service.
+permitted_regions:
+  - europe-west2
+
+allowlist:
+  # Prose describing the external substrate vaid verifies against, quoting
+  # its region as part of the deployment description. Not infra-as-code for
+  # this repo. (None of these extensions are in the check's scanned source
+  # suffixes today, but this is listed explicitly so a future suffix
+  # addition does not silently start flagging prose.)
+  - "skill/trust-anchor.json"
+  - "docs/kernel-keys.json"
+  - "docs/claims-register.json"
+  - "BACKLOG.md"

@@ -1,0 +1,33 @@
+# Opts this repo in to the Solara Architectural Rules Stop-gate and makes
+# edit-time findings blocking instead of advisory. See ADR-0004 in the
+# architectural-rules repo.
+#
+# Validated against the plugin's repo-config schema on every hook run.
+# Unknown keys FAIL (A5.13).
+version: 1
+rules_version: "7"
+
+# A2's declaration and the waiver file both sit at the root, which is also the
+# default; they are stated because this file is the one place a reader looks
+# for where they live.
+regions: regions.yaml
+waivers: waivers.yaml
+
+checks:
+  exclude:
+    # Rust build output.
+    - "target/**"
+    - "**/target/**"
+    # Python build/venv/cache output. vaid ships six python/ packages, each
+    # with its own venv and cache during local development.
+    - "**/__pycache__/**"
+    - "**/*.egg-info/**"
+    - "**/.venv/**"
+    - "**/.buildvenv/**"
+    - "**/.installtest/**"
+    - "**/dist/**"
+    - "**/build/**"
+    # TypeScript build output. vaid ships three typescript/ packages.
+    - "node_modules/**"
+    - "typescript/*/dist/**"
+    - "typescript/*/test-dist/**"

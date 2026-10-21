@@ -1,0 +1,5 @@
+# A7.waiver-expiry — every waiver carries an expiry date and fails CI on that
+# date. No genuine pre-existing violation requiring a waiver was found during
+# the opt-in run that produced this file (s388); none is invented
+# speculatively.
+waivers: []
