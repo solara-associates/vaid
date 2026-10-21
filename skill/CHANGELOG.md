@@ -2,6 +2,29 @@
 
 All notable changes to `vaid-skill`. This project follows semantic versioning.
 
+## 0.2.0 — unreleased
+
+**Held: this release does not publish until SYNTHERA production runs
+vaid-mint 0.11.0 (the #177 cutover), per the sync rule.** See vaid#138.
+
+### Changed
+
+- **`vaid-mint` dependency bumped from `^0.8.0` to `^0.11.0`.** `--scope`
+  entries are now built with the SDK's own `prefixEntry`, matching the v4
+  typed `scope_boundary` form (ADR-0009) that `vaid-mint` >= 0.10.0 requires
+  at mint time and every verifier requires on the wire. `vaid verify` and
+  `vaid present` still read a legacy bare-string (v3) boundary when a holder
+  presents one; only minting changed shape.
+
+### Known gap
+
+- **`test/vectors/production-vaid.json` is sig_version 3** and is refused by
+  vaid-mint 0.11.0's verifier (the v3 and v4 canonical signing bytes differ,
+  so the old signature does not verify under the v4 recomputation). The test
+  covering it is marked `skip` rather than weakened or deleted — see vaid#138.
+  Resolved when production is confirmed on vaid-mint 0.11.0 and the fixture
+  is refreshed with a genuine v4 capture.
+
 ## 0.1.3 — 2026-08-10
 
 ### Fixed
