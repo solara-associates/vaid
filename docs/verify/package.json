@@ -1,0 +1,20 @@
+{
+  "name": "vaid-verify-page",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Standalone, browser-only VAID verifier. Built against the published vaid-mint package only.",
+  "type": "module",
+  "scripts": {
+    "generate-samples": "node scripts/generate-samples.mjs",
+    "build": "esbuild src/main.ts --bundle --format=esm --target=es2020 --alias:node:crypto=./src/polyfills/node-crypto-shim.ts --outfile=dist/bundle.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "vaid-mint": "0.11.0",
+    "vaid-pop": "0.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.9.0"
+  }
+}
