@@ -1,0 +1,24 @@
+{
+  "$comment": "DRAFT — NOT SUBMITTED. Prepared for the official MCP registry (registry.modelcontextprotocol.io) per the 2025-12-11 server.json schema. Publishing requires `mcp-publisher` authenticated as a member of the solara-associates GitHub org, and every publish in this repo needs Allan's approval in the GitHub UI. Do not run `mcp-publisher publish` against this file without that approval.",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.solara-associates/vaid-mcp",
+  "description": "Verify, decode and check permissions on VAID agent-identity delegation chains, and mint a throwaway demo chain to try it with no setup. Built on the open-source vaid-mint reference verifier; calls no external service except a key URL you supply.",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/solara-associates/vaid",
+    "source": "github",
+    "subfolder": "python/vaid-mcp"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "vaid-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "runtimeHint": "python",
+      "packageArguments": []
+    }
+  ]
+}
