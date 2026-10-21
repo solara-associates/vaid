@@ -64,7 +64,7 @@ through the `RevocationCheck` seam while still being perfectly authentic.
 Click the badge to run it in Colab with nothing installed, or locally in two lines:
 
 ```sh
-pip install 'vaid-mint>=0.9,<0.10'
+pip install 'vaid-mint>=0.11,<0.12'
 python examples/quickstart/quickstart.py
 ```
 

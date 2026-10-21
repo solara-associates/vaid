@@ -65,7 +65,11 @@ def main() -> None:
     issuer = ReferenceIssuer.from_seed(
         kernel_key.private_bytes_raw(), vaid_ttl_hours=1, trust_domain=TRUST_DOMAIN
     )
-    mint = MintService(issuer, InMemoryAudit())
+    # max_delegation_depth=2: this example mints a 3-hop chain (orchestrator ->
+    # report-worker -> report-reader), one hop deeper than the mint's 0.11.0
+    # default of 1. The library default stays at 1; this is this example's own
+    # mint policy, set explicitly for the two-hop delegation it demonstrates.
+    mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
 
     root = mint.mint_root(
         VaidSeed(

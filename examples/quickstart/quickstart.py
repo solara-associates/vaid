@@ -3,7 +3,7 @@
 
 Run it:
 
-    pip install 'vaid-mint>=0.9,<0.10'
+    pip install 'vaid-mint>=0.11,<0.12'
     python examples/quickstart/quickstart.py
 
 Nothing is written to disk and no network call is made. The signing keys are
@@ -44,6 +44,7 @@ from vaid_mint import (
     build_mint_pop_payload,
     has_capability,
     is_in_scope,
+    prefix_entry,
     verify_chain,
     verify_vaid_authenticity,
     verify_vaid_standing,
@@ -96,7 +97,10 @@ print("VAID in five minutes: mint, delegate, verify, and watch three denials hap
 rule("Step 0: stand up a mint")
 
 issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
-mint = MintService(issuer, InMemoryAudit())
+# max_delegation_depth=2 so step 4c's root -> child -> grandchild attempt reaches
+# the SCOPE check this quickstart is demonstrating, instead of being refused one
+# hop earlier by the depth limit (0.11.0 default is 1, i.e. root -> child only).
+mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
 kernel_key = issuer.kernel_public_key()
 
 print(
@@ -128,7 +132,7 @@ root_seed = VaidSeed(
     agent_class="orchestrator",
     version="1.0.0",
     tenant_id="acme",
-    scope_boundary=["data.acme"],
+    scope_boundary=[prefix_entry("data.acme")],
     capability_set=["read", "write"],
     public_key_der=orchestrator_pub,
 )
@@ -159,7 +163,7 @@ child_seed = VaidSeed(
     version="1.0.0",
     tenant_id="acme",
     parent_vaid=root["vaid_id"],
-    scope_boundary=["data.acme.reports"],
+    scope_boundary=[prefix_entry("data.acme.reports")],
     capability_set=["read"],
     public_key_der=worker_pub,
 )
@@ -266,7 +270,7 @@ widening_seed = VaidSeed(
     version="1.0.0",
     tenant_id="acme",
     parent_vaid=child["vaid_id"],
-    scope_boundary=["data.acme"],
+    scope_boundary=[prefix_entry("data.acme")],
     capability_set=["read"],
     public_key_der=grandchild_pub,
 )
