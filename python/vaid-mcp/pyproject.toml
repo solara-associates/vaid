@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaid-mcp"
+version = "0.1.0"
+description = "MCP server exposing the VAID standard as four tools for any MCP-capable agent or developer: verify a chain, explain one in plain language, check whether a chain permits an action, and mint a throwaway demo chain to try the others with no setup."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "solara.associates" },
+    { name = "solara.associates", email = "info@solara.associates" },
+]
+keywords = ["vaid", "mcp", "model-context-protocol", "agent-identity", "delegation", "attenuation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# vaid-mint supplies every cryptographic and attenuation primitive (vaid_mint.verify,
+# vaid_mint.chain, vaid_mint.document, vaid_mint.mint, vaid_mint.issuer) — this package
+# is an MCP tool surface over them, not a second implementation. No dependency on
+# SYNTHERA or any Solara-internal service: this verifies the published open-source
+# standard only, against whatever key the caller supplies.
+dependencies = [
+    "vaid-mint>=0.11.0,<0.12",
+    "vaid-pop>=0.2.0,<0.3",
+    "cryptography>=42.0",
+    "mcp>=1.2.0,<2",
+]
+
+[project.scripts]
+vaid-mcp = "vaid_mcp.server:main"
+# The packaged firewall release.yml's verify-artifact job runs against the
+# published wheel. vaid-mcp implements no new cryptography of its own — every
+# signature check, chain walk and scope comparison is vaid-mint's — so this does
+# not re-prove vaid-mint's byte-identity. It proves the thing that IS new here:
+# that each of the four tool handlers, called the way the MCP server calls them,
+# reaches the documented verdict on a fixed set of known-good and known-bad
+# chains (minted fresh each run, not vendored, since nothing here is byte-pinned
+# cross-language). Exits non-zero on the first wrong verdict.
+vaid-mcp-conformance = "vaid_mcp.conformance:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[project.urls]
+Homepage = "https://github.com/solara-associates/vaid"
+Repository = "https://github.com/solara-associates/vaid"
+Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-mcp"
+Issues = "https://github.com/solara-associates/vaid/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vaid_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vaid_mcp", "tests", "examples", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
