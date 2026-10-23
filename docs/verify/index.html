@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VAID verifier</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e2e0da;
+    --text: #22221f;
+    --muted: #6b6a63;
+    --pass-bg: #eaf6ec;
+    --pass-border: #9bcba8;
+    --pass-text: #1f5c2e;
+    --fail-bg: #fbeceb;
+    --fail-border: #e2a19c;
+    --fail-text: #7a241d;
+    --accent: #2c5f6b;
+    --accent-text: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-block: 32px;
+    padding-inline: 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin-bottom: 4px; }
+  .tagline { color: var(--muted); margin-top: 0; margin-bottom: 24px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  textarea, input[type="text"], input[type="url"] {
+    width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    background: #fdfdfc;
+    color: var(--text);
+  }
+  textarea#chain-input { min-height: 160px; }
+  textarea#key-input { min-height: 48px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  button {
+    font: inherit;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  button:hover { background: #f0efe9; }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.primary:hover { opacity: 0.92; }
+  .key-url-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .key-url-row input { flex: 1; min-width: 200px; }
+  #key-url-status { font-size: 0.85rem; color: var(--muted); margin-top: 6px; min-height: 1.2em; }
+  .no-network-note {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+  .summary {
+    font-size: 1.05rem;
+    padding: 14px 16px;
+    border-radius: 8px;
+    border: 1px solid;
+    margin-bottom: 16px;
+  }
+  .summary-pass { background: var(--pass-bg); border-color: var(--pass-border); color: var(--pass-text); }
+  .summary-fail { background: var(--fail-bg); border-color: var(--fail-border); color: var(--fail-text); }
+  .hop-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .hop-pass { border-left: 4px solid var(--pass-border); }
+  .hop-fail { border-left: 4px solid var(--fail-border); }
+  .hop-title { margin-bottom: 8px; }
+  .hop-role { color: var(--muted); font-weight: 400; }
+  .hop-facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 10px;
+    row-gap: 4px;
+    margin: 0 0 10px 0;
+    font-size: 0.9rem;
+  }
+  .hop-facts dt { color: var(--muted); }
+  .hop-facts dd { margin: 0; }
+  .hop-checks { display: flex; flex-direction: column; gap: 6px; }
+  .hop-check { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 0.9rem; }
+  .pill {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill-pass { background: var(--pass-bg); color: var(--pass-text); border: 1px solid var(--pass-border); }
+  .pill-fail { background: var(--fail-bg); color: var(--fail-text); border: 1px solid var(--fail-border); }
+  .hop-reason { color: var(--muted); }
+  details.proves { margin-top: 24px; }
+  details.proves summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+  details.proves[open] summary { margin-bottom: 12px; }
+  .proves ul { padding-left: 20px; }
+  .proves li { margin-bottom: 6px; }
+  footer { margin-top: 32px; font-size: 0.8rem; color: var(--muted); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181a;
+      --panel: #1f2124;
+      --border: #34363a;
+      --text: #e9e9e6;
+      --muted: #9a9a93;
+      --pass-bg: #11291a;
+      --pass-border: #2f6b43;
+      --pass-text: #86d19c;
+      --fail-bg: #2c1513;
+      --fail-border: #8a3a33;
+      --fail-text: #f0a39a;
+      --accent: #5fa6b8;
+      --accent-text: #0e1b1e;
+      textarea, input[type="text"], input[type="url"] { background: #16181a; color: var(--text); }
+      button { background: var(--panel); color: var(--text); }
+      button:hover { background: #2a2c30; }
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181a;
+    --panel: #1f2124;
+    --border: #34363a;
+    --text: #e9e9e6;
+    --muted: #9a9a93;
+    --pass-bg: #11291a;
+    --pass-border: #2f6b43;
+    --pass-text: #86d19c;
+    --fail-bg: #2c1513;
+    --fail-border: #8a3a33;
+    --fail-text: #f0a39a;
+    --accent: #5fa6b8;
+    --accent-text: #0e1b1e;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>VAID verifier</h1>
+  <p class="tagline">
+    Check whether an agent credential is genuine, what it allows, and whether a chain of
+    delegations holds together. Everything below runs in your browser. This page makes
+    no network request while you verify. The only exceptions are "Fetch key from URL" and
+    "Check a Solara production credential", and only when you click one of them.
+  </p>
+
+  <div class="panel">
+    <label>Try an example</label>
+    <div class="examples">
+      <button type="button" data-sample="valid-two-hop">Valid two-hop chain</button>
+      <button type="button" data-sample="scope-widens">Scope widens (fails)</button>
+      <button type="button" data-sample="expired-credential">Expired credential (fails)</button>
+      <button type="button" data-sample="tampered-byte">Tampered byte (fails)</button>
+    </div>
+
+    <label for="chain-input">Paste a VAID credential, or a chain (a JSON array, root first)</label>
+    <textarea id="chain-input" spellcheck="false" placeholder='{"vaid_id": "...", ...}  or  [ {root}, {child}, {leaf} ]'></textarea>
+  </div>
+
+  <div class="panel">
+    <label>Check a real credential</label>
+    <button type="button" id="check-production-button">Check a Solara production credential</button>
+    <div id="check-production-status"></div>
+    <p class="no-network-note">
+      This fetches Solara's production public key from its published
+      .well-known endpoint, the one request this button makes, only when you click it,
+      and checks it against a credential that production actually minted.
+    </p>
+  </div>
+
+  <div class="panel">
+    <label for="key-input">Trusted public key (hex, base64, or a JWK like {"kty":"OKP","crv":"Ed25519","x":"..."})</label>
+    <textarea id="key-input" spellcheck="false" placeholder="Paste the issuer's published public key here"></textarea>
+    <div class="key-url-row">
+      <input type="url" id="key-url-input" placeholder="https://example.org/.well-known/vaid-keys.json" />
+      <button type="button" id="fetch-key-button">Fetch key from URL</button>
+    </div>
+    <div id="key-url-status"></div>
+    <p class="no-network-note">
+      Fetching a key URL is the one action on this page that reaches the network, and only
+      when you click the button above. Everything else, including pasting, checking examples,
+      and verifying, never leaves your browser.
+    </p>
+  </div>
+
+  <button type="button" class="primary" id="verify-button">Verify</button>
+
+  <div id="summary" style="margin-top:20px;"></div>
+  <div id="results"></div>
+
+  <details class="proves">
+    <summary>What a "Pass" here proves, and what it doesn't</summary>
+    <p>A pass means:</p>
+    <ul>
+      <li>Every credential you pasted was genuinely signed by the key you provided, and has not been altered since.</li>
+      <li>None of them has passed its expiry date.</li>
+      <li>If you pasted a chain, each credential only narrows what the one before it was allowed to do. Nobody granted themselves more authority than they were given.</li>
+    </ul>
+    <p>A pass does <strong>not</strong> mean:</p>
+    <ul>
+      <li><strong>That the credential hasn't been withdrawn.</strong> Revocation needs a live, trusted list to check against. This page is offline by design and has no such list, so it cannot tell you a credential was withdrawn five minutes ago. A pass here means "genuinely issued and in date," not "currently authorized."</li>
+      <li><strong>That you can trust the public key.</strong> This page checks the signature against whatever key you gave it. If that key isn't really the issuer's, perhaps you got it from somewhere untrustworthy, a pass just means the credential matches that key, not that the key belongs to who you think.</li>
+      <li><strong>Anything about what the agent actually did.</strong> This only checks the credential, not any request, log, or outcome.</li>
+    </ul>
+  </details>
+
+  <footer>
+    Verification code: the published open-source
+    <a href="https://www.npmjs.com/package/vaid-mint">vaid-mint</a> package, used exactly as anyone
+    can <code>npm install</code> it. Source for this page:
+    <a href="https://github.com/solara-associates/vaid/tree/main/docs/verify">solara-associates/vaid, docs/verify</a>.
+  </footer>
+</main>
+<script type="module" src="./dist/bundle.js"></script>
+</body>
+</html>
