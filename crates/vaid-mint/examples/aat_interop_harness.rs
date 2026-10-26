@@ -664,11 +664,14 @@ fn main() {
                  this group's scenarios remain unrepresentable"
             ),
             ("6", _) => skip(
-                "per-invocation, audience-bound PoP: AAT's PoP is signed fresh \
-                 by the current holder's cnf key at call time and checked \
-                 against an enforcement-point audience. VAID's PoP (vaid-pop) \
-                 is a mint-time BYO-key possession proof with no per-call, \
-                 audience-bound presentation step at all"
+                "per-invocation, audience-bound PoP: VAID DOES have per-request \
+                 proof of possession -- vaid-client signs every request into \
+                 the four x-synthera-* headers (auth.rs). What this pass did \
+                 not do is translate AAT's invocation-time PoP presentation \
+                 (a fresh signature over the current holder's cnf key and an \
+                 enforcement-point audience, bound to the specific tool call) \
+                 into that model. This is a gap in this pass's translation, \
+                 not an absence of the underlying mechanism in VAID"
             ),
             ("7", _) => skip(
                 "JOSE header well-formedness (typ/alg/jwk parameters): VAID's \

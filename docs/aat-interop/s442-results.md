@@ -140,15 +140,15 @@ construct that is actually missing, not a generic "unsupported":
 
 | AAT group(s) | Topic | Why unrepresentable |
 |---|---|---|
-| J.2 | duplicate jti / cycle detection | `PresentedBundle` dedupes a repeated id (last-write-wins); VAID's real cycle detection only fires on an actual parent-pointer cycle |
+| J.2 | duplicate jti / cycle detection | not expressed in this pass; under review (see `BACKLOG.md`, "AAT interop hardening review") |
 | J.4, J.12, J.20, J.21 (remainder) | holder-of-key chain signing, par_hash | VAID has one kernel key per chain; no per-hop distinct signer, no par_hash concept. (J.21.22/J.21.23 are the one sub-case with a real analogue, handled above.) |
-| J.6 | per-invocation audience-bound PoP | checked `vaid-pop` directly: `RequestAuthPayload`/`CompletionRecord` are per-request signatures with no audience claim or per-call presentation step at all; no analogue |
+| J.6 | per-invocation audience-bound PoP | VAID DOES have per-request proof of possession: `vaid-client` signs every request into the four `x-synthera-*` headers, via `vaid-pop`'s `RequestAuthPayload`/`sign_payload` primitives (`auth.rs`). This pass did not translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's `cnf` key and an enforcement-point audience, bound to the specific tool call) into that model -- a gap in this pass's translation, not an absence of the mechanism in VAID |
 | J.7, J.14 (parts), J.27 (parts) | JOSE header rules | VAID's wire format carries no JOSE header |
 | J.8 (remainder), J.9 (parts), J.22 | per-argument constraint maps / closed-world argument checking | `capability_set` is a flat string list; VAID evaluates no tool-call arguments. (J.8.3/J.8.5's unrecognised-*kind* sub-case has a real analogue, handled above; the per-argument *value* algebra does not.) |
 | J.10 | del_depth/del_max_depth consistency | VAID carries no such field; its only depth concept, `validate_max_delegation_depth`, is mint-time issuer policy, never re-derived at verify time |
 | J.11 (remainder), J.15-J.19 (remainder), J.26 (remainder) | the AAT check-predicate algebra (`all`/`any`/`one_of`/`not_one_of`/`exact`) and its S4.5 subsumption table | VAID has no constraint-predicate language. (The widening/non-membership/empty-map instances in this range -- J.11, J.11.b, J.19.11, J.19.15, J.26.1 -- have real analogues via `scope_attenuates`/`caps_attenuate`, handled above; the richer set-algebra over named constraint values does not.) |
-| J.13 (remainder) | iat ordering / MAX_IAT_SKEW / zero-lifetime bounds | `verify_chain_at` checks only expiry attenuation, never iat ordering or skew |
-| J.23.2, J.23.3 | MAX_TOKEN_SIZE / MAX_CHAIN_SIZE | grepped `vaid-mint`, `vaid-pop`, and the integration packages: no byte-size cap anywhere in VAID's verification surface |
+| J.13 (remainder) | iat ordering / MAX_IAT_SKEW / zero-lifetime bounds | not expressed in this pass; under review (see `BACKLOG.md`, "AAT interop hardening review") |
+| J.23.2, J.23.3 | MAX_TOKEN_SIZE / MAX_CHAIN_SIZE | not expressed in this pass; under review (see `BACKLOG.md`, "AAT interop hardening review") |
 | J.24 | JWS claim type/number admissibility | the harness builds native `Vaid` documents via `serde`; it parses no AAT JWS bytes, so there is no raw-claim-level check to run |
 | J.25 | `authorization_details` entries of other types | VAID's document has no "entries"/"type" concept; `capability_set` is the sole grant list |
 
