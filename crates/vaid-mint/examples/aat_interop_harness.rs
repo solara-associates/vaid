@@ -27,7 +27,7 @@
 //!
 //! Usage: `cargo run -p vaid-mint --example aat_interop_harness -- <vectors.json> <results.json>`
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 
@@ -35,16 +35,23 @@ use chrono::{DateTime, TimeZone, Utc};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{json, Value};
 
-use vaid_mint::chain::{verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey};
+use vaid_mint::chain::{
+    verify_chain_at, ChainVerification, KernelKeyMap, PresentedBundle, SingleKernelKey,
+};
 use vaid_mint::document::{AgentClass, AgentId, ScopeBoundaryEntry, TenantId, Vaid, VaidId};
 use vaid_mint::revocation::RevocationStatus;
-use vaid_mint::verify::verify_vaid_standing_from_json;
+use vaid_mint::verify::{verify_vaid_standing_from_json, VaidVerdict};
 use vaid_mint::{attestation::AttestationBundle, canonical_vaid_signing_bytes};
 
 /// Fixed trust domain for every document this harness builds. Well-formed per
 /// `issuer_identity::is_valid_trust_domain` (two labels, lowercase, non-numeric
 /// final label).
 const TRUST_DOMAIN: &str = "aat-harness.example.test";
+/// A SECOND trust domain, bound to a second kernel key, for J.21.22/J.21.23 --
+/// VAID's own hand-written interop vector 12 needs two legitimately trusted
+/// issuers to construct its scenario (a key trusted for one domain, used on a
+/// document claiming the other).
+const TRUST_DOMAIN_2: &str = "aat-harness-second.example.test";
 const TENANT: &str = "aat-harness-tenant";
 
 struct Kernel {
@@ -55,11 +62,14 @@ struct Kernel {
 
 impl Kernel {
     fn new() -> Self {
-        // Fixed, non-secret seed: this key signs only documents this harness
-        // builds in-process for a single run, never anything presented to a
-        // third party, so a fixed seed costs nothing and makes a run
-        // reproducible.
-        let seed = [0x51u8; 32];
+        Self::from_seed(0x51)
+    }
+
+    /// A second, independent kernel keypair -- for the untrusted-key vectors
+    /// (J.14.c) and the two-trust-anchor vectors (J.21.22/J.21.23). Fixed,
+    /// non-secret seed, same reasoning as `new()`.
+    fn from_seed(byte: u8) -> Self {
+        let seed = [byte; 32];
         let kp = Ed25519KeyPair::from_seed_unchecked(&seed).expect("valid Ed25519 seed");
         let public_key = kp.public_key().as_ref().to_vec();
         let thumbprint = vaid_mint::issuer_identity::kernel_key_thumbprint(&public_key);
@@ -93,6 +103,30 @@ fn build_doc(
     expires_at: DateTime<Utc>,
     capability_set: Vec<String>,
 ) -> Vaid {
+    build_doc_ex(
+        kernel,
+        parent,
+        issued_at,
+        expires_at,
+        capability_set,
+        Vec::<ScopeBoundaryEntry>::new(),
+        TRUST_DOMAIN,
+    )
+}
+
+/// Full form of [`build_doc`]: also sets `scope_boundary` and `trust_domain`
+/// explicitly, for the vectors that turn on scope attenuation (02, 11) or on
+/// which trust domain a document claims (12).
+#[allow(clippy::too_many_arguments)]
+fn build_doc_ex(
+    kernel: &Kernel,
+    parent: Option<&Vaid>,
+    issued_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    capability_set: Vec<String>,
+    scope_boundary: Vec<ScopeBoundaryEntry>,
+    trust_domain: &str,
+) -> Vaid {
     let agent_id = AgentId::new();
     let parent_vaid_id: Option<VaidId> = parent.map(|p| p.vaid_id());
     let lineage_hash = vaid_mint::document::compute_lineage_hash(parent_vaid_id, &agent_id);
@@ -106,14 +140,60 @@ fn build_doc(
         vec![0u8; 32], // holder public key placeholder; not consulted by verify_chain_at
         Vec::new(),    // kernel_signature attached below
         parent_vaid_id,
-        Vec::<ScopeBoundaryEntry>::new(), // unrestricted scope boundary (top)
+        scope_boundary,
         lineage_hash,
         capability_set,
-        TRUST_DOMAIN.to_string(),
+        trust_domain.to_string(),
         kernel.thumbprint.clone(),
     );
     let sig = kernel.sign(&canonical_vaid_signing_bytes(&unsigned));
     unsigned.with_kernel_signature(sig)
+}
+
+/// A trusted-issuer registry that binds each accepted kernel key to exactly
+/// one trust domain -- the fix shipped for GHSA-hfjh-v2x2-r58v in
+/// `python/vaid-a2a/vaid_a2a/verifier.py`'s `_TrustedIssuerMap`, transliterated
+/// here because bare `vaid_mint::chain::KernelKeyResolver` deliberately does
+/// not carry this binding (see `mint.rs`'s `tenant_attenuates` docs: the
+/// domain-to-key binding is out-of-band and is the caller's responsibility).
+/// This harness is the caller, for the one AAT group (J.21.22/J.21.23) that
+/// needs the binding VAID's a2a/adk/jwt-bridge integration layers already
+/// ship. Mirrors `trust_domain_for` exactly: look up by thumbprint, compare
+/// against the document's own claimed `trust_domain`, fail closed on either a
+/// miss or a mismatch -- never derive an answer without running this check.
+struct TrustedIssuerMap {
+    by_thumbprint: HashMap<String, (Vec<u8>, String)>,
+}
+
+impl TrustedIssuerMap {
+    fn new(entries: &[(&Kernel, &str)]) -> Self {
+        let by_thumbprint = entries
+            .iter()
+            .map(|(k, domain)| (k.thumbprint.clone(), (k.public_key.clone(), domain.to_string())))
+            .collect();
+        Self { by_thumbprint }
+    }
+
+    /// `Some(domain)` this thumbprint is bound to, or `None` if it is not an
+    /// accepted key at all.
+    fn trust_domain_for(&self, thumbprint: &str) -> Option<&str> {
+        self.by_thumbprint.get(thumbprint).map(|(_, d)| d.as_str())
+    }
+
+    /// `true` iff `doc`'s claimed `trust_domain` is EXACTLY the domain this
+    /// registry bound to the key `doc` claims it was signed by. An untrusted
+    /// key (no entry at all) and a trusted key used outside its bound domain
+    /// are both refused here -- the same `issuer_mismatch` outcome VAID's own
+    /// vector 12 and the a2a verifier both give, for the same reason: in the
+    /// domain it is claiming, this signer is exactly as unauthorized as a
+    /// signer this registry has never heard of.
+    fn binds(&self, doc: &Vaid) -> bool {
+        self.trust_domain_for(doc.kernel_key_thumbprint()) == Some(doc.trust_domain())
+    }
+
+    fn as_key_map(&self) -> KernelKeyMap {
+        KernelKeyMap::new(self.by_thumbprint.values().map(|(k, _)| k.clone()))
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -168,6 +248,37 @@ fn chain_verdict(
     }
 }
 
+/// Like [`chain_verdict`], but authenticates against a [`TrustedIssuerMap`]
+/// instead of one [`SingleKernelKey`]: the leaf's resolved key must ALSO be
+/// bound to the trust domain the leaf claims (and the same for every
+/// ancestor), checked before `verify_chain_at` ever runs. A bound-domain
+/// mismatch or an unaccepted key is `issuer_mismatch` -- the same DENY
+/// `verify_chain_at`'s own authentication step gives for a key the resolver
+/// does not accept at all, because that is exactly what an unbound domain
+/// claim is.
+fn chain_verdict_with_binding(
+    trust: &TrustedIssuerMap,
+    leaf: &Vaid,
+    ancestors: &[Vaid],
+    now: DateTime<Utc>,
+    tool: &str,
+) -> ResultEntry {
+    if !trust.binds(leaf) || ancestors.iter().any(|a| !trust.binds(a)) {
+        return deny();
+    }
+    let bundle = PresentedBundle::new(ancestors.iter().cloned());
+    let keys = trust.as_key_map();
+    let verification = verify_chain_at(&keys, leaf, &bundle, &AttestationBundle::default(), now);
+    let attenuated = matches!(verification, ChainVerification::Attenuated);
+    let leaf_live = !leaf.is_expired_at(now);
+    let authorized = leaf.has_capability(tool);
+    if attenuated && leaf_live && authorized {
+        permit()
+    } else {
+        deny()
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -182,6 +293,18 @@ fn main() {
     let vectors = suite["vectors"].as_array().expect("vectors array");
 
     let kernel = Kernel::new();
+    // An untrusted key, for J.14.c ("header-supplied key is not used"): a
+    // document that is internally self-consistent -- its own
+    // kernel_key_thumbprint really does correspond to the key that signed it
+    // -- but whose key the verifier's trust set does not contain at all.
+    let untrusted_kernel = Kernel::from_seed(0x52);
+    // A second trusted kernel/trust-domain pair, for the two-trust-anchor
+    // vectors (J.21.22/J.21.23 / VAID's own vector 12).
+    let kernel2 = Kernel::from_seed(0x53);
+    let trust_map = TrustedIssuerMap::new(&[
+        (&kernel, TRUST_DOMAIN),
+        (&kernel2, TRUST_DOMAIN_2),
+    ]);
     let mut results: BTreeMap<String, ResultEntry> = BTreeMap::new();
 
     for v in vectors {
@@ -374,6 +497,24 @@ fn main() {
                 let tampered = root.with_kernel_signature(tampered_sig);
                 chain_verdict(&kernel, &tampered, &[], now, &tool)
             }
+            // J.14.c -- "header-supplied key is not used" (VAID vector 06,
+            // unknown root key): a document that is internally self-consistent
+            // -- signed by `untrusted_kernel`, whose own thumbprint it
+            // correctly names -- but the verifier's resolver does not accept
+            // that key at all. `chain_verdict` authenticates against `kernel`
+            // only, so `resolve_key` returns `None` and `verify_chain_at`
+            // returns `Inauthentic` for a reason that has nothing to do with
+            // the signature bytes being wrong.
+            ("14", "J.14.c") => {
+                let root = build_doc(
+                    &untrusted_kernel,
+                    None,
+                    ts(now.timestamp() - 300),
+                    ts(now.timestamp() + 3600),
+                    vec![tool.clone()],
+                );
+                chain_verdict(&kernel, &root, &[], now, &tool)
+            }
             ("14", _) => skip(
                 "JOSE header rule (alg:none rejection, header-supplied jwk \
                  ignored): VAID's wire format carries no JOSE header at all \
@@ -469,19 +610,58 @@ fn main() {
                  translating it would fabricate a rejection VAID's real API \
                  does not perform"
             ),
+            // J.21.22 -- "root iss names another trust anchor's issuer" (VAID
+            // vector 12: trust domain not bound to the signing key). The root
+            // is signed, genuinely, by kernel2's key -- which the registry
+            // trusts for TRUST_DOMAIN_2 -- but the document claims
+            // TRUST_DOMAIN (kernel's domain). `chain_verdict_with_binding`
+            // runs the transliterated `_TrustedIssuerMap.trust_domain_for`
+            // check from the already-fixed GHSA-hfjh-v2x2-r58v before calling
+            // `verify_chain_at` at all, exactly mirroring what VAID's own
+            // a2a/adk/jwt-bridge verifiers do in production.
+            ("21", "J.21.22") => {
+                let root = build_doc_ex(
+                    &kernel2,
+                    None,
+                    ts(now.timestamp() - 300),
+                    ts(now.timestamp() + 3600),
+                    vec![tool.clone()],
+                    Vec::<ScopeBoundaryEntry>::new(),
+                    TRUST_DOMAIN, // claims the OTHER trusted issuer's domain
+                );
+                chain_verdict_with_binding(&trust_map, &root, &[], now, &tool)
+            }
+            // J.21.23 -- "root signed by the second trust anchor's key",
+            // presented honestly: kernel2 signs, and the document correctly
+            // claims TRUST_DOMAIN_2 (kernel2's own bound domain). Exercises
+            // the same binding check on its PERMIT side: a second, properly
+            // bound trust anchor must still verify.
+            ("21", "J.21.23") => {
+                let root = build_doc_ex(
+                    &kernel2,
+                    None,
+                    ts(now.timestamp() - 300),
+                    ts(now.timestamp() + 3600),
+                    vec![tool.clone()],
+                    Vec::<ScopeBoundaryEntry>::new(),
+                    TRUST_DOMAIN_2,
+                );
+                chain_verdict_with_binding(&trust_map, &root, &[], now, &tool)
+            }
             ("4", _) | ("20", _) | ("21", _) | ("12", _) => skip(
                 "holder-of-key per-hop signing / par_hash binding: AAT's chain \
                  is signed hop-by-hop by the PREVIOUS hop's own holder key \
                  (cnf.jwk), with par_hash binding a hop to a specific parent \
                  presentation. VAID's entire chain is signed by one issuer's \
-                 kernel key (KernelKeyResolver selects by key thumbprint only; \
-                 trust_domain is checked only for well-formedness, never \
-                 cross-checked against which trust anchor's key verified). \
-                 VAID has no per-hop distinct-signer check and no concept of \
-                 selecting among multiple named trust anchors by issuer \
-                 identity, so there is no VAID code path this group's scenario \
-                 (including J.21.22 and J.21.23, the second-trust-anchor \
-                 vectors) can exercise"
+                 kernel key, and bare vaid-mint's KernelKeyResolver selects by \
+                 key thumbprint only, with no cross-check against which trust \
+                 anchor's key verified -- that binding is deliberately \
+                 out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge \
+                 integration layers instead (GHSA-hfjh-v2x2-r58v, already \
+                 fixed; see J.21.22/J.21.23 above, which this harness DOES \
+                 translate using that binding). VAID still has no per-hop \
+                 distinct-signer check or par_hash concept, so the rest of \
+                 this group's scenarios remain unrepresentable"
             ),
             ("6", _) => skip(
                 "per-invocation, audience-bound PoP: AAT's PoP is signed fresh \
@@ -494,13 +674,73 @@ fn main() {
                 "JOSE header well-formedness (typ/alg/jwk parameters): VAID's \
                  wire format carries no JOSE header"
             ),
+            // J.8.3/J.8.5 -- "unknown constraint_type is fail-closed" (VAID
+            // vector 13, unknown scope kind): a document whose scope_boundary
+            // carries a `kind` VAID's own matcher (document.rs's
+            // RECOGNISED_SCOPE_KINDS) does not recognise. `verify_vaid` /
+            // `verify_vaid_standing` has exactly this check, at step S.10:
+            // `boundary_is_evaluable` fails and the verdict is
+            // `UnknownScopeKind`, fail-closed, regardless of whether the
+            // unrecognised entry is ever consulted by the invoked tool
+            // (covers J.8.5's "on a tool that is not invoked" too -- the
+            // check does not look at which tool was called).
+            ("8", "J.8.3") | ("8", "J.8.5") => {
+                let unknown_kind_entry = ScopeBoundaryEntry::new(
+                    "future-constraint-kind-v99",
+                    json!("whatever-value"),
+                )
+                .expect("an unrecognised kind parses structurally (S.10)");
+                let leaf = build_doc_ex(
+                    &kernel,
+                    None,
+                    ts(now.timestamp() - 300),
+                    ts(now.timestamp() + 3600),
+                    vec![tool.clone()],
+                    vec![unknown_kind_entry],
+                    TRUST_DOMAIN,
+                );
+                // `verify_vaid_standing` checks expiry against the REAL wall
+                // clock (`Vaid::is_expired`), not an injected `now` -- fine
+                // for a live caller, wrong for a reproducible vector run
+                // against a fixed `now` in the past. Composed here exactly as
+                // `verify_vaid_standing` itself composes it (authenticity,
+                // then `boundary_is_evaluable`), but with `is_expired_at(now)`
+                // in place of the real-clock `is_expired()`.
+                let verdict = {
+                    use vaid_mint::document::boundary_is_evaluable;
+                    use vaid_mint::verify::verify_vaid_authenticity_graded;
+                    let authenticity = verify_vaid_authenticity_graded(&kernel.public_key, &leaf);
+                    if !authenticity.is_valid() {
+                        authenticity
+                    } else if leaf.is_expired_at(now) {
+                        VaidVerdict::Expired
+                    } else if !boundary_is_evaluable(leaf.scope_boundary()) {
+                        VaidVerdict::UnknownScopeKind
+                    } else {
+                        VaidVerdict::Valid
+                    }
+                };
+                if verdict == VaidVerdict::UnknownScopeKind {
+                    deny()
+                } else {
+                    // Any other outcome would mean this harness's unknown-kind
+                    // entry was somehow evaluable after all -- a harness bug,
+                    // not a verdict to report, so fail loudly rather than
+                    // silently recording the wrong thing.
+                    panic!("{id}: expected UnknownScopeKind, got {verdict:?}")
+                }
+            }
             ("8", _) => skip(
                 "per-argument constraint-map structure, including the \
                  empty-parent-map / constraint-key-introduction invariant (step \
                  4p2): VAID's capability_set is a flat list of opaque strings \
                  and scope_boundary is prefix matching over a single resource \
                  string; neither carries a keyed map of per-argument \
-                 constraints a derived token can narrow or introduce"
+                 constraints a derived token can narrow or introduce. (J.8.3 \
+                 and J.8.5 are handled above via the unknown-scope-kind \
+                 verdict, which is a real VAID analogue for \"unrecognised \
+                 constraint_type\"; the rest of this group is per-argument \
+                 constraint evaluation VAID does not perform at all.)"
             ),
             ("10", _) => skip(
                 "del_depth/del_max_depth consistency between hops (AAT I2): \
@@ -509,13 +749,120 @@ fn main() {
                  issuer policy (how deep an issuer will mint), never re-derived \
                  or re-checked from a presented chain's claims at verify time"
             ),
+            // J.11 -- "I4 violation: one_of widened" and J.19.11 -- "range:
+            // derived min below the parent's" (VAID vector 02: child scope
+            // wider than parent). Both AAT vectors test the same property
+            // through a different constraint kind (an enumerated `one_of` set
+            // and a numeric `range`, respectively); VAID has neither
+            // constraint kind, but it has the one property both are
+            // instances of -- a child claiming authority the parent does not
+            // hold -- and `scope_attenuates` (consulted by `verify_chain_at`)
+            // is exactly that check. The child's scope_boundary prefix here
+            // is NOT a sub-prefix of the parent's, so it is wider, the same
+            // shape of violation both AAT vectors assert, translated through
+            // VAID's own containment predicate rather than reproduced.
+            ("11", "J.11") | ("19", "J.19.11") => {
+                let root = build_doc_ex(
+                    &kernel,
+                    None,
+                    ts(now.timestamp() - 600),
+                    ts(now.timestamp() + 3600),
+                    vec![tool.clone()],
+                    vec![ScopeBoundaryEntry::prefix("data.allowed")],
+                    TRUST_DOMAIN,
+                );
+                let leaf = build_doc_ex(
+                    &kernel,
+                    Some(&root),
+                    ts(now.timestamp() - 60),
+                    ts(now.timestamp() + 1800),
+                    vec![tool.clone()],
+                    vec![ScopeBoundaryEntry::prefix("data.")], // wider than the parent's
+                    TRUST_DOMAIN,
+                );
+                chain_verdict(&kernel, &leaf, &[root], now, &tool)
+            }
+            // J.11.b -- "I4 violation: tool not present in parent" (VAID
+            // vector 08: capability not in parent). `caps_attenuate` (also
+            // consulted by `verify_chain_at`) is exactly this check: the leaf
+            // requests a capability the parent never held at all, as opposed
+            // to J.9.3's "held, then dropped before the leaf".
+            ("11", "J.11.b") => {
+                let root = build_doc(
+                    &kernel,
+                    None,
+                    ts(now.timestamp() - 600),
+                    ts(now.timestamp() + 3600),
+                    vec!["other_tool".to_string()],
+                );
+                let leaf = build_doc(
+                    &kernel,
+                    Some(&root),
+                    ts(now.timestamp() - 60),
+                    ts(now.timestamp() + 1800),
+                    vec![tool.clone()], // never held by the parent
+                );
+                chain_verdict(&kernel, &leaf, &[root], now, &tool)
+            }
+            // J.19.15 -- "derived empty map under a closed parent" (VAID
+            // vector 11: unrestricted child). An empty child scope_boundary
+            // means unrestricted (top); `scope_attenuation_reason`'s
+            // empty-child guard refuses it under a non-empty (restricted)
+            // parent as `ScopeEscalation`, so `verify_chain_at` is
+            // `NotAttenuated` here, never reaching `Attenuated`.
+            ("19", "J.19.15") => {
+                let root = build_doc_ex(
+                    &kernel,
+                    None,
+                    ts(now.timestamp() - 600),
+                    ts(now.timestamp() + 3600),
+                    vec![tool.clone()],
+                    vec![ScopeBoundaryEntry::prefix("data.allowed")], // closed parent
+                    TRUST_DOMAIN,
+                );
+                let leaf = build_doc_ex(
+                    &kernel,
+                    Some(&root),
+                    ts(now.timestamp() - 60),
+                    ts(now.timestamp() + 1800),
+                    vec![tool.clone()],
+                    Vec::<ScopeBoundaryEntry>::new(), // unrestricted child, under a restricted parent
+                    TRUST_DOMAIN,
+                );
+                chain_verdict(&kernel, &leaf, &[root], now, &tool)
+            }
+            // J.26.1 -- "one_of rejects a value outside the set" (VAID
+            // vector 05, shared with J.9.3: action outside leaf scope). Same
+            // mechanism as J.9.3/J.9.6 -- `Vaid::has_capability` -- the leaf
+            // simply never holds the invoked tool's capability.
+            ("26", "J.26.1") => {
+                let root = build_doc(
+                    &kernel,
+                    None,
+                    ts(now.timestamp() - 600),
+                    ts(now.timestamp() + 3600),
+                    vec!["other_tool".to_string()],
+                );
+                let leaf = build_doc(
+                    &kernel,
+                    Some(&root),
+                    ts(now.timestamp() - 60),
+                    ts(now.timestamp() + 1800),
+                    vec!["other_tool".to_string()], // never grants `tool`
+                );
+                chain_verdict(&kernel, &leaf, &[root], now, &tool)
+            }
             ("11", _) | ("15", _) | ("16", _) | ("17", _) | ("18", _) | ("19", _) | ("26", _) => skip(
                 "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, \
                  and the S4.5 subsumption table over them): VAID has no \
                  constraint-predicate language at all. Containment is tested \
                  only by flat capability-string membership and resource-prefix \
                  matching, which cannot express set-algebra widening/narrowing \
-                 over named constraint values"
+                 over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 \
+                 and J.26.1 are handled above: each is an instance of plain \
+                 scope/capability widening or non-membership, which VAID DOES \
+                 have a check for, even though it has none of AAT's richer \
+                 predicate kinds.)"
             ),
             ("22", _) => skip(
                 "optional/unnamed invocation arguments: part of AAT's \
