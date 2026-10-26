@@ -1471,3 +1471,58 @@ belong in it. As a record it can hold all three kinds, and the CI job checks onl
 the derivable ones. Both are defensible; the current design is the third option —
 gate everything, derive nothing — and that is the one that reddens on a timer and
 teaches people to edit the date.
+
+## B19: AAT interop hardening review: duplicate ids in a presented bundle, issued_at ordering and skew, size limits
+
+### What this is
+
+`docs/aat-interop/s442-results.md` (the s442 property-level interop run against
+the AAT -02 JWS test vector suite, `tenuo-ai/tenuo`) marks three groups of AAT
+vectors "not expressed in this pass; under review" instead of giving the full
+mechanical reason inline, to keep that doc readable. The full reasons, as
+determined by that run, are recorded here so nothing is lost.
+
+### J.2: duplicate jti / cycle detection over a presented chain
+
+AAT step 2c requires rejecting a presented chain that reuses one `jti` across
+two sibling entries (a duplicate id, not a parent-pointer cycle). VAID's
+`PresentedBundle` dedupes a repeated `vaid_id` by last-write-wins rather than
+rejecting the reuse outright, and VAID's real cycle detection (inside
+`assemble_lineage`) only fires on an actual parent-pointer cycle, which this
+scenario does not construct. Translating this vector as written would have
+meant fabricating a rejection VAID's real API does not perform, so it was left
+unexercised rather than asserted.
+
+Worth reviewing: whether `PresentedBundle`'s last-write-wins dedup is itself
+the right behaviour for a presented bundle that reuses an id across two
+documents that are not parent/child, independent of this AAT vector.
+
+### J.13.b, J.13.d, J.13.e, J.13.f: issued_at ordering, MAX_IAT_SKEW, zero-lifetime invariants
+
+AAT steps 4j-4l require checking that each hop's `iat` is not before its
+parent's, that `iat` is not more than `MAX_IAT_SKEW` in the future relative to
+the verifier's clock, and that a zero-lifetime token (`exp == iat`) is still
+rejected on its own terms. VAID's `verify_chain_at` consults only `expires_at`
+attenuation between hops; it never reads or compares `issued_at`, and has no
+freshness-skew bound at verify time at all. None of these four invariants has
+a VAID check behind it today.
+
+Worth reviewing: whether `verify_chain_at` should gain an `iat`-ordering check
+between hops (parallel to its existing `exp` attenuation) independent of
+whether AAT interop is ever revisited, since issued-at ordering between a
+parent and child is a property a delegation chain plausibly wants regardless
+of token format.
+
+### J.23.2, J.23.3: MAX_TOKEN_SIZE / MAX_CHAIN_SIZE byte-size limits
+
+AAT's `params` impose a maximum byte size on a single token and on the
+presented chain as a whole. A grep of `vaid-mint/src` (and `vaid-pop` and the
+a2a/adk/jwt-bridge integration packages) at the time of the s442 run found no
+byte-size cap anywhere in VAID's verification surface, so this is not a check
+VAID can run today, not merely one this harness failed to translate.
+
+Worth reviewing: whether an unbounded chain/document size is an actual
+resource-exhaustion exposure for a deployment that accepts presented chains
+from an untrusted caller, or whether size limiting is correctly left to a
+layer above vaid-mint (a request body limit, for instance) and does not belong
+in this crate at all.
