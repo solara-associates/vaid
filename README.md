@@ -141,11 +141,15 @@ drifted.
 [`docs/capabilities.json`](docs/capabilities.json) — not in this prose — because CI
 fails if it drifts from reality.
 
-**One thing is *not* reproducible from published packages:** the
-framework-governance claim — *one governance layer, not one per framework* — runs
-against the private substrate and is presented as read-only, dated evidence.
-Reproducing it needs substrate access; the published packages give you the client
-and reference-mint half.
+**One thing is *not* reproducible from published packages:** governance
+(identity and attenuated delegation) for the ADK and OpenAI adapters rested on a
+dated 2026-07-28/29 run against the private substrate, and is currently withdrawn
+from [`docs/claims-register.json`](docs/claims-register.json) pending a rerun,
+because a fail-open bug in the exact code path the harness's denial checks
+exercise was fixed in `forge-agents` after that run, and no rerun exists since.
+The LangChain half of governance *is* reproducible from published packages: it is
+what `vaid-langchain`'s own conformance tests, run from the PyPI install, directly
+demonstrate.
 
 ## What this is
 
