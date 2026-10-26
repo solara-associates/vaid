@@ -10,6 +10,18 @@ and the crate at 0.1.0, and that is correct rather than drift. Byte-identity
 between the implementations is asserted by the frozen conformance vectors, never by
 the version number.
 
+## [0.3.1]
+
+No code changes. This release exists to publish once through npm trusted
+publishing — the 0.3.0 release above predates the trusted publisher being
+configured on this package and used a classic npm token instead. `0.3.1` is the
+first `vaid-client` publish carrying automatic npm provenance (a signed
+attestation binding the published tarball to the workflow, repository and
+commit that built it — see `.github/workflows/release.yml`), and the publish
+itself is what confirms the trusted publisher configured on npmjs.com for this
+package actually works, which until now had been configured but never
+exercised.
+
 ## [0.3.0]
 
 **The first release published to npm**, and the only one to date.
