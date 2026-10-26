@@ -4,16 +4,20 @@
   "claims": [
     {
       "id": "framework-governance-demonstrated",
-      "claim": "Governance — the same VAID identity and attenuated delegation — has been demonstrated across ADK, LangChain and OpenAI adapters: one governance layer, not one per framework. (Live policy enforcement and audit posture are a SYNTHERA product concern, tracked in the synthera repo's claims register, not here.)",
+      "claim": "Governance, specifically the same VAID identity and attenuated delegation, is demonstrated today for the LangChain adapter: vaid-langchain is published on PyPI and its conformance tests pass against this repo's current main. The ADK and OpenAI adapters are not currently covered by this claim. That coverage rested on a live substrate run dated 2026-07-28/29, and is withdrawn because forge-agents fixed a fail-open bug in the exact code path those harnesses' denial checks exercise after that run (commit a001dac, 2026-07-30), and no rerun exists since. (Live policy enforcement and audit posture remain a SYNTHERA product concern, tracked in the synthera repo's claims register, not here.)",
       "evidence": [
-        "forge-agents/harness/phase1e_adk_conformance.py (live: governance survives the framework swap to ADK)",
-        "forge-agents/harness/phase1e_openai_conformance.py (live: same, framework=openai)",
-        "vaid python/vaid-langchain (published to PyPI, conformance-tested)"
+        "vaid python/vaid-langchain (published to PyPI 0.1.0; its own test suite passes from a clean install against this checkout's main)",
+        "forge-agents/harness/phase1e_adk_conformance.py and phase1e_openai_conformance.py (historical evidence only, see needs_reverification below; not current evidence for ADK/OpenAI)"
       ],
-      "date_last_verified": "2026-07-28",
-      "verifier": "phase1e-conformance Cloud Run job, execution phase1e-conformance-q7pfr (synthera-substrate-prod / europe-west1); image tag :6267345, forge-agents SHA 62673455d33f6834a0063ca879f67994db9a8126",
-      "verified_artifact": "forge-agents/harness/artifacts/phase1e-conformance-2026-07-28.md",
-      "verified_note": "Verified by a dated PASSING run of the phase1e LIVE conformance harnesses: ADK 7/7, OpenAI 9/9 across both delegation surfaces. Wire evidence shows real substrate mints, distinct attenuated child VAIDs, and over-envelope children denied at the substrate mint wall (least-privilege attenuation, ADR-0027 Phase 2). CORRECTION (2026-07-29): the claim previously read 'the same identity, policy and audit' — but the run proves identity + attenuated delegation, NOT policy evaluation or audit writes. Scoped to what the artifact backs; live policy/audit posture is a product claim in the synthera register. LangChain rests on published+conformance-tested vaid-langchain, not this live run."
+      "date_last_verified": "2026-10-26",
+      "verifier": "Session s447: PyPI registry check confirmed vaid-langchain 0.1.0 published; pip install of vaid-langchain + vaid-pop from this checkout into a clean venv, then pytest python/vaid-langchain/tests, 14/14 passed.",
+      "verified_artifact": "docs/session-notes/2026-10-26-claims-reverify.md",
+      "verified_note": "CORRECTION (2026-10-26): the claim previously covered ADK, LangChain and OpenAI on the strength of a 2026-07-28/29 live run. That run predates forge-agents commit a001dac (2026-07-30), which fixed a real fail-open defect in Response.denied(), the exact function the harnesses' over-envelope-denial checks (4, 4.handoff, 4.agent_tool) depend on. The recorded runs were not corrupted by the bug (the deny was explicit both times), but the harness code under test is no longer the harness code on forge-agents main, and no rerun has happened since the fix. Narrowed to LangChain, which is independently re-verified today from the published package. Earlier correction preserved: the 2026-07-29 note already scoped this claim to identity plus attenuated delegation, not policy or audit; that scoping still holds for the LangChain portion that remains.",
+      "needs_reverification": {
+        "scope": "ADK and OpenAI adapters",
+        "what_a_rerun_must_show": "A fresh phase1e-conformance execution, run against forge-agents main at or after commit a001dac (the Response.denied() fail-open fix) and against the then-current synthera substrate revision, producing a new dated artifact under forge-agents/harness/artifacts/ with adk_exit_code=0 and openai_exit_code=0, real substrate mints, distinct attenuated child VAIDs, and over-envelope children denied at the mint wall: the same shape as phase1e-conformance-2026-07-28.md and -2026-07-29.md, but against current code.",
+        "who_must_run_it": "Allan: it requires triggering a Cloud Run job execution in synthera-substrate-prod (europe-west1) that mints real VAIDs under the production operator KMS key. That is a production action and is not something an agent session should trigger unilaterally while re-verifying a documentation check."
+      }
     }
   ]
 }
