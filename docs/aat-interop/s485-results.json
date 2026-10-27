@@ -1,0 +1,896 @@
+{
+  "J.1": {
+    "verdict": "PERMIT"
+  },
+  "J.10": {
+    "verdict": "SKIP",
+    "reason": "del_depth/del_max_depth consistency between hops (AAT I2): Vaid carries no del_depth/del_max_depth field at all. VAID's only depth concept, validate_max_delegation_depth, is MINT-TIME issuer policy (how deep an issuer will mint), never re-derived or re-checked from a presented chain's claims at verify time"
+  },
+  "J.10.b": {
+    "verdict": "SKIP",
+    "reason": "del_depth/del_max_depth consistency between hops (AAT I2): Vaid carries no del_depth/del_max_depth field at all. VAID's only depth concept, validate_max_delegation_depth, is MINT-TIME issuer policy (how deep an issuer will mint), never re-derived or re-checked from a presented chain's claims at verify time"
+  },
+  "J.10.c": {
+    "verdict": "SKIP",
+    "reason": "del_depth/del_max_depth consistency between hops (AAT I2): Vaid carries no del_depth/del_max_depth field at all. VAID's only depth concept, validate_max_delegation_depth, is MINT-TIME issuer policy (how deep an issuer will mint), never re-derived or re-checked from a presented chain's claims at verify time"
+  },
+  "J.10.d": {
+    "verdict": "SKIP",
+    "reason": "del_depth/del_max_depth consistency between hops (AAT I2): Vaid carries no del_depth/del_max_depth field at all. VAID's only depth concept, validate_max_delegation_depth, is MINT-TIME issuer policy (how deep an issuer will mint), never re-derived or re-checked from a presented chain's claims at verify time"
+  },
+  "J.10.e": {
+    "verdict": "SKIP",
+    "reason": "del_depth/del_max_depth consistency between hops (AAT I2): Vaid carries no del_depth/del_max_depth field at all. VAID's only depth concept, validate_max_delegation_depth, is MINT-TIME issuer policy (how deep an issuer will mint), never re-derived or re-checked from a presented chain's claims at verify time"
+  },
+  "J.10.f": {
+    "verdict": "SKIP",
+    "reason": "del_depth/del_max_depth consistency between hops (AAT I2): Vaid carries no del_depth/del_max_depth field at all. VAID's only depth concept, validate_max_delegation_depth, is MINT-TIME issuer policy (how deep an issuer will mint), never re-derived or re-checked from a presented chain's claims at verify time"
+  },
+  "J.11": {
+    "verdict": "DENY"
+  },
+  "J.11.b": {
+    "verdict": "DENY"
+  },
+  "J.11.c": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.11.d": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.12": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.12.b": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.13": {
+    "verdict": "DENY"
+  },
+  "J.13.b": {
+    "verdict": "SKIP",
+    "reason": "iat-ordering / MAX_IAT_SKEW / zero-lifetime (exp == iat) invariants (AAT steps 4j-4l): VAID's verify_chain_at consults only expires_at attenuation between hops, never issued_at ordering or a freshness-skew bound at verify time, so this specific numeric invariant has no VAID check behind it"
+  },
+  "J.13.c": {
+    "verdict": "DENY"
+  },
+  "J.13.d": {
+    "verdict": "SKIP",
+    "reason": "iat-ordering / MAX_IAT_SKEW / zero-lifetime (exp == iat) invariants (AAT steps 4j-4l): VAID's verify_chain_at consults only expires_at attenuation between hops, never issued_at ordering or a freshness-skew bound at verify time, so this specific numeric invariant has no VAID check behind it"
+  },
+  "J.13.e": {
+    "verdict": "SKIP",
+    "reason": "iat-ordering / MAX_IAT_SKEW / zero-lifetime (exp == iat) invariants (AAT steps 4j-4l): VAID's verify_chain_at consults only expires_at attenuation between hops, never issued_at ordering or a freshness-skew bound at verify time, so this specific numeric invariant has no VAID check behind it"
+  },
+  "J.13.f": {
+    "verdict": "SKIP",
+    "reason": "iat-ordering / MAX_IAT_SKEW / zero-lifetime (exp == iat) invariants (AAT steps 4j-4l): VAID's verify_chain_at consults only expires_at attenuation between hops, never issued_at ordering or a freshness-skew bound at verify time, so this specific numeric invariant has no VAID check behind it"
+  },
+  "J.14": {
+    "verdict": "DENY"
+  },
+  "J.14.b": {
+    "verdict": "SKIP",
+    "reason": "JOSE header rule (alg:none rejection, header-supplied jwk ignored): VAID's wire format carries no JOSE header at all (signature-scheme is the `sig_version` field, inside the signed document), so there is no header for a VAID verifier to read or reject"
+  },
+  "J.14.c": {
+    "verdict": "DENY"
+  },
+  "J.15.1": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.15.2": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.15.3": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.15.4": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.15.5": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.15.6": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.1": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.2": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.3": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.4": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.5": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.6": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.7": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.16.8": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.1": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.2": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.3": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.4": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.5": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.6": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.7": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.17.8": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.18.1": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.18.2": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.1": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.10": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.11": {
+    "verdict": "DENY"
+  },
+  "J.19.12": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.13": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.14": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.15": {
+    "verdict": "DENY"
+  },
+  "J.19.2": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.3": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.4": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.5": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.6": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.7": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.8": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.19.9": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.2": {
+    "verdict": "SKIP",
+    "reason": "duplicate-jti cycle detection over a presented chain (AAT step 2c): VAID's PresentedBundle dedupes a repeated vaid_id by last-write-wins rather than rejecting the reuse outright, and its real cycle detection (inside assemble_lineage) only fires on an actual parent-pointer cycle, which this scenario (two sibling entries sharing one identifier) does not construct; translating it would fabricate a rejection VAID's real API does not perform"
+  },
+  "J.20.1": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.10": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.11": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.12": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.13": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.14": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.15": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.16": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.17": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.2": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.3": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.4": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.5": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.6": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.7": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.8": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.20.9": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.1": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.10": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.11": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.12": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.13": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.14": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.15": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.16": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.17": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.18": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.19": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.2": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.20": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.21": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.22": {
+    "verdict": "DENY"
+  },
+  "J.21.23": {
+    "verdict": "PERMIT"
+  },
+  "J.21.3": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.4": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.5": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.6": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.7": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.8": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.21.9": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.22.1": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.10": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.11": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.12": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.13": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.14": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.15": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.16": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.17": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.18": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.19": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.2": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.20": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.21": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.22": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.23": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.3": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.4": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.5": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.6": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.7": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.8": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.22.9": {
+    "verdict": "SKIP",
+    "reason": "optional/unnamed invocation arguments: part of AAT's per-argument constraint evaluation against a tool call, which VAID does not perform (see group 8/9's reason)"
+  },
+  "J.23.1": {
+    "verdict": "DENY"
+  },
+  "J.23.2": {
+    "verdict": "SKIP",
+    "reason": "MAX_TOKEN_SIZE / MAX_CHAIN_SIZE byte-size limits: VAID defines no analogous size cap anywhere in its verification surface (grep of vaid-mint/src finds no such constant), so this is not a check VAID can run"
+  },
+  "J.23.3": {
+    "verdict": "SKIP",
+    "reason": "MAX_TOKEN_SIZE / MAX_CHAIN_SIZE byte-size limits: VAID defines no analogous size cap anywhere in its verification surface (grep of vaid-mint/src finds no such constant), so this is not a check VAID can run"
+  },
+  "J.23.4": {
+    "verdict": "DENY"
+  },
+  "J.24.1": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.10": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.11": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.2": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.3": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.4": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.5": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.6": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.7": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.8": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.24.9": {
+    "verdict": "SKIP",
+    "reason": "number-admissibility / type rules on a JWS claim (e.g. jti not a string): VAID's documents are typed Rust structs deserialized by serde directly from the presented JSON; a vector here constructs raw JWS claim bytes this harness does not parse, since it builds native Vaid documents rather than an AAT JWS parser"
+  },
+  "J.25.1": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.10": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.2": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.3": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.4": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.5": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.6": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.7": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.8": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.25.9": {
+    "verdict": "SKIP",
+    "reason": "authorization_details entries of a type other than attenuating_agent_token, or more/fewer than one such entry: VAID's document has no 'entries' or 'type' concept at all -- capability_set is the sole, singular grant list"
+  },
+  "J.26.1": {
+    "verdict": "DENY"
+  },
+  "J.26.10": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.11": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.12": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.2": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.3": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.4": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.5": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.6": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.7": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.8": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.26.9": {
+    "verdict": "SKIP",
+    "reason": "AAT check-predicate algebra (all/any/one_of/not_one_of/exact, and the S4.5 subsumption table over them): VAID has no constraint-predicate language at all. Containment is tested only by flat capability-string membership and resource-prefix matching, which cannot express set-algebra widening/narrowing over named constraint values. (J.11, J.11.b, J.19.11, J.19.15 and J.26.1 are handled above: each is an instance of plain scope/capability widening or non-membership, which VAID DOES have a check for, even though it has none of AAT's richer predicate kinds.)"
+  },
+  "J.27.1": {
+    "verdict": "PERMIT"
+  },
+  "J.27.2": {
+    "verdict": "SKIP",
+    "reason": "non-JCS-canonical byte attack, same-holder-key derivation, aud array/mismatch, or JOSE-header JWK member shape: each is a property of the JWS/JOSE wire encoding or the holder-of-key PoP chain that VAID's native chain/document model does not carry at all"
+  },
+  "J.27.3": {
+    "verdict": "SKIP",
+    "reason": "non-JCS-canonical byte attack, same-holder-key derivation, aud array/mismatch, or JOSE-header JWK member shape: each is a property of the JWS/JOSE wire encoding or the holder-of-key PoP chain that VAID's native chain/document model does not carry at all"
+  },
+  "J.27.4": {
+    "verdict": "SKIP",
+    "reason": "non-JCS-canonical byte attack, same-holder-key derivation, aud array/mismatch, or JOSE-header JWK member shape: each is a property of the JWS/JOSE wire encoding or the holder-of-key PoP chain that VAID's native chain/document model does not carry at all"
+  },
+  "J.27.5": {
+    "verdict": "SKIP",
+    "reason": "non-JCS-canonical byte attack, same-holder-key derivation, aud array/mismatch, or JOSE-header JWK member shape: each is a property of the JWS/JOSE wire encoding or the holder-of-key PoP chain that VAID's native chain/document model does not carry at all"
+  },
+  "J.27.6": {
+    "verdict": "SKIP",
+    "reason": "non-JCS-canonical byte attack, same-holder-key derivation, aud array/mismatch, or JOSE-header JWK member shape: each is a property of the JWS/JOSE wire encoding or the holder-of-key PoP chain that VAID's native chain/document model does not carry at all"
+  },
+  "J.3": {
+    "verdict": "PERMIT"
+  },
+  "J.4": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.4.b": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.4.c": {
+    "verdict": "SKIP",
+    "reason": "holder-of-key per-hop signing / par_hash binding: AAT's chain is signed hop-by-hop by the PREVIOUS hop's own holder key (cnf.jwk), with par_hash binding a hop to a specific parent presentation. VAID's entire chain is signed by one issuer's kernel key, and bare vaid-mint's KernelKeyResolver selects by key thumbprint only, with no cross-check against which trust anchor's key verified -- that binding is deliberately out-of-band for vaid-mint and lives in the a2a/adk/jwt-bridge integration layers instead (GHSA-hfjh-v2x2-r58v, already fixed; see J.21.22/J.21.23 above, which this harness DOES translate using that binding). VAID still has no per-hop distinct-signer check or par_hash concept, so the rest of this group's scenarios remain unrepresentable"
+  },
+  "J.5": {
+    "verdict": "DENY"
+  },
+  "J.6.1": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.10": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.11": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.2": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.3": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.4": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.5": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.6": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.7": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.8": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.6.9": {
+    "verdict": "SKIP",
+    "reason": "per-invocation, audience-bound PoP: VAID DOES have per-request proof of possession -- vaid-client signs every request into the four x-synthera-* headers (auth.rs). What this pass did not do is translate AAT's invocation-time PoP presentation (a fresh signature over the current holder's cnf key and an enforcement-point audience, bound to the specific tool call) into that model. This is a gap in this pass's translation, not an absence of the underlying mechanism in VAID"
+  },
+  "J.7.1": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.10": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.11": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.12": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.13": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.14": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.15": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.2": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.3": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.4": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.5": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.6": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.7": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.8": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.7.9": {
+    "verdict": "SKIP",
+    "reason": "JOSE header well-formedness (typ/alg/jwk parameters): VAID's wire format carries no JOSE header"
+  },
+  "J.8.1": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.10": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.11": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.12": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.13": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.14": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.15": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.16": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.17": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.18": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.19": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.2": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.20": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.21": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.22": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.23": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.24": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.3": {
+    "verdict": "DENY"
+  },
+  "J.8.4": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.5": {
+    "verdict": "DENY"
+  },
+  "J.8.6": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.7": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.8": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.8.9": {
+    "verdict": "SKIP",
+    "reason": "per-argument constraint-map structure, including the empty-parent-map / constraint-key-introduction invariant (step 4p2): VAID's capability_set is a flat list of opaque strings and scope_boundary is prefix matching over a single resource string; neither carries a keyed map of per-argument constraints a derived token can narrow or introduce. (J.8.3 and J.8.5 are handled above via the unknown-scope-kind verdict, which is a real VAID analogue for \"unrecognised constraint_type\"; the rest of this group is per-argument constraint evaluation VAID does not perform at all.)"
+  },
+  "J.9.1": {
+    "verdict": "SKIP",
+    "reason": "closed-world per-argument constraint evaluation / duplicate JSON member in invocation args: VAID's authorization surface is flat capability-string containment (Vaid::has_capability) and prefix scope matching; it does not evaluate a tool call's arguments against a per-argument constraint map, so this scenario has no VAID check to exercise"
+  },
+  "J.9.2": {
+    "verdict": "SKIP",
+    "reason": "closed-world per-argument constraint evaluation / duplicate JSON member in invocation args: VAID's authorization surface is flat capability-string containment (Vaid::has_capability) and prefix scope matching; it does not evaluate a tool call's arguments against a per-argument constraint map, so this scenario has no VAID check to exercise"
+  },
+  "J.9.3": {
+    "verdict": "DENY"
+  },
+  "J.9.4": {
+    "verdict": "PERMIT"
+  },
+  "J.9.5": {
+    "verdict": "SKIP",
+    "reason": "closed-world per-argument constraint evaluation / duplicate JSON member in invocation args: VAID's authorization surface is flat capability-string containment (Vaid::has_capability) and prefix scope matching; it does not evaluate a tool call's arguments against a per-argument constraint map, so this scenario has no VAID check to exercise"
+  },
+  "J.9.6": {
+    "verdict": "DENY"
+  }
+}
