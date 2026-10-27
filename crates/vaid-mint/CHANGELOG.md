@@ -114,7 +114,7 @@ to add on those two sides.
   that skips validation, those tests fail.
 - **`sig_version` moves from `3` to `4`**, and `VAID_SIG_VERSION_V3` is REMOVED
   rather than retained, as the v2 constant was before it: every use site becomes a
-  compile error (or an import error), so none is missed. ADR-0008 makes
+  compile error (or an import error), so none is missed. ADR-0010 makes
   `sig_version` the discriminant for the required member set and forbids accepting
   two values that do not require the same members, so `{3, 4}` is forbidden rather
   than merely unwise.

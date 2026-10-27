@@ -1,4 +1,4 @@
-# ADR-0008: A second signature algorithm is a new `sig_version` value, not a new field
+# ADR-0010: A second signature algorithm is a new `sig_version` value, not a new field
 
 **Status:** Accepted
 **Date:** 25 September 2026

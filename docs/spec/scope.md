@@ -385,7 +385,7 @@ detached consent attestation. Credentials have a one hour default TTL, so the
 in-flight population expires on its own and no migration window is needed beyond
 that.
 
-**`sig_version` moves to 4.** ADR-0008 makes `sig_version` the discriminant for
+**`sig_version` moves to 4.** ADR-0010 makes `sig_version` the discriminant for
 the whole signing scheme including the document's required member set, and states
 the test directly: if two accepted values do not require the same members, one is
 a downgrade of the other and the pair is forbidden. A v3 document's boundary

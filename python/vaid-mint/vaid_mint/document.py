@@ -36,7 +36,7 @@ import rfc8785
 # canonical bytes of every document with a non-empty boundary move.
 #
 # The v3 constant is removed for exactly the reason the v2 one was. Keeping both
-# would also be forbidden rather than merely unwise: ADR-0008 states that a
+# would also be forbidden rather than merely unwise: ADR-0010 states that a
 # verifier MAY accept two ``sig_version`` values only where they require the SAME
 # members, and that if two accepted values do not, one is a downgrade of the
 # other. A v3 document's boundary entries are strings; a v4 document's are

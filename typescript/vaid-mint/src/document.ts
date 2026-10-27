@@ -49,7 +49,7 @@ export type { Rfc3339Utc, TenantId, VaidId } from 'vaid-pop';
  * v4 (ADR-0009) types `scope_boundary`: its entries become
  * `{"kind": ..., "value": ...}` objects rather than bare strings. The v3 constant
  * is removed for exactly the reason the v2 one was, and keeping both would also be
- * forbidden: ADR-0008 states a verifier MAY accept two `sig_version` values only
+ * forbidden: ADR-0010 states a verifier MAY accept two `sig_version` values only
  * where they require the SAME members. A v3 boundary's entries are strings; a v4
  * boundary's are objects, so `{3, 4}` is forbidden and there is no legacy
  * acceptance to write.
