@@ -6,7 +6,7 @@
 **Decision owner:** A. Smeyatsky
 **Related:** ADR-0005 (segment-bounded scope containment, whose rule this carries
 over unchanged), ADR-0006 (verify over presented bytes, whose unknown-member
-posture this deliberately inverts inside an entry), ADR-0008 (a second signature
+posture this deliberately inverts inside an entry), ADR-0010 (a second signature
 algorithm is a new `sig_version` value), `docs/spec/scope.md` revision 2,
 `scope_kinds_v1.json`
 
@@ -95,7 +95,7 @@ on an action is a future scope KIND, never a new capability and never a decorati
 on an existing one, because a capability compared by equality either fails closed
 by accident or fails open by accident depending only on which side wrote it.
 
-**7. `sig_version` moves to 4, and there is no legacy acceptance.** ADR-0008 makes
+**7. `sig_version` moves to 4, and there is no legacy acceptance.** ADR-0010 makes
 `sig_version` the discriminant for the whole signing scheme including the required
 member set, and gives the test: if two accepted values do not require the same
 members, one is a downgrade of the other and the pair is forbidden. A v3 boundary's
@@ -144,7 +144,7 @@ another costume: an old verifier reads `scope_boundary` and ignores the narrower
 member beside it. It also doubles the member set permanently.
 
 **Accept both forms, normalising a bare string to a `prefix` entry at parse.**
-Forbidden by ADR-0008 §1a as written, and for its stated reason: two accepted
+Forbidden by ADR-0010 §1a as written, and for its stated reason: two accepted
 `sig_version` values must require the same members. It also reintroduces the
 downgrade surface that signing `sig_version` exists to close, for no benefit given
 a one hour TTL.

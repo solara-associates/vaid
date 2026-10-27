@@ -42,7 +42,7 @@ pub use vaid_pop::{TenantId, VaidId};
 ///
 /// The v3 constant is removed for exactly the reason the v2 one was. It is also
 /// the case that keeping both would be forbidden rather than merely unwise:
-/// ADR-0008 states that a verifier MAY accept two `sig_version` values only
+/// ADR-0010 states that a verifier MAY accept two `sig_version` values only
 /// where they require the SAME members, and that if two accepted values do not,
 /// one is a downgrade of the other. A v3 document's boundary entries are
 /// strings; a v4 document's are objects. They do not require the same shape, so
