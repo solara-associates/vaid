@@ -41,7 +41,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { InMemoryAudit, MintService, ReferenceIssuer, kernelKeyThumbprint } from 'vaid-mint';
+import { InMemoryAudit, MintService, ReferenceIssuer, kernelKeyThumbprint, prefixEntry } from 'vaid-mint';
 import { packEnvelope } from '../src/envelope.mjs';
 
 import {
@@ -219,7 +219,7 @@ test('with a real delegation chain and both key sources, every check passes and 
       agentClass: 'orchestrator',
       version: '1.0.0',
       tenantId: 'acme',
-      scopeBoundary: ['data.acme'],
+      scopeBoundary: [prefixEntry('data.acme')],
       capabilitySet: ['read'],
     },
   });
