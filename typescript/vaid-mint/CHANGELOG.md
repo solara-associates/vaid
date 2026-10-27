@@ -13,6 +13,8 @@ version number.
 
 ## [0.11.0] — UNRELEASED
 
+Published as [GHSA-3664-9ghr-pjqc](https://github.com/solara-associates/vaid/security/advisories/GHSA-3664-9ghr-pjqc).
+
 ### Fixed: `mintChild` enforces a configurable maximum delegation depth (SECURITY)
 
 Same defect as the Rust crate's entry: `mintChild` never checked whether

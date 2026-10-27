@@ -5,6 +5,8 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
 
 ## [0.11.0] — UNRELEASED
 
+Published as [GHSA-3664-9ghr-pjqc](https://github.com/solara-associates/vaid/security/advisories/GHSA-3664-9ghr-pjqc).
+
 ### Fixed: `mint_child` enforces a configurable maximum delegation depth (SECURITY)
 
 `mint_child` attenuated a new child's tenant, scope, and capability set
