@@ -10,6 +10,7 @@
     "python/vaid-mint": { "dir": "python/vaid-mint" },
     "python/vaid-langchain": { "dir": "python/vaid-langchain" },
     "python/vaid-a2a": { "dir": "python/vaid-a2a" },
+    "python/vaid-mcp": { "dir": "python/vaid-mcp" },
     "python/vaid-adk": { "dir": "python/vaid-adk" },
     "python/vaid-jwt-bridge": { "dir": "python/vaid-jwt-bridge" },
 
