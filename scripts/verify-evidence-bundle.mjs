@@ -105,9 +105,27 @@
  * check runs under any key. There is no majority vote: which key is right is a
  * human's decision.
  *
+ * ## ===== THE ENTRY_HASH SCHEME (documented, not assumed) ================
+ *
+ * `entry_hash` is NOT canonical-JSON-of-the-row — that would be `content_hash`'s
+ * scheme, applied to the wrong thing. It is `synthera-audit::hash::compute_entry_hash`
+ * (synthera's `crates/synthera-audit/src/hash.rs:16-31`, documented in synthera's
+ * `docs/evidence-bundle-v1.md`): a raw concatenation of five fields' bytes, hashed
+ * as ONE stream —
+ *
+ *   sha256( prev_hash_bytes || event_type_bytes || json(agent_id)_bytes ||
+ *           details.to_string()_bytes || recorded_at_bytes )
+ *
+ * `computeEntryHash` below implements exactly this. A `stub: true` row (another
+ * tenant's bridging row — see `audit_entries[]` in that doc) carries none of
+ * `event_type`/`agent_id`/`details` by construction, so its `entry_hash` cannot be
+ * recomputed; that is reported as NOT CHECKED for that row, never a FAIL, and the
+ * LINKAGE check (`prev_hash[i] == entry_hash[i-1]`, scheme-independent) still
+ * covers it.
+ *
  * ## ===== ASSUMPTIONS A REVIEWER MUST CHECK ============================
  *
- * Three things below are NOT pinned by a published contract this script can read.
+ * Two things below are NOT pinned by a published contract this script can read.
  * They are named in the output as well as here, so a reviewer can tell at a glance
  * whether they are wrong, and so a reader of the output is never told something
  * was confirmed when it was only assumed:
@@ -119,17 +137,7 @@
  *   neither does, that is a FAIL. Trying both cannot weaken the check: a forger
  *   still needs the private key for either message.
  *
- *   ASSUMPTION 2 — the audit entry hash scheme. `entry_hash` is assumed to be
- *   the SHA-256, lowercase hex, of the canonical form above applied to the entry
- *   object with its own `entry_hash` key removed (so `prev_hash`, `seq`,
- *   `recorded_at`, `event_type`, `signed` and anything else are all covered). If
- *   the substrate uses a different scheme this recomputation is meaningless, so a
- *   mismatch is reported as **NOT CHECKED / scheme may be wrong**, not as a FAIL.
- *   The LINKAGE checks beside it — `prev_hash[i] == entry_hash[i-1]`, and `seq`
- *   strictly increasing by one — do not depend on the hash scheme at all, so
- *   those DO fail hard. A break in the chain is caught either way.
- *
- *   ASSUMPTION 3 — the response shape of both published key documents. The UAB
+ *   ASSUMPTION 2 — the response shape of both published key documents. The UAB
  *   site asset and `GET /kernel/public-key` are read by the SAME defensive parser:
  *   a bare JWK, a `{keys: {...}}` trust anchor, or an object carrying the key
  *   under one of several plausible names. If none match, that is NOT CHECKED with
@@ -365,7 +373,7 @@ function field(bundle, name) {
 /**
  * Pull a raw 32-byte Ed25519 public key out of whatever the substrate served.
  *
- * ASSUMPTION 3 in the header. Several shapes are accepted because the endpoint's
+ * ASSUMPTION 2 in the header. Several shapes are accepted because the endpoint's
  * response is not pinned by a contract this repo can read; an unrecognised shape
  * is reported with the keys that WERE present, which is what makes it a one-line
  * fix rather than an investigation.
@@ -427,7 +435,7 @@ export function extractEd25519Key(doc) {
     error:
       'no Ed25519 public key found. Top-level keys present: ' +
       `${Object.keys(doc).map((k) => JSON.stringify(k)).join(', ') || '(none)'}. ` +
-      'See ASSUMPTION 3 at the top of this script — add the shape there.',
+      'See ASSUMPTION 2 at the top of this script — add the shape there.',
   };
 }
 
@@ -501,7 +509,7 @@ function loadPinnedKey(explicitPath) {
  * Fetch a PUBLISHED copy of the kernel key over HTTP(S), and extract it.
  *
  * Used for both network sources — the UAB site's static asset and the substrate's
- * live endpoint — because the two are read exactly alike (ASSUMPTION 3); nothing
+ * live endpoint — because the two are read exactly alike (ASSUMPTION 2); nothing
  * here knows or cares which publisher it is talking to.
  *
  * A fetch with no timeout hangs forever on a blackholed host, so one is set.
@@ -907,6 +915,37 @@ export async function verifyBundle(bundle, opts = {}) {
 }
 
 /**
+ * A `delegation_chain` entry can be one of two SHAPES, and they must not be
+ * verified the same way:
+ *
+ *   - a real, signed VAID envelope (a string, or an object carrying
+ *     `kernel_key_thumbprint` and the rest of the envelope body) — check it
+ *     with `verifyEnvelope`, same as `vaid verify`.
+ *   - a LEDGER REFERENCE — `synthera-audit`'s own `delegation_chain_note`
+ *     says the audit ledger "does NOT record VAID envelope bytes or the
+ *     issuer's lineage_hash", so a chain built from `vaid_minted` ledger rows
+ *     carries only `{vaid_id, parent_vaid, agent_class, tenant_id,
+ *     recorded_at, seq, entry_hash}` — never `kernel_key_thumbprint`, never a
+ *     signature. Feeding one of these into `verifyEnvelope` always lands on
+ *     "Signing key: no kernel key named" — a wrong-entry-point FAIL that
+ *     looks like a forged lineage and is not one (REPORT-s494 item 5).
+ *
+ * A ledger reference is reported as NOT CHECKED, naming itself as a reference
+ * and pointing at `delegation_chain_note` — never run through `verifyEnvelope`
+ * and never FAILED as a bad envelope.
+ */
+function isLedgerReferenceEntry(entry) {
+  return (
+    entry !== null &&
+    typeof entry === 'object' &&
+    !Array.isArray(entry) &&
+    entry.seq !== undefined &&
+    typeof entry.entry_hash === 'string' &&
+    entry.kernel_key_thumbprint === undefined
+  );
+}
+
+/**
  * Step (e): verify every VAID in `delegation_chain` with the SAME code
  * `vaid verify` runs.
  *
@@ -943,6 +982,29 @@ async function delegationFinding(bundle, chain, opts) {
     };
   }
 
+  const referenceCount = chain.filter(isLedgerReferenceEntry).length;
+  const envelopeEntries = chain.filter((e) => !isLedgerReferenceEntry(e));
+
+  // Every entry is a ledger reference — nothing here is a VAID envelope, so
+  // there is nothing `verifyEnvelope` (or the SDK it needs) could check.
+  if (envelopeEntries.length === 0) {
+    return {
+      id: 'delegation',
+      label: 'Delegation chain',
+      state: Finding.NotChecked,
+      detail:
+        `${referenceCount} ledger reference(s), NOT VAID envelopes. The audit ledger does not record ` +
+        'envelope bytes or the issuer\'s lineage_hash — only chain-position references — so there is ' +
+        'nothing here for `verifyEnvelope` to check; running it anyway reports a wrong-entry-point FAIL ' +
+        'that looks like a forged lineage and is not one. ' +
+        (note
+          ? `delegation_chain_note: "${note}"`
+          : 'No delegation_chain_note explains this; a bundle whose chain is references with no note ' +
+            'leaves an auditor unable to tell a documented limitation from a dropped explanation.') +
+        '\n        Verify the real envelopes against the VAID issuer, out of band, not against this bundle.',
+    };
+  }
+
   let mod;
   let anchorDoc;
   try {
@@ -954,10 +1016,11 @@ async function delegationFinding(bundle, chain, opts) {
       label: 'Delegation chain',
       state: Finding.NotChecked,
       detail:
-        `${chain.length} entr${chain.length === 1 ? 'y' : 'ies'} present, NOT verified: the VAID verifier ` +
-        `could not be loaded (${e.message}). This script does not reimplement VAID chain verification — a ` +
-        'fourth implementation with no conformance vector holding it in line would be worse than an ' +
-        'honest gap. Install the SDK and re-run:  npm install --prefix skill',
+        `${envelopeEntries.length} envelope-shaped entr${envelopeEntries.length === 1 ? 'y' : 'ies'} present, ` +
+        `NOT verified: the VAID verifier could not be loaded (${e.message}). This script does not ` +
+        'reimplement VAID chain verification — a fourth implementation with no conformance vector holding ' +
+        'it in line would be worse than an honest gap. Install the SDK and re-run:  npm install --prefix skill' +
+        (referenceCount > 0 ? ` (${referenceCount} ledger reference(s) in this chain are not envelopes either way)` : ''),
     };
   }
 
@@ -979,8 +1042,22 @@ async function delegationFinding(bundle, chain, opts) {
   const lines = [];
   let failed = 0;
   let caveated = 0;
+  let verified = 0;
   for (let i = 0; i < chain.length; i += 1) {
     const entry = chain[i];
+
+    // Ledger references never reach `verifyEnvelope` — they name themselves as
+    // references and point at delegation_chain_note, and are never FAILED as a
+    // bad envelope (REPORT-s494 item 5).
+    if (isLedgerReferenceEntry(entry)) {
+      lines.push(
+        `        [${i}] ${dim('·')} NOT CHECKED — ledger reference, not a VAID envelope ` +
+          `(vaid_id=${entry.vaid_id ?? '(none)'}, seq=${entry.seq}). Verify the real envelope against ` +
+          'the VAID issuer, out of band.',
+      );
+      continue;
+    }
+
     const input = typeof entry === 'string' ? entry : JSON.stringify(entry);
     let r;
     try {
@@ -990,6 +1067,7 @@ async function delegationFinding(bundle, chain, opts) {
       lines.push(`        [${i}] ${red('✗')} threw: ${e.message}`);
       continue;
     }
+    verified += 1;
     const id = r.vaid?.vaid_id ?? '(no vaid_id)';
     if (r.headline === mod.Headline.Valid) {
       lines.push(`        [${i}] ${green('✓')} ${r.headline.toUpperCase()}  ${id}`);
@@ -1005,30 +1083,81 @@ async function delegationFinding(bundle, chain, opts) {
   }
 
   const header =
-    `${chain.length} entr${chain.length === 1 ? 'y' : 'ies'}, each verified with the same code \`vaid verify\` runs ` +
-    `(verifyEnvelope from skill/src/verify-core.mjs), at ${when.toISOString()}, against ` +
-    `${opts.trustAnchor ?? DEFAULT_ANCHOR}.`;
+    `${chain.length} entr${chain.length === 1 ? 'y' : 'ies'}: ${verified} envelope-shaped, each verified with the ` +
+    `same code \`vaid verify\` runs (verifyEnvelope from skill/src/verify-core.mjs), at ${when.toISOString()}, ` +
+    `against ${opts.trustAnchor ?? DEFAULT_ANCHOR}` +
+    (referenceCount > 0 ? `; ${referenceCount} ledger reference(s), not checked (see lines below)` : '') +
+    '.';
   const revocation =
-    '\n        Revocation was NOT checked for any of these, and cannot be: there is no published ' +
+    '\n        Revocation was NOT checked for any verified envelope, and cannot be: there is no published ' +
     'revocation list to consult. Read this as "genuinely issued and in date", never as "currently authorised".';
 
+  // A ledger reference never contributes a PASS — only the envelopes actually
+  // checked can. Some envelopes checked clean and the rest of the chain is
+  // references: that is NOT CHECKED (part of the chain is unverified), not a
+  // pass, unless every entry in the chain was a real envelope.
+  const allEnvelopesVerified = referenceCount === 0;
   return {
     id: 'delegation',
     label: 'Delegation chain',
-    state: failed > 0 ? Finding.Fail : caveated > 0 ? Finding.Caveat : Finding.Pass,
+    state:
+      failed > 0
+        ? Finding.Fail
+        : caveated > 0
+          ? Finding.Caveat
+          : allEnvelopesVerified
+            ? Finding.Pass
+            : Finding.NotChecked,
     detail: `${header}\n${lines.join('\n')}${revocation}`,
   };
 }
 
 /**
+ * The REAL `entry_hash` scheme (synthera-audit's `hash::compute_entry_hash`,
+ * documented in synthera's `docs/evidence-bundle-v1.md`): a raw concatenation
+ * of five fields' bytes, hashed as ONE stream — NOT canonical JSON of the
+ * whole row (that is `content_hash`'s scheme, a different one).
+ *
+ *   sha256( prev_hash_bytes || event_type_bytes || json(agent_id)_bytes ||
+ *           details.to_string()_bytes || recorded_at_bytes )
+ *
+ * `agent_id` is JSON-serialized exactly as the row carries it (a quoted
+ * string, or the four bytes `null`). `details` is hashed as its own
+ * `JSON.stringify` (no inserted whitespace) — NOT the canonical form
+ * `canonicalJson` produces, which is a different, deliberately incompatible
+ * serialization used only for `content_hash`. This reproduces
+ * `serde_json::Value::to_string()` byte-for-byte only because `details` is
+ * exported verbatim, key order and all, by the same substrate that hashed it.
+ *
+ * A `stub: true` row carries none of `event_type`/`agent_id`/`details` — by
+ * design, so another tenant's row is never exposed — so its `entry_hash`
+ * cannot be recomputed this way. That is reported as NOT CHECKED for that
+ * row alone; the LINKAGE check below still applies to it, scheme-independent.
+ */
+export function computeEntryHash(e) {
+  const h = createHash('sha256');
+  h.update(utf8(String(e.prev_hash)));
+  h.update(utf8(String(e.event_type)));
+  const agentIdJson = e.agent_id === undefined || e.agent_id === null ? 'null' : JSON.stringify(e.agent_id);
+  h.update(utf8(agentIdJson));
+  h.update(utf8(JSON.stringify(e.details)));
+  h.update(utf8(String(e.recorded_at)));
+  return h.digest('hex');
+}
+
+/**
  * Step (f): the audit hash chain.
  *
- * Two findings, kept apart on purpose — see ASSUMPTION 2 in the header. The
- * LINKAGE check needs no knowledge of the hash function and so fails hard; the
- * entry_hash RECOMPUTATION rests on an assumed scheme and so can only ever report
- * NOT CHECKED when it disagrees. Collapsing them into one verdict would either
- * accuse a sound ledger of being broken, or let a real break hide behind
- * "scheme may differ".
+ * Two findings, kept apart on purpose. The LINKAGE check needs no knowledge of
+ * the hash function and so fails hard, and applies to EVERY row including a
+ * `stub: true` bridging row (see `docs/evidence-bundle-v1.md` in the
+ * substrate's repo: a tenant export is a sparse subset of one global,
+ * cross-tenant chain, and a stub row bridges another tenant's position with
+ * only its two hashes, never its content). The entry_hash RECOMPUTATION runs
+ * the real documented scheme (`computeEntryHash` above) over every non-stub
+ * row and reports a genuine mismatch as FAIL; a stub row is skipped (NOT
+ * CHECKED for that row specifically) because it carries none of that scheme's
+ * inputs by construction, not because the scheme is in doubt.
  */
 export function auditChainFindings(entries) {
   if (entries.length === 0) {
@@ -1047,6 +1176,7 @@ export function auditChainFindings(entries) {
 
   const linkProblems = [];
   const hashProblems = [];
+  const notRecomputable = [];
   const sorted = [...entries];
 
   for (let i = 0; i < sorted.length; i += 1) {
@@ -1077,12 +1207,18 @@ export function auditChainFindings(entries) {
       }
     }
 
-    // ASSUMPTION 2: the hash scheme. A mismatch here is NOT CHECKED, not FAIL.
+    // entry_hash, under the REAL documented scheme (computeEntryHash above).
+    // A stub row, or a row from a producer that predates agent_id/details
+    // being exported, carries none of this scheme's inputs by construction —
+    // that is NOT RECOMPUTABLE, not a hash mismatch, and is never attempted.
     if (typeof e.entry_hash === 'string') {
-      const { entry_hash: _omit, ...rest } = e;
-      const recomputed = sha256Hex(utf8(canonicalJson(rest)));
-      if (recomputed !== e.entry_hash.toLowerCase()) {
-        hashProblems.push(`[${i}] (seq ${e.seq}) claims ${e.entry_hash}, assumed scheme gives ${recomputed}`);
+      if (e.stub === true || e.details === undefined || typeof e.event_type !== 'string') {
+        notRecomputable.push(i);
+      } else {
+        const recomputed = computeEntryHash(e);
+        if (recomputed !== e.entry_hash.toLowerCase()) {
+          hashProblems.push(`[${i}] (seq ${e.seq}) claims ${e.entry_hash}, real scheme gives ${recomputed}`);
+        }
       }
     }
   }
@@ -1104,30 +1240,55 @@ export function auditChainFindings(entries) {
     },
   ];
 
-  if (hashProblems.length === 0) {
+  const recomputedCount = sorted.length - notRecomputable.length;
+  const skipNote =
+    notRecomputable.length > 0
+      ? ` ${notRecomputable.length} row(s) carry no agent_id/details to recompute from (stub rows, or a ` +
+        'bundle from before this field was exported) and were skipped, not failed.'
+      : '';
+
+  if (hashProblems.length > 0) {
     findings.push({
       id: 'audit_entry_hash',
       label: 'Audit entry hashes',
-      state: Finding.Pass,
+      state: Finding.Fail,
       detail:
-        `all ${sorted.length} entry_hash values reproduce under the ASSUMED scheme — sha256(canonical ` +
-        'JSON of the entry with its own entry_hash key removed), lowercase hex, using the canonical form ' +
-        'documented at the top of this script. They agreeing is evidence the assumption is right; it is ' +
-        'not proof the substrate uses it. See ASSUMPTION 2.',
+        `${hashProblems.length} of ${recomputedCount} recomputable entry_hash values do NOT reproduce under ` +
+        'the documented scheme — sha256(prev_hash || event_type || json(agent_id) || details.to_string() || ' +
+        `recorded_at), raw concatenation, one hash. This is a real mismatch, not a scheme disagreement: a ` +
+        `verifier that recomputes with no data of its own and still disagrees means the row changed after ` +
+        `it was hashed.${skipNote}\n        ${hashProblems.slice(0, 5).join('\n        ')}` +
+        (hashProblems.length > 5 ? `\n        … and ${hashProblems.length - 5} more` : ''),
     });
-  } else {
+  } else if (recomputedCount === 0) {
     findings.push({
       id: 'audit_entry_hash',
       label: 'Audit entry hashes',
       state: Finding.NotChecked,
       detail:
-        `${hashProblems.length} of ${sorted.length} entry_hash values do not reproduce under the ASSUMED ` +
-        'scheme — sha256(canonical JSON of the entry with its own entry_hash key removed), lowercase hex. ' +
-        'This is reported as NOT CHECKED rather than FAIL because the assumption is this script\'s, not a ' +
-        'published contract: if the substrate hashes a different field set or a different concatenation, ' +
-        'these mismatches mean nothing and the real scheme should be named in ASSUMPTION 2. The LINKAGE ' +
-        `finding above is independent of this and stands on its own.\n        ${hashProblems.slice(0, 5).join('\n        ')}` +
-        (hashProblems.length > 5 ? `\n        … and ${hashProblems.length - 5} more` : ''),
+        `none of the ${sorted.length} row(s) in this bundle carry the agent_id/details the documented ` +
+        'entry_hash scheme needs — every row is a stub, or this bundle predates that export. The LINKAGE ' +
+        'finding above is independent of this and still ran.',
+    });
+  } else if (notRecomputable.length > 0) {
+    findings.push({
+      id: 'audit_entry_hash',
+      label: 'Audit entry hashes',
+      state: Finding.Caveat,
+      detail:
+        `all ${recomputedCount} recomputable entry_hash values reproduce under the documented scheme — ` +
+        'sha256(prev_hash || event_type || json(agent_id) || details.to_string() || recorded_at), raw ' +
+        `concatenation, one hash.${skipNote}`,
+    });
+  } else {
+    findings.push({
+      id: 'audit_entry_hash',
+      label: 'Audit entry hashes',
+      state: Finding.Pass,
+      detail:
+        `all ${sorted.length} entry_hash values reproduce under the documented scheme — sha256(prev_hash ` +
+        '|| event_type || json(agent_id) || details.to_string() || recorded_at), raw concatenation, one ' +
+        'hash, as synthera-audit\'s hash::compute_entry_hash computes it.',
     });
   }
   return findings;

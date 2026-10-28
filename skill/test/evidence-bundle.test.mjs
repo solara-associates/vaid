@@ -47,6 +47,7 @@ import { packEnvelope } from '../src/envelope.mjs';
 import {
   Finding,
   canonicalJson,
+  computeEntryHash,
   ed25519Thumbprint,
   extractEd25519Key,
   exitCodeFor,
@@ -116,7 +117,12 @@ const jwkBody = (kp) => ({ kty: 'OKP', crv: 'Ed25519', x: kp.rawB64u });
 
 // --- real bundles ------------------------------------------------------------
 
-/** One real audit entry chain, hashed with the scheme the script assumes. */
+/**
+ * One real audit entry chain, hashed with the REAL documented scheme
+ * (`computeEntryHash`: sha256 of prev_hash || event_type || json(agent_id) ||
+ * details.to_string() || recorded_at, one stream) — a tenant's own rows, never
+ * a stub, so `agent_id`/`details` are always present.
+ */
 function auditChain(n) {
   const entries = [];
   let prev = '0'.repeat(64);
@@ -124,11 +130,14 @@ function auditChain(n) {
     const body = {
       prev_hash: prev,
       seq: i + 1,
+      stub: false,
       recorded_at: `2026-10-0${i + 1}T00:00:00Z`,
       event_type: 'policy.decision',
+      agent_id: null,
+      details: { decision: 'allow', step: i },
       signed: true,
     };
-    const entry_hash = sha256Hex(utf8(canonicalJson(body)));
+    const entry_hash = computeEntryHash(body);
     entries.push({ ...body, entry_hash });
     prev = entry_hash;
   }
@@ -658,7 +667,7 @@ test('a non-ed25519 signature.alg is refused, not ignored', async () => {
 
 // --- the audit chain ---------------------------------------------------------
 
-test('an intact audit chain passes both linkage and the assumed hash scheme', () => {
+test('an intact audit chain passes both linkage and the real entry_hash scheme', () => {
   const fs = auditChainFindings(auditChain(4));
   assert.equal(fs.find((f) => f.id === 'audit_linkage').state, Finding.Pass);
   assert.equal(fs.find((f) => f.id === 'audit_entry_hash').state, Finding.Pass);
@@ -675,23 +684,38 @@ test('a BROKEN prev_hash link FAILS hard — linkage does not depend on the hash
 test('a gap in seq is reported as entries MISSING from the bundle', () => {
   const entries = auditChain(3);
   entries[2].seq = 9;
-  entries[2].entry_hash = sha256Hex(utf8(canonicalJson({ ...entries[2], entry_hash: undefined })));
+  entries[2].entry_hash = computeEntryHash({ ...entries[2], seq: 9 });
   const f = auditChainFindings(entries).find((x) => x.id === 'audit_linkage');
   assert.equal(f.state, Finding.Fail);
   assert.match(f.detail, /MISSING/);
 });
 
-test('an entry_hash that does not reproduce is NOT CHECKED, not FAIL — the scheme is assumed', () => {
+test('an entry_hash that does not reproduce under the real scheme is a real FAIL', () => {
   const entries = auditChain(3);
-  // Rehash the tail so linkage still holds, then break only the hash VALUE of a
-  // middle entry's recomputation by changing a field it covers.
+  // Break only the hash VALUE of a middle entry's recomputation by changing a
+  // field the real scheme covers, without rehashing — this is what a changed
+  // row after hashing looks like, not a scheme disagreement.
   entries[1].event_type = 'something.else';
   const fs = auditChainFindings(entries);
   const hashF = fs.find((f) => f.id === 'audit_entry_hash');
-  assert.equal(hashF.state, Finding.NotChecked);
-  assert.match(hashF.detail, /ASSUMED scheme/);
-  // And it must NOT turn into a pass by being the only complaint.
-  assert.notEqual(hashF.state, Finding.Pass);
+  assert.equal(hashF.state, Finding.Fail);
+  assert.match(hashF.detail, /real scheme gives/);
+});
+
+test('a stub row (no agent_id/details) is skipped, not failed, by the entry_hash recomputation', () => {
+  const entries = auditChain(2);
+  // A bridging stub row from another tenant: only the two linkage hashes.
+  const stub = { seq: 3, stub: true, entry_hash: 'f'.repeat(64), prev_hash: entries[1].entry_hash };
+  const tail = auditChain(1)[0];
+  tail.seq = 4;
+  tail.prev_hash = stub.entry_hash;
+  tail.entry_hash = computeEntryHash(tail);
+  const fs = auditChainFindings([...entries, stub, tail]);
+  const hashF = fs.find((f) => f.id === 'audit_entry_hash');
+  assert.equal(hashF.state, Finding.Caveat);
+  assert.match(hashF.detail, /1 row\(s\) carry no agent_id\/details/);
+  const linkF = fs.find((f) => f.id === 'audit_linkage');
+  assert.equal(linkF.state, Finding.Pass, 'linkage is scheme-independent and covers the stub too');
 });
 
 test('an EMPTY audit_entries list is NOT CHECKED — an empty list is not an intact chain', () => {
@@ -740,6 +764,88 @@ test('a delegation entry signed by an unaccepted key is reported FAIL per entry'
     const f = findingFor(r, 'delegation');
     assert.equal(f.state, Finding.Fail);
     assert.equal(exitCodeFor(r), 1);
+  });
+});
+
+test('a delegation_chain of ledger references (no kernel_key_thumbprint) is NOT CHECKED per entry, never FAILED as a bad envelope', async () => {
+  // Shape synthera-audit's export_evidence actually produces for
+  // delegation_chain (evidence.rs:475-484) — a ledger reference, not a VAID
+  // envelope: no kernel_key_thumbprint, no signature, no envelope body.
+  const kp = kernelKeypair();
+  const ledgerRef = {
+    vaid_id: 'vaid:test:child',
+    parent_vaid: 'vaid:test:parent',
+    agent_class: 'worker',
+    delegated: true,
+    tenant_id: 'acme',
+    recorded_at: '2026-10-05T11:00:00Z',
+    seq: 2,
+    entry_hash: 'a'.repeat(64),
+  };
+  const bundle = makeBundle(kp, {
+    chain: [ledgerRef],
+    overrides: {
+      delegation_chain_note:
+        'Derived from vaid_minted ledger rows... Verify the envelopes themselves against the VAID issuer.',
+    },
+  });
+  // Re-sign over the note.
+  const { content_hash: _h, signature: _s, ...body } = bundle;
+  const hash = sha256Hex(utf8(canonicalJson(body)));
+  const signed = {
+    ...body,
+    content_hash: hash,
+    signature: { key_id: 'test-key', alg: 'ed25519', sig_b64: b64u(cryptoSign(null, utf8(hash), kp.privateKey)) },
+  };
+
+  await withBothStatic(kp, async (opts) => {
+    const r = await verifyBundle(signed, opts);
+    const f = findingFor(r, 'delegation');
+    assert.equal(f.state, Finding.NotChecked, 'a reference is never a FAIL — it was never fed to verifyEnvelope');
+    assert.match(f.detail, /ledger reference/);
+    assert.doesNotMatch(f.detail, /Signing key/, 'must not read as a verifyEnvelope rejection');
+    assert.equal(exitCodeFor(r), 3);
+  });
+});
+
+test('a mixed chain: a real envelope still verifies, and the ledger reference beside it stays NOT CHECKED without dragging the whole chain to FAIL', async () => {
+  const kp = kernelKeypair();
+  const issuer = ReferenceIssuer.fromSeed(new Uint8Array(32).fill(7), 24, 'audit.acme.co');
+  const svc = new MintService(issuer, new InMemoryAudit());
+  const { vaid } = await svc.mintRoot({
+    seed: {
+      agentClass: 'orchestrator',
+      version: '1.0.0',
+      tenantId: 'acme',
+      scopeBoundary: [prefixEntry('data.acme')],
+      capabilitySet: ['read'],
+    },
+  });
+  const pub = issuer.kernelPublicKey();
+  const anchorPath = join(mkdtempSync(join(tmpdir(), 'vaid-anchor-')), 'anchor.json');
+  writeFileSync(
+    anchorPath,
+    JSON.stringify({ keys: { [kernelKeyThumbprint(pub)]: { kty: 'OKP', crv: 'Ed25519', x: b64u(pub) } } }),
+  );
+
+  const ledgerRef = {
+    vaid_id: 'vaid:test:other-hop',
+    parent_vaid: null,
+    agent_class: 'operator',
+    tenant_id: 'acme',
+    recorded_at: '2026-10-05T10:00:00Z',
+    seq: 1,
+    entry_hash: 'b'.repeat(64),
+  };
+  const bundle = makeBundle(kp, { chain: [ledgerRef, vaid] });
+
+  await withBothStatic(kp, async (opts) => {
+    const r = await verifyBundle(bundle, { ...opts, trustAnchor: anchorPath, at: new Date(vaid.issued_at) });
+    const f = findingFor(r, 'delegation');
+    assert.equal(f.state, Finding.NotChecked, `one hop unverified means the chain is not a clean pass: ${f.detail}`);
+    assert.match(f.detail, /1 envelope-shaped/);
+    assert.match(f.detail, /1 ledger reference/);
+    assert.match(f.detail, /VALID/);
   });
 });
 
