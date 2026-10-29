@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaid-spiffe"
+version = "0.1.0"
+description = "Mint a VAID over a verified SPIFFE X.509-SVID: SPIFFE answers who is calling, VAID carries the delegation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    # Two entries by design: PEP 621 routes any entry that has an email
+    # entirely into Author-email, leaving the core Author field empty (PyPI
+    # then renders "Author: None"). The name-only entry populates Author;
+    # the second preserves the existing Author-email verbatim.
+    { name = "solara.associates" },
+    { name = "solara.associates", email = "info@solara.associates" },
+]
+keywords = ["vaid", "spiffe", "spire", "x509", "agent-identity", "delegation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+# vaid-mint supplies minting, PoP verification and the VAID document/signature
+# primitives (this package does not reimplement any of them). spiffe is the
+# CNCF SPIFFE project's own Python library (github.com/spiffe/py-spiffe) and
+# supplies SPIFFE ID / trust domain parsing and grammar validation (this
+# package does not reimplement the SPIFFE ID grammar).
+#
+# cryptography is used directly for X.509 chain path validation
+# (cryptography.x509.verification, added in 42.0) and is intentionally NOT
+# listed as a separate direct dependency: both vaid-mint (>=42.0) and spiffe
+# (>=46) already require a version carrying that module, so one is always
+# present and pinned tightly enough that the API this package calls exists.
+dependencies = [
+    "vaid-mint>=0.11.0,<0.12",
+    "spiffe>=0.3,<0.4",
+]
+
+[project.scripts]
+# The packaged firewall: an external consumer who installed ONLY the wheel can
+# run `vaid-spiffe-conformance` to prove the bind-by-reference path runs end to
+# end and fails closed. See vaid_spiffe/conformance.py's docstring for why this
+# is a functional check rather than a byte-identity vector.
+vaid-spiffe-conformance = "vaid_spiffe.conformance:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/solara-associates/vaid"
+Repository = "https://github.com/solara-associates/vaid"
+Source = "https://github.com/solara-associates/vaid/tree/main/python/vaid-spiffe"
+Issues = "https://github.com/solara-associates/vaid/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vaid_spiffe"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vaid_spiffe", "tests", "examples", "README.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

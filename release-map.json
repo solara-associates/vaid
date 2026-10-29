@@ -13,6 +13,7 @@
     "python/vaid-mcp": { "dir": "python/vaid-mcp" },
     "python/vaid-adk": { "dir": "python/vaid-adk" },
     "python/vaid-jwt-bridge": { "dir": "python/vaid-jwt-bridge" },
+    "python/vaid-spiffe": { "dir": "python/vaid-spiffe" },
 
     "npm/vaid-pop": {
       "dir": "typescript/vaid-pop",
