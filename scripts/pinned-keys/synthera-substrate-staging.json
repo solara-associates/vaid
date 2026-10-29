@@ -1,0 +1,11 @@
+{
+  "thumbprint": "urn:ietf:params:oauth:jwk-thumbprint:sha-256:1_s4aq-xm9R13fqdNO56N1qbSkkhW9Pz73V9T4kS6J8",
+  "kty": "OKP",
+  "crv": "Ed25519",
+  "x": "nYqm0zIO5W2NzIL-YCsZSQBGrKgxcqKWxziGn7hp8vE",
+  "key_id": "06478d94-7bb2-4567-8b12-3369176b2be5",
+  "deployment": "synthera-substrate-staging, europe-west1 (Cloud Run service `substrate`)",
+  "obtained_from": "Allan (repo owner), running `curl -H \"Authorization: Bearer $(gcloud auth print-identity-token)\" https://substrate-fc5qbjmtwa-ew.a.run.app/kernel/public-key` from his own authenticated gcloud session on 2026-10-29, and pasting the response back. Not fetched by any agent session, and not derived from the UAB site asset this pin is cross-checked against -- that is the other, independent publication (uab PR #191).",
+  "pinned_at": "2026-10-29",
+  "pinned_in_pr": "TBD -- updated once this PR is opened"
+}

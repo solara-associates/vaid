@@ -85,19 +85,22 @@ different artefact with a different signer, which may or may not turn out to be
 the same key. It is kept separate so that discovering they are the same key is a
 finding someone records, rather than an assumption baked in by sharing a file.
 
-As of this directory's creation no evidence-bundle signing key has been confirmed
-with the substrate team, so no `*.json` is pinned yet and the cross-check reports
-`NOT CHECKED`. That is the correct state: an unconfirmed pin would make the
+As of this directory's creation no evidence-bundle signing key had been confirmed
+with the substrate team, so no `*.json` was pinned and the cross-check reported
+`NOT CHECKED`. That was the correct state: an unconfirmed pin would make the
 verifier reject genuine bundles, and a pin copied from another published copy
 would make the cross-check meaningless.
 
-Two things are therefore outstanding before the cross-check can pass for a real
-bundle, and they are independent of each other:
+Session s502 (2026-10-29) closed both of the previously-outstanding items,
+independently of each other:
 
-1. a key pinned here, by reviewed PR, obtained out of band;
-2. the UAB site publishing its static key asset, and
-   `UAB_SITE_KEY_URL_PLACEHOLDER` in `verify-evidence-bundle.mjs` updated to its
-   real URL.
+1. `synthera-substrate-staging.json` is now pinned here, obtained by Allan
+   running `GET /kernel/public-key` against `synthera-substrate-staging`
+   himself, authenticated as himself — not fetched by any agent session, and
+   not read off the UAB site asset this pin is cross-checked against.
+2. The UAB site now publishes its static key asset at the real URL, and
+   `UAB_SITE_KEY_URL_DEFAULT` in `verify-evidence-bundle.mjs` points at it.
 
-Until both exist the verifier reports *cross-check incomplete* and exits 3. It
-does not report a pass, and it does not report a failure.
+The cross-check can now pass for a real bundle. A future rotation follows the
+same procedure above: a new or replaced file here, by reviewed PR, obtained out
+of band.

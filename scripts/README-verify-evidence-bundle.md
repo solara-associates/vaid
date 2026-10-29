@@ -132,13 +132,11 @@ A missing pinned key is never a silent skip. See
 [`pinned-keys/README.md`](pinned-keys/README.md) for how pins are added and
 rotated.
 
-> **The `--site-key-url` default is a placeholder.** The UAB site's production URL
-> is not finalised yet. Until it is, the built-in default is a reserved
-> `.invalid` host which the script deliberately does **not** fetch — so running
-> without `--site-key-url` reports *cross-check incomplete* and names the
-> placeholder, rather than failing with a DNS error that would read like a site
-> outage. The constant to change is `UAB_SITE_KEY_URL_PLACEHOLDER`, near the top
-> of the script.
+> **The `--site-key-url` default is the real staging site.** `UAB_SITE_KEY_URL_DEFAULT`,
+> near the top of the script, now points at `synthera-uab-staging`'s deployed UAB
+> site (session s502, 2026-10-29) — running without `--site-key-url` fetches it for
+> real. Pass `--site-key-url` to point at a different deployment (a production URL,
+> once one exists), and update the constant itself if the staging deployment moves.
 
 ### `--kernel-url`: for Solara's operators, not for you
 

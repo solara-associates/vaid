@@ -28,9 +28,10 @@
  * the UAB site's static asset — with the substrate's live endpoint an optional
  * operator-only third vote. The helpers below mirror that exactly: `withBothStatic`
  * supplies the two gating sources and nothing else, so a test that wants the live
- * endpoint has to ask for it. No test passes `--site-key-url`'s default: the
- * default is a reserved `.invalid` placeholder and is never fetched, which is
- * itself asserted below rather than assumed.
+ * endpoint has to ask for it. Every test passes `--site-key-url` explicitly (a real
+ * loopback server), rather than relying on the real, now-deployed default
+ * (`UAB_SITE_KEY_URL_DEFAULT`) — a unit test calling a live staging URL would not be
+ * hermetic.
  */
 
 import { test } from 'node:test';
@@ -46,6 +47,7 @@ import { packEnvelope } from '../src/envelope.mjs';
 
 import {
   Finding,
+  UAB_SITE_KEY_URL_DEFAULT,
   canonicalJson,
   computeEntryHash,
   ed25519Thumbprint,
@@ -395,14 +397,18 @@ test('ONLY the pin is available: CROSS-CHECK INCOMPLETE — distinct from both p
     await site.close();
   }
   try {
-    // Now with no site URL at all: the default is the placeholder, never fetched.
-    const r = await verifyBundle(bundle, { pinnedKey: pin.path });
+    // Now with the site genuinely unreachable (an explicit unreachable URL, not
+    // the real deployed default -- hitting the live default here would make this
+    // unit test depend on network state, which it must not).
+    const r = await verifyBundle(bundle, {
+      pinnedKey: pin.path,
+      siteKeyUrl: 'https://uab-site-not-available-for-this-test.invalid/kernel-key.json',
+    });
     const f = findingFor(r, 'key_crosscheck');
     assert.equal(f.state, Finding.NotChecked);
     assert.notEqual(f.state, Finding.Pass);
     assert.notEqual(f.state, Finding.Fail);
     assert.match(f.detail, /CROSS-CHECK INCOMPLETE/);
-    assert.match(f.detail, /PLACEHOLDER/);
     // The signature is still checked under the one key, and says that it is the
     // only copy — it must not claim to be "the cross-checked key".
     assert.equal(findingFor(r, 'signature').state, Finding.Pass);
@@ -436,28 +442,15 @@ test('ONLY the site asset is available: CROSS-CHECK INCOMPLETE, exit 3', async (
   }
 });
 
-test('the DEFAULT site-key URL is the placeholder and is never fetched', async () => {
-  const kp = kernelKeypair();
-  const bundle = makeBundle(kp);
-  const pin = pinnedKeyFile(kp);
-  try {
-    const before = Date.now();
-    const r = await verifyBundle(bundle, { pinnedKey: pin.path });
-    const f = findingFor(r, 'key_crosscheck');
-    // The placeholder host is a reserved .invalid name. If the script had tried to
-    // fetch it we would see a resolver error in the detail instead of the
-    // placeholder explanation, and the call would have cost a DNS timeout.
-    assert.match(f.detail, /uab-site-not-yet-deployed\.invalid/);
-    assert.match(f.detail, /deliberately NOT fetched/);
-    assert.doesNotMatch(f.detail, /ENOTFOUND|EAI_AGAIN|could not reach/);
-    // A DNS attempt against .invalid can take seconds; not fetching is fast. This
-    // is a weak signal on its own, which is why the absence of a resolver error
-    // above is the real assertion.
-    assert.ok(Date.now() - before < 5_000);
-    assert.equal(exitCodeFor(r), 3);
-  } finally {
-    rmSync(pin.dir, { recursive: true, force: true });
-  }
+test('the DEFAULT site-key URL is a real, deployed UAB staging URL, not a placeholder', () => {
+  // Session s502: the UAB site now actually serves this asset (confirmed reachable,
+  // unauthenticated, 200). This is a pure unit check on the constant's value, not a
+  // live fetch -- a unit test calling out to a real staging URL would not be
+  // hermetic. The behavioural tests above and below all pass --site-key-url
+  // explicitly, against a real loopback server, for exactly that reason.
+  assert.match(UAB_SITE_KEY_URL_DEFAULT, /^https:\/\//);
+  assert.doesNotMatch(UAB_SITE_KEY_URL_DEFAULT, /\.invalid\//);
+  assert.match(UAB_SITE_KEY_URL_DEFAULT, /\/kernel-key\.json$/);
 });
 
 test('--kernel-url given and AGREEING is a third vote, and is reported as one', async () => {
@@ -580,7 +573,12 @@ test('an unreachable operator --kernel-url does not break a complete static cros
 test('NO source available: the signature is NOT CHECKED, never assumed good', async () => {
   const kp = kernelKeypair();
   const bundle = makeBundle(kp);
-  const r = await verifyBundle(bundle, { pinnedKey: '/nonexistent/pin.json' });
+  // Both sources explicitly unreachable -- never relying on the real, deployed
+  // default (UAB_SITE_KEY_URL_DEFAULT) for a hermetic unit test's outcome.
+  const r = await verifyBundle(bundle, {
+    pinnedKey: '/nonexistent/pin.json',
+    siteKeyUrl: 'https://uab-site-not-available-for-this-test.invalid/kernel-key.json',
+  });
   const f = findingFor(r, 'key_crosscheck');
   assert.equal(f.state, Finding.NotChecked);
   assert.match(f.detail, /NO SOURCE/);
