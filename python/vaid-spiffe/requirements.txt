@@ -1,0 +1,33 @@
+# Pinned, resolved dependency closure for vaid-spiffe (runtime + test extra),
+# generated from `pip install -e .[test]` in a clean venv against this
+# package's pyproject.toml bounds. Regenerate with:
+#
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -e ../vaid-mint -e . -e ".[test]"
+#   pip freeze --exclude-editable > requirements.txt
+#   (then add the two editable, in-repo packages below by hand)
+#
+# vaid-mint and vaid-pop are path/editable dependencies in this repo (built
+# from python/vaid-mint and python/vaid-pop), not resolved from PyPI here;
+# their versions are pinned for the record of what this lock was proven
+# against.
+vaid-mint==0.11.0
+vaid-pop==0.2.0
+
+PyJWT==2.15.1
+Pygments==2.21.0
+cffi==2.1.1
+cryptography==50.0.2
+grpcio==1.85.0
+iniconfig==2.3.1
+packaging==26.3
+pem==23.1.0
+pluggy==1.7.0
+protobuf==7.36.2
+pyasn1==0.6.5
+pyasn1_modules==0.4.2
+pycparser==3.12
+pytest==9.2.0
+rfc8785==0.1.4
+spiffe==0.3.2
+typing_extensions==4.16.0
