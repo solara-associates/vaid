@@ -1,5 +1,42 @@
 # vaid-adk
 
+## VAID-ADK in five lines
+
+```
+pip install vaid-adk
+```
+
+Register the plugin on an existing ADK `Runner` and it checks every tool
+call before the tool runs:
+
+```python
+plugin = VaidAuthPlugin(
+    keys=TrustedIssuers.from_raw_keys([(TRUST_DOMAIN, issuer.kernel_public_key())]),
+    revocation=InMemoryRevocationList.assume_nothing_revoked(),  # see "Production note" below
+    tool_authorizations={
+        "lookup_order": ToolAuthorization(capability="read", resource="data.orders"),
+        "issue_refund": ToolAuthorization(capability="write", resource="data.payments"),
+    },
+)
+plugin.register("worker", VaidPresentation(leaf=worker_vaid))
+runner = Runner(app_name="quickstart", agent=worker_agent, session_service=sessions, plugins=[plugin])
+```
+
+The worker's VAID carries `data.orders`/`read` only. Run that `runner`
+against an agent that attempts both tools (full script:
+`examples/quickstart.py`, verified against the published `vaid-adk==0.2.1`
+package in a fresh venv, output below unedited):
+
+```
+lookup_order: ALLOWED
+issue_refund: DENIED (out_of_scope)
+```
+
+`lookup_order` is within the worker's VAID; `issue_refund` needs
+`data.payments`/`write`, which the worker's VAID never held, so
+`VaidAuthPlugin` denies it before the tool runs. That is `VaidAuthPlugin`'s
+own check deciding each outcome, not a condition written for the demo.
+
 VAID verification for Google's Agent Development Kit (ADK): a `BasePlugin`
 that checks a presented VAID's signature, expiry, delegation-chain
 attenuation and revocation status before an agent runs, before it is
