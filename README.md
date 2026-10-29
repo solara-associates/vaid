@@ -15,6 +15,104 @@
      you typed, so status and <title> both "pass" on the dead page. -->
 [![skills.sh installs](https://img.shields.io/endpoint?url=https%3A%2F%2Fwww.skills.sh%2Fapi%2Fbadge%2Fsolara.associates)](https://www.skills.sh/site/solara.associates/vaid)
 
+## VAID in five minutes
+
+VAID is a badge for an AI agent. It says who the agent is, what it is allowed to
+do, and, if that agent hands work off to another agent, what it is allowed to
+pass on. Each time a badge is handed on, the next one can only be as wide as the
+one before it, or narrower, never wider. A worker agent delegated "read reports"
+cannot mint itself "read everything," and if it tries, the mint refuses on the
+spot. Anyone holding the badge and a public key can check it offline, with no
+call back to whoever issued it.
+
+The example below mints a root badge, delegates a narrower one from it, then
+tries to delegate something wider than the narrower badge holds and shows the
+real refusal. It runs as written against the published `vaid-mint` package, in a
+fresh virtual environment, with nothing else installed:
+
+```sh
+python3 -m venv venv && source venv/bin/activate
+pip install 'vaid-mint>=0.11,<0.12'
+```
+
+```python
+from datetime import datetime, timezone
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from vaid_pop import canonical_request_signing_bytes
+from vaid_mint import (
+    MintService, InMemoryAudit, ReferenceIssuer, VaidSeed, prefix_entry,
+    build_mint_pop_payload, MintPop,
+)
+from vaid_mint.error import UnauthorizedError
+
+
+def keypair():
+    sk = Ed25519PrivateKey.generate()
+    return sk, sk.public_key().public_bytes_raw()
+
+
+def pop(seed, sk, pub):
+    nonce = f"demo-{id(sk):x}"
+    issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload = build_mint_pop_payload(seed, public_key_der=pub, nonce=nonce, issued_at=issued_at)
+    return MintPop(nonce=nonce, issued_at=issued_at, signature=sk.sign(canonical_request_signing_bytes(payload)))
+
+
+# A mint is the thing that issues badges. One kernel key, held in memory here.
+issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
+mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+
+# 1. Mint a root badge for an orchestrator agent: it may read and write "data.acme".
+orch_sk, orch_pub = keypair()
+root_seed = VaidSeed(
+    agent_class="orchestrator", version="schema-v1", tenant_id="acme",
+    scope_boundary=[prefix_entry("data.acme")], capability_set=["read", "write"],
+    public_key_der=orch_pub,
+)
+root = mint.mint_root(root_seed, pop(root_seed, orch_sk, orch_pub))
+print(f"root badge   : scope={root['scope_boundary']} caps={root['capability_set']}")
+
+# 2. Delegate a narrower badge to a worker: read-only, one sub-branch of the data.
+worker_sk, worker_pub = keypair()
+child_seed = VaidSeed(
+    agent_class="report-worker", version="schema-v1", tenant_id="acme",
+    parent_vaid=root["vaid_id"], scope_boundary=[prefix_entry("data.acme.reports")],
+    capability_set=["read"], public_key_der=worker_pub,
+)
+child = mint.mint_child(child_seed, root, pop(child_seed, worker_sk, worker_pub)).vaid
+print(f"child badge  : scope={child['scope_boundary']} caps={child['capability_set']}")
+
+# 3. The worker tries to delegate something WIDER than it holds: refused.
+other_sk, other_pub = keypair()
+too_wide_seed = VaidSeed(
+    agent_class="over-reaching-worker", version="schema-v1", tenant_id="acme",
+    parent_vaid=child["vaid_id"], scope_boundary=[prefix_entry("data.acme")],
+    capability_set=["read", "write"], public_key_der=other_pub,
+)
+try:
+    mint.mint_child(too_wide_seed, child, pop(too_wide_seed, other_sk, other_pub))
+    print("UNEXPECTED: wider delegation was allowed")
+except UnauthorizedError as exc:
+    print(f"refused      : {exc}")
+```
+
+This prints, unedited, from a real run against the published package:
+
+```
+root badge   : scope=[{'kind': 'prefix', 'value': 'data.acme'}] caps=['read', 'write']
+child badge  : scope=[{'kind': 'prefix', 'value': 'data.acme.reports'}] caps=['read']
+refused      : child scope_boundary exceeds the parent's — least-privilege attenuation denied
+```
+
+**Verified by others.** VAID's own run against an independent vector suite
+(the `draft-niyikiza-oauth-attenuating-agent-tokens` AAT JWS test vectors
+published by [tenuo-ai/tenuo](https://github.com/tenuo-ai/tenuo)) agreed on every
+vector it could express in VAID's model, with zero disagreements, recorded in
+Tenuo's own interop table: [tenuo-ai/tenuo#1021](https://github.com/tenuo-ai/tenuo/pull/1021).
+Separately, outside contributors have built clean-room verifiers from VAID's
+written spec alone (not its code) and matched its conformance vectors; see
+[Third-party verification](#third-party-verification) below for those runs.
+
 The open standard layer for verifiable agent-action identity (VAID).
 
 A VAID is a portable identity bound to an action that an autonomous agent takes.
