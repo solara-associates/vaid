@@ -183,27 +183,26 @@ const THUMBPRINT_PREFIX = 'urn:ietf:params:oauth:jwk-thumbprint:sha-256:';
 const FETCH_TIMEOUT_MS = 10_000;
 
 /**
- * ===== UPDATE THIS ONCE THE REAL UAB DEPLOYMENT EXISTS =====================
+ * ===== THE SECOND STATIC PUBLICATION =======================================
  *
- * The second static publication of the kernel key: a plain JSON asset on the UAB
- * product's own public site, served next to the public `/evidence/verify` auditor
- * page with no IAM and no authentication, so an anonymous auditor can fetch it.
+ * A plain JSON asset on the UAB product's own public site, served next to the
+ * public `/evidence/verify` auditor page with no IAM and no authentication, so
+ * an anonymous auditor can fetch it.
  *
- * The production URL is NOT FINALISED. This value is a deliberate placeholder and
- * is the ONE line to change when the real one exists. Two properties of it are
- * load-bearing:
+ * This is the real staging URL (session s502, 2026-10-29): `synthera-uab-staging`'s
+ * `uab` Cloud Run service, confirmed publicly reachable, unauthenticated, serving
+ * `public/kernel-key.json` from the UAB repo at this path. If the deployment moves
+ * (a new project, a new service, a production URL once one exists), this is the
+ * ONE line to change — the parsing and the cross-check are already pointed at it,
+ * via `loadSiteKey` below.
  *
- *   - The `.invalid` TLD is reserved by RFC 2606 and can never resolve, so this
- *     constant can never silently send an auditor's verification run to a host
- *     somebody else controls.
- *   - It is compared by identity before any fetch is attempted (see
- *     `loadSiteKey`), so a run that was never given a real URL says exactly that
- *     instead of surfacing a DNS failure that reads like a site outage.
- *
- * Changing this to a real URL needs no other edit: the flag, the parsing and the
- * cross-check are all already pointed at it.
+ * Before this was set, this constant held a reserved `.invalid` host (RFC 2606)
+ * that could never resolve, and `loadSiteKey` special-cased it to report
+ * "deliberately NOT fetched" rather than a DNS failure that reads like a site
+ * outage. That special case is gone now that a real deployment exists to point
+ * at by default; passing `--site-key-url` still overrides it per run.
  */
-const UAB_SITE_KEY_URL_PLACEHOLDER = 'https://uab-site-not-yet-deployed.invalid/kernel-key.json';
+const UAB_SITE_KEY_URL_DEFAULT = 'https://uab-490941277903.europe-west1.run.app/kernel-key.json';
 
 // --- the four states ---------------------------------------------------------
 // Values identical to `skill/src/verify-core.mjs`'s `Finding` on purpose; see the
@@ -540,26 +539,14 @@ async function fetchPublishedKey(url) {
 /**
  * The UAB site's static publication of the key — the second independent publisher.
  *
- * The placeholder is detected BEFORE any network call. Fetching a `.invalid` host
- * would produce a DNS failure, and a DNS failure reads as "the site is down" when
- * the truth is "nobody has told this script where the site is yet". Those are
- * different states and an auditor must not have to tell them apart from a stack of
- * resolver errors.
+ * `--site-key-url` overrides the default per run; with no flag, this fetches
+ * `UAB_SITE_KEY_URL_DEFAULT` for real. (Before a real UAB deployment existed, this
+ * function special-cased a reserved `.invalid` placeholder to avoid a DNS failure
+ * reading like a site outage; that case no longer applies now that the default is
+ * a real, reachable URL.)
  */
 async function loadSiteKey(explicitUrl) {
-  const url = explicitUrl ?? UAB_SITE_KEY_URL_PLACEHOLDER;
-  if (url === UAB_SITE_KEY_URL_PLACEHOLDER) {
-    return {
-      url,
-      placeholder: true,
-      error:
-        `the UAB site key URL is still the built-in PLACEHOLDER (${url}), which is a reserved ` +
-        '.invalid host and was deliberately NOT fetched. The real public URL does not exist yet. ' +
-        'Pass --site-key-url <url>, or update UAB_SITE_KEY_URL_PLACEHOLDER in this script once the ' +
-        'UAB site publishes the asset. This is a missing cross-check, not a site outage.',
-    };
-  }
-  return fetchPublishedKey(url);
+  return fetchPublishedKey(explicitUrl ?? UAB_SITE_KEY_URL_DEFAULT);
 }
 
 // --- the checks --------------------------------------------------------------
@@ -701,7 +688,7 @@ export async function verifyBundle(bundle, opts = {}) {
       id: 'site',
       gating: true,
       what: "static asset published on the UAB product's public site",
-      where: site.url ?? UAB_SITE_KEY_URL_PLACEHOLDER,
+      where: site.url ?? UAB_SITE_KEY_URL_DEFAULT,
       got: site,
     },
     {
@@ -1351,7 +1338,7 @@ const USAGE = `${bold('verify-evidence-bundle')} — verify an ${BUNDLE_VERSION}
 
   ${bold('--site-key-url')} <url>    The key as published on the UAB product's own public site —
                            a plain static JSON asset, no login, no IAM.
-                           Default: ${UAB_SITE_KEY_URL_PLACEHOLDER}
+                           Default: ${UAB_SITE_KEY_URL_DEFAULT}
                            which is a PLACEHOLDER (reserved .invalid host, never
                            fetched). The real URL does not exist yet; until it does,
                            pass this flag or the cross-check reports NOT CHECKED.
@@ -1434,4 +1421,4 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   main().catch((e) => die(e?.stack ?? String(e), 2));
 }
 
-export { Finding, UAB_SITE_KEY_URL_PLACEHOLDER };
+export { Finding, UAB_SITE_KEY_URL_DEFAULT };
