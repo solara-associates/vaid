@@ -7,5 +7,5 @@
   "deployment": "synthera-substrate-staging, europe-west1 (Cloud Run service `substrate`)",
   "obtained_from": "Allan (repo owner), running `curl -H \"Authorization: Bearer $(gcloud auth print-identity-token)\" https://substrate-fc5qbjmtwa-ew.a.run.app/kernel/public-key` from his own authenticated gcloud session on 2026-10-29, and pasting the response back. Not fetched by any agent session, and not derived from the UAB site asset this pin is cross-checked against -- that is the other, independent publication (uab PR #191).",
   "pinned_at": "2026-10-29",
-  "pinned_in_pr": "TBD -- updated once this PR is opened"
+  "pinned_in_pr": "https://github.com/solara-associates/vaid/pull/162"
 }
