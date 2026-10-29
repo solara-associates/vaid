@@ -4,7 +4,7 @@
 #
 #   python3 -m venv .venv && . .venv/bin/activate
 #   pip install -e ../vaid-mint -e . -e ".[test]"
-#   pip freeze --exclude-editable > requirements.txt
+#   pip freeze --exclude-editable > requirements.lock
 #   (then add the two editable, in-repo packages below by hand)
 #
 # vaid-mint and vaid-pop are path/editable dependencies in this repo (built
