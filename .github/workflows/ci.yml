@@ -99,6 +99,111 @@ jobs:
       - name: pytest conformance suite (vaid-pop + vaid-mint + vaid-langchain + vaid-a2a + vaid-adk + vaid-jwt-bridge + vaid-mcp)
         run: python -m pytest python/vaid-pop python/vaid-mint python/vaid-langchain python/vaid-a2a python/vaid-adk python/vaid-jwt-bridge python/vaid-mcp
 
+  supply-chain:
+    name: Supply chain (cargo-audit + pip-audit + npm audit + SBOM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.88"
+      - name: Install cargo-audit (pinned 0.22.2)
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        with:
+          tool: cargo-audit@0.22.2
+      - name: cargo audit (Cargo.lock, Rust workspace)
+        run: cargo audit
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit (pinned 2.10.1)
+        run: python -m pip install --upgrade pip && python -m pip install pip-audit==2.10.1
+      # Each package's requirements.lock is the committed, resolved closure this
+      # scan runs against -- not a fresh resolve of pyproject.toml, which would
+      # drift from what the lockfile actually pins between runs.
+      #
+      # vaid-adk/requirements.lock: CVE-2026-114603 (opentelemetry-api <1.45.1,
+      # ReDoS on tracestate header parsing, availability-only, no code exec) is
+      # ignored here. google-adk 2.13.0 -- the newest release on PyPI as of
+      # 2026-11-01 -- itself pins opentelemetry-api<=1.44, so the fix is not
+      # reachable without a google-adk release we do not control and vaid-adk's
+      # declared range (google-adk>=2.0,<3) is not the thing capping it. Revisit
+      # when google-adk publishes a release that allows opentelemetry-api>=1.45.1.
+      - name: pip-audit (every committed requirements.lock)
+        run: |
+          set -e
+          for lock in python/*/requirements.lock; do
+            echo "::group::pip-audit $lock"
+            if [ "$lock" = "python/vaid-adk/requirements.lock" ]; then
+              python -m pip_audit -r "$lock" --ignore-vuln CVE-2026-114603
+            else
+              python -m pip_audit -r "$lock"
+            fi
+            echo "::endgroup::"
+          done
+      - name: Set up Node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "22"
+      # docs/verify: GHSA-67mh-4wv8-2f99 (esbuild's dev server allows any site to
+      # read its responses) is only reachable through `esbuild`'s devDependency
+      # line, is not present in ANY 0.24.x release (the declared range is
+      # esbuild@^0.24.0, and the fix first ships in 0.25.0), and only affects
+      # `esbuild serve`'s local dev server, which this package never runs. Scoped
+      # out with --omit=dev rather than widening the declared range. Revisit when
+      # a 0.24.x patch carries the fix, or the range is deliberately bumped.
+      - name: npm audit (every committed package-lock.json)
+        run: |
+          set -e
+          for dir in skill typescript; do
+            echo "::group::npm audit $dir"
+            npm audit --audit-level=high --prefix "$dir"
+            echo "::endgroup::"
+          done
+          echo "::group::npm audit docs/verify (production deps only, see comment above)"
+          npm audit --audit-level=high --omit=dev --prefix docs/verify
+          echo "::endgroup::"
+      - name: Install cargo-cyclonedx (pinned 0.5.9)
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      - name: SBOM (CycloneDX) - Rust workspace
+        run: cargo cyclonedx --all --format json
+      - name: Install cyclonedx-bom (pinned 7.6.0)
+        run: python -m pip install cyclonedx-bom==7.6.0
+      - name: SBOM (CycloneDX) - every Python package
+        run: |
+          set -e
+          mkdir -p sbom/python
+          for lock in python/*/requirements.lock; do
+            pkg=$(basename "$(dirname "$lock")")
+            cyclonedx-py requirements "$lock" -o "sbom/python/$pkg.cdx.json"
+          done
+      - name: SBOM (CycloneDX) - every npm project
+        run: |
+          set -e
+          mkdir -p sbom/npm
+          for dir in skill typescript docs/verify; do
+            name=$(echo "$dir" | tr '/' '-')
+            npm ci --prefix "$dir"
+            (cd "$dir" && npx --yes @cyclonedx/cyclonedx-npm@6.0.1 --output-file "$GITHUB_WORKSPACE/sbom/npm/$name.cdx.json" package.json)
+          done
+      - name: Collect SBOMs
+        run: |
+          set -e
+          mkdir -p sbom/rust
+          find crates -maxdepth 2 -name '*.cdx.json' -exec cp {} sbom/rust/ \;
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-cyclonedx
+          path: sbom/
+          retention-days: 90
+
   typescript:
     name: TypeScript conformance (node --test)
     runs-on: ubuntu-latest
