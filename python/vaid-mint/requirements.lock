@@ -1,0 +1,24 @@
+# Pinned, resolved dependency closure for vaid-mint (runtime + test extra),
+# generated from `pip install -e .[test]` in a clean venv against this
+# package's pyproject.toml bounds. Regenerate with:
+#
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -e ../vaid-pop -e .[test]
+#   pip freeze --exclude-editable > requirements.lock
+#   (then add the editable, in-repo package(s) below by hand)
+#
+# vaid-pop is a path/editable dependency in this repo
+# (built from python/vaid-pop), not resolved from
+# PyPI here; its version is pinned for the record of what this lock
+# was proven against.
+vaid-pop==0.2.0
+
+Pygments==2.21.0
+cffi==2.1.1
+cryptography==50.0.2
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+pycparser==3.12
+pytest==9.2.0
+rfc8785==0.1.4

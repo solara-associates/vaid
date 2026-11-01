@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "typescript/vaid-pop/tsconfig.build.json" },
+    { "path": "typescript/vaid-pop/tsconfig.test.json" },
+    { "path": "typescript/vaid-mint/tsconfig.build.json" },
+    { "path": "typescript/vaid-mint/tsconfig.test.json" },
+    { "path": "typescript/vaid-client/tsconfig.build.json" },
+    { "path": "typescript/vaid-client/tsconfig.test.json" },
+    { "path": "docs/verify/tsconfig.json" }
+  ]
+}
