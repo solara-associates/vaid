@@ -101,7 +101,9 @@ issued.
 - **No live SPIRE client.** There is no Workload API fetch here - the trust
   bundle and the presented SVID chain are both supplied by the caller. Get
   them from your own SPIRE agent (or `spiffe.workloadapi`) however you
-  already do.
+  already do. `spire-proof/` is a tested recipe for doing exactly that
+  against real SPIRE 1.9.6 server and agent binaries (mint, two refusal
+  cases, and a live SVID rotation); it is not a client this package ships.
 - **No claim beyond what the tests prove.** The test suite covers: a valid
   SVID mints and the result verifies under `vaid_mint` and carries the
   correct `spiffe://` ID; an expired SVID, a chain that does not anchor to

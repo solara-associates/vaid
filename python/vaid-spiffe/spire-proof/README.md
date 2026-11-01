@@ -23,8 +23,15 @@ README documents.
    `examples/quickstart.py` does, and calls
    `SpiffeMint.mint_root_with_svid` - the unmodified package function.
 4. It checks the result verifies under `vaid_mint`, carries the SPIFFE ID
-   the real SPIRE agent assigned, and that mis-configuring the mint's
-   `expected_trust_domain` against the same real SVID is refused.
+   the real SPIRE agent assigned; that mis-configuring the mint's
+   `expected_trust_domain` against the same real SVID is refused; and that
+   a possession proof signed by a key other than the SVID's own private
+   key is refused, even though the certificate chain presented is genuine
+   and currently valid.
+5. With `--rotation`, also waits for the live SPIRE agent to rotate the
+   X.509-SVID (the server in this run sets a short `default_x509_svid_ttl`,
+   see below) and confirms a VAID minted before rotation still verifies,
+   and that minting again against the post-rotation SVID also verifies.
 
 ## Running it
 
@@ -36,7 +43,28 @@ Requires Docker. From this directory:
 
 Tears down and recreates the SPIRE server/agent containers each run, then
 runs the proof container and prints its output. Exit code 0 means every
-check passed against the live SPIRE deployment.
+check that ran passed against the live SPIRE deployment.
+
+Pass `--rotation` to also run the rotation check above. It waits for a real
+rotation to happen, so it takes a few minutes; omit it for the fast path
+(the mint and two refusal checks only).
+
+### SVID TTL used by this harness
+
+The server in `run.sh` sets `default_x509_svid_ttl = "5m"`, deliberately
+short so the rotation check does not have to wait out SPIRE 1.9.6's
+documented default of `1h`. For reference, confirmed from the pinned
+version's own config and docs:
+
+- `default_x509_svid_ttl` default: `1h` (confirmed empirically too - the
+  fast-path run's leaf `not_valid_after` is exactly one hour out when this
+  override is not set).
+- `default_jwt_svid_ttl` default: `5m`.
+- No minimum TTL is documented or enforced by the 1.9.6 server: an
+  empirical test with `default_x509_svid_ttl = "10s"` was accepted and
+  issued a usable SVID (SPIRE backdates the `not_before` by a fixed ~10s
+  margin, so the actual validity window was ~20s, not 10s). `5m` here is a
+  practical choice for a bounded rotation wait, not a documented floor.
 
 ## Scope
 

@@ -7,21 +7,31 @@ X.509-SVID and trust bundle through spiffe.workloadapi.WorkloadApiClient,
 then hands the DER bytes to the unmodified vaid_spiffe public API exactly as
 examples/quickstart.py does with its synthetic certificate.
 
-Checks:
+Checks (always run):
   1. The real SVID mints a VAID that verifies under vaid_mint and carries
      the spiffe_id the real SPIRE agent assigned.
   2. The same real SVID, presented to a mint configured with the wrong
      expected_trust_domain, is refused and nothing is minted.
+  3. The same real SVID, presented with a possession proof signed by a key
+     that is NOT the SVID's own private key, is refused and nothing is
+     minted - a presenter who does not hold the SVID's key cannot bind it.
 
-Exit code 0 means both checks passed against the live deployment.
+Check 4, rotation, only runs when VAID_SPIRE_PROOF_ROTATION=1 is set (it
+takes several minutes: it waits for the live SPIRE agent to rotate the
+X.509-SVID under a short server-configured TTL). When run:
+  4. A VAID minted before rotation still verifies after the SPIRE agent
+     rotates to a new X.509-SVID (different leaf, same spiffe_id), and a
+     second mint against the post-rotation SVID also verifies.
+
+Exit code 0 means every check that ran passed against the live deployment.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa, padding
@@ -47,8 +57,8 @@ class LiveProofError(Exception):
     pass
 
 
-def _sign_with_svid_key(key, message: bytes) -> bytes:
-    """Sign with whatever key type the live SVID actually carries. Mirrors
+def _sign_with_key(key, message: bytes) -> bytes:
+    """Sign with whatever key type is given. Mirrors
     vaid_spiffe.possession._verify_with_leaf_key's dispatch on the other
     side of the same signature."""
     if isinstance(key, ed25519.Ed25519PrivateKey):
@@ -57,7 +67,7 @@ def _sign_with_svid_key(key, message: bytes) -> bytes:
         return key.sign(message, ec.ECDSA(hashes.SHA256()))
     if isinstance(key, rsa.RSAPrivateKey):
         return key.sign(message, padding.PKCS1v15(), hashes.SHA256())
-    raise LiveProofError(f"unsupported SVID private key type: {type(key).__name__}")
+    raise LiveProofError(f"unsupported key type: {type(key).__name__}")
 
 
 def _der_chain(x509_svid) -> tuple[bytes, list[bytes]]:
@@ -77,13 +87,13 @@ def _mint_pop(seed: VaidSeed, operating_pub: bytes, operating_key) -> MintPop:
     return MintPop(nonce=nonce, issued_at=issued_at, signature=operating_key.sign(digest))
 
 
-def _svid_possession(svid_private_key, operating_pub: bytes) -> SvidPossession:
+def _svid_possession(signing_key, operating_pub: bytes) -> SvidPossession:
     nonce = uuid.uuid4().hex
     issued_at = utc_whole_second_rfc3339()
     payload = build_svid_possession_payload(
         operating_public_key_der=operating_pub, nonce=nonce, issued_at=issued_at
     )
-    signature = _sign_with_svid_key(svid_private_key, canonical_svid_possession_bytes(payload))
+    signature = _sign_with_key(signing_key, canonical_svid_possession_bytes(payload))
     return SvidPossession(nonce=nonce, issued_at=issued_at, signature=signature)
 
 
@@ -102,30 +112,46 @@ def _build_seed_and_pop():
     return seed, pop, operating_pub
 
 
-def main() -> int:
-    passed: list[str] = []
+def _fetch_context(client: WorkloadApiClient):
+    """Fetch an X.509 context, retrying on connect races. The agent's
+    Workload API socket can accept a connection slightly before its gRPC
+    service is actually ready to answer (observed as a "connection reset by
+    peer" on the first attempt right after the agent process starts)."""
+    last_exc: Exception | None = None
+    for _ in range(10):
+        try:
+            return client.fetch_x509_context(timeout=10)
+        except FetchX509SvidError as exc:
+            last_exc = exc
+            time.sleep(1)
+    raise LiveProofError(
+        f"could not fetch an X.509 context from the Workload API after retrying: {last_exc}"
+    )
 
-    client = WorkloadApiClient()
-    try:
-        # The agent's Workload API socket can accept a connection slightly
-        # before its gRPC service is actually ready to answer (observed as
-        # a "connection reset by peer" on the first attempt right after the
-        # agent process starts) - retry with backoff rather than racing it.
-        last_exc: Exception | None = None
-        ctx = None
-        for attempt in range(10):
-            try:
-                ctx = client.fetch_x509_context(timeout=10)
-                break
-            except FetchX509SvidError as exc:
-                last_exc = exc
-                time.sleep(1)
-        if ctx is None:
-            raise LiveProofError(
-                f"could not fetch an X.509 context from the Workload API after retrying: {last_exc}"
-            )
-    finally:
-        client.close()
+
+def _mint_and_verify(svid, trust_domain: str, trust_bundle_der: list[bytes]):
+    """Mint a VAID over `svid` and return (issuer, result). Raises
+    LiveProofError if it does not verify."""
+    leaf_der, intermediate_der = _der_chain(svid)
+    audit = InMemoryAudit()
+    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
+    mint = SpiffeMint(
+        MintService(issuer, audit),
+        audit,
+        trust_bundle=trust_bundle_der,
+        expected_trust_domain=trust_domain,
+    )
+    seed, pop, operating_pub = _build_seed_and_pop()
+    possession = _svid_possession(svid.private_key, operating_pub)
+    presentation = SvidPresentation(leaf=leaf_der, intermediates=intermediate_der, possession=possession)
+    result = mint.mint_root_with_svid(seed, presentation, pop)
+    if not issuer.verify_vaid(result.vaid):
+        raise LiveProofError("a VAID minted over a real SPIRE-issued SVID did not verify")
+    return issuer, result
+
+
+def run_core_checks(ctx) -> list[str]:
+    passed: list[str] = []
 
     svid = ctx.default_svid
     leaf_der, intermediate_der = _der_chain(svid)
@@ -142,21 +168,7 @@ def main() -> int:
     print(f"trust bundle authorities: {len(trust_bundle_der)}")
 
     # (1) Real SVID, correct trust domain: mints and verifies.
-    audit = InMemoryAudit()
-    issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
-    mint = SpiffeMint(
-        MintService(issuer, audit),
-        audit,
-        trust_bundle=trust_bundle_der,
-        expected_trust_domain=trust_domain,
-    )
-    seed, pop, operating_pub = _build_seed_and_pop()
-    possession = _svid_possession(svid.private_key, operating_pub)
-    presentation = SvidPresentation(leaf=leaf_der, intermediates=intermediate_der, possession=possession)
-
-    result = mint.mint_root_with_svid(seed, presentation, pop)
-    if not issuer.verify_vaid(result.vaid):
-        raise LiveProofError("a VAID minted over a real SPIRE-issued SVID did not verify")
+    issuer, result = _mint_and_verify(svid, trust_domain, trust_bundle_der)
     if result.spiffe_id != real_spiffe_id:
         raise LiveProofError(
             f"minted VAID carried spiffe_id {result.spiffe_id!r}, expected {real_spiffe_id!r}"
@@ -186,6 +198,117 @@ def main() -> int:
     if not audit2.is_empty():
         raise LiveProofError("a refused real-SVID mint still wrote an audit record")
     passed.append("the same real SVID, presented against the wrong expected_trust_domain, is refused")
+
+    # (3) Same real SVID, possession signed by a DIFFERENT key (not the
+    # SVID's own private key): refused, nothing minted. Proves a presenter
+    # who does not hold the SVID's private key cannot bind it, even with a
+    # genuine, currently-valid certificate chain in hand.
+    audit3 = InMemoryAudit()
+    mint3 = SpiffeMint(
+        MintService(ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(), audit3),
+        audit3,
+        trust_bundle=trust_bundle_der,
+        expected_trust_domain=trust_domain,
+    )
+    seed3, pop3, operating_pub3 = _build_seed_and_pop()
+    impostor_key = ec.generate_private_key(ec.SECP256R1())
+    possession3 = _svid_possession(impostor_key, operating_pub3)
+    presentation3 = SvidPresentation(leaf=leaf_der, intermediates=intermediate_der, possession=possession3)
+    try:
+        mint3.mint_root_with_svid(seed3, presentation3, pop3)
+    except IdentityError:
+        pass
+    else:
+        raise LiveProofError(
+            "a possession proof signed by a key other than the real SVID's own key minted a VAID"
+        )
+    if not audit3.is_empty():
+        raise LiveProofError("a refused impostor-key mint still wrote an audit record")
+    passed.append(
+        "the same real SVID, presented with a possession proof signed by a DIFFERENT key "
+        "(not the SVID's own private key), is refused"
+    )
+
+    return passed
+
+
+def run_rotation_check(client: WorkloadApiClient) -> list[str]:
+    """Wait for the live SPIRE agent to rotate the X.509-SVID (the server
+    in this run is configured with a short default_x509_svid_ttl), then
+    confirm a VAID minted before rotation still verifies, and that minting
+    again against the post-rotation SVID also verifies."""
+    passed: list[str] = []
+
+    ctx_before = _fetch_context(client)
+    svid_before = ctx_before.default_svid
+    serial_before = svid_before.cert_chain[0].serial_number
+    trust_domain = str(svid_before.spiffe_id.trust_domain)
+    bundle = ctx_before.x509_bundle_set.get_bundle_for_trust_domain(svid_before.spiffe_id.trust_domain)
+    trust_bundle_der = [
+        c.public_bytes(serialization.Encoding.DER) for c in bundle.x509_authorities
+    ]
+
+    issuer_before, result_before = _mint_and_verify(svid_before, trust_domain, trust_bundle_der)
+    print(
+        f"pre-rotation: minted VAID {result_before.vaid['vaid_id']} over SVID serial "
+        f"{serial_before}, not_valid_after {svid_before.cert_chain[0].not_valid_after_utc.isoformat()}"
+    )
+
+    timeout_secs = int(os.environ.get("VAID_PROOF_ROTATION_TIMEOUT_SECS", "280"))
+    poll_secs = 5
+    deadline = time.time() + timeout_secs
+    svid_after = None
+    while time.time() < deadline:
+        ctx_after = _fetch_context(client)
+        candidate = ctx_after.default_svid
+        if candidate.cert_chain[0].serial_number != serial_before:
+            svid_after = candidate
+            break
+        time.sleep(poll_secs)
+
+    if svid_after is None:
+        raise LiveProofError(
+            f"SPIRE agent did not rotate the X.509-SVID within {timeout_secs}s"
+        )
+
+    print(
+        f"rotated: new SVID serial {svid_after.cert_chain[0].serial_number}, "
+        f"not_valid_after {svid_after.cert_chain[0].not_valid_after_utc.isoformat()}"
+    )
+    passed.append(
+        f"SPIRE agent rotated the X.509-SVID (serial {serial_before} -> "
+        f"{svid_after.cert_chain[0].serial_number})"
+    )
+
+    # The pre-rotation VAID must still verify: its own validity is
+    # independent of the SVID's current lifecycle, since the SVID was only
+    # ever used to authorize the mint, not embedded in the signed document.
+    if not issuer_before.verify_vaid(result_before.vaid):
+        raise LiveProofError(
+            "a VAID minted before rotation no longer verifies after the SVID rotated"
+        )
+    passed.append(
+        f"VAID {result_before.vaid['vaid_id']}, minted before rotation, still verifies after rotation"
+    )
+
+    issuer_after, result_after = _mint_and_verify(svid_after, trust_domain, trust_bundle_der)
+    passed.append(
+        f"a second VAID ({result_after.vaid['vaid_id']}) minted over the post-rotation SVID also verifies"
+    )
+
+    return passed
+
+
+def main() -> int:
+    client = WorkloadApiClient()
+    try:
+        ctx = _fetch_context(client)
+        passed = run_core_checks(ctx)
+
+        if os.environ.get("VAID_SPIRE_PROOF_ROTATION") == "1":
+            passed += run_rotation_check(client)
+    finally:
+        client.close()
 
     print(f"\nLIVE SPIRE PROOF: PASS - {len(passed)} check(s)")
     for p in passed:

@@ -4,11 +4,29 @@
 # background process, and live_spire_proof.py as a local process talking to
 # its Workload API socket. Tears down and recreates the SPIRE server each
 # run so the proof is not reusing state from a previous invocation.
+# Pass --rotation to also run the rotation check (live_spire_proof.py's
+# run_rotation_check): it waits for the agent to actually rotate the
+# X.509-SVID under the short server-side TTL set below, which takes several
+# minutes. Omit it for the fast path (checks 1-3 only).
 set -euo pipefail
 
 SPIRE_VERSION="1.9.6"
 TRUST_DOMAIN="vaid-spiffe-live.test"
 NETWORK="vaid-spire-proof-net"
+
+ROTATION=0
+if [ "${1:-}" = "--rotation" ]; then
+    ROTATION=1
+fi
+
+# 5m: the shortest TTL that still leaves a comfortable margin over SPIRE's
+# fixed ~10s not-before backdate (empirically confirmed: a 10s configured
+# TTL produced a 20s actual validity window on this pinned version, 1.9.6 -
+# no documented or enforced server-side minimum was found). 5m keeps the
+# rotation check's wait time bounded while staying well inside SPIRE 1.9.6's
+# documented default_x509_svid_ttl of 1h (so this is a deliberately short
+# override, not the default).
+DEFAULT_X509_SVID_TTL="5m"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -23,6 +41,7 @@ server {
     trust_domain = "$TRUST_DOMAIN"
     data_dir = "/opt/spire/data"
     log_level = "INFO"
+    default_x509_svid_ttl = "$DEFAULT_X509_SVID_TTL"
     ca_subject = {
         country = ["US"]
         organization = ["vaid-spiffe live proof"]
@@ -127,7 +146,11 @@ echo "== building combined agent+proof image =="
 docker build -q -f "$SCRIPT_DIR/Dockerfile.proof" -t vaid-spiffe-live-proof "$REPO_ROOT" >/dev/null
 
 echo "== running spire-agent + live_spire_proof.py against the live SPIRE server =="
+if [ "$ROTATION" = "1" ]; then
+    echo "   (--rotation: also waiting for a live SVID rotation, can take several minutes)"
+fi
 docker run --rm --network "$NETWORK" \
     -v "$WORK_DIR/agent-conf:/opt/spire/conf/agent:ro" \
     -e "SPIRE_JOIN_TOKEN=$JOIN_TOKEN" \
+    -e "VAID_SPIRE_PROOF_ROTATION=$ROTATION" \
     vaid-spiffe-live-proof
