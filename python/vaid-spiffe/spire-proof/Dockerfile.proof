@@ -1,0 +1,33 @@
+# Combines the real spire-agent binary with the Python proof script in one
+# container. The agent and the workload connecting to its Workload API must
+# share a mount/user namespace for the agent's "unix" WorkloadAttestor to
+# resolve the caller's peer credentials (SO_PEERCRED) - splitting them across
+# two separate Docker Desktop containers was tried first and failed with
+# "could not resolve caller information" even with a named volume for the
+# socket, because Docker Desktop for Mac does not carry peer credentials
+# across that container boundary. Running both in one container matches how
+# a real SPIRE deployment works anyway: the agent is a host-local daemon and
+# the workload is a local process on that same host.
+FROM ghcr.io/spiffe/spire-agent:1.9.6 AS spire-agent
+
+FROM python:3.12-slim
+
+COPY --from=spire-agent /opt/spire/bin/spire-agent /opt/spire/bin/spire-agent
+
+RUN pip install --no-cache-dir "spiffe>=0.3,<0.4" "cryptography>=42.0"
+
+COPY python/vaid-pop /opt/vaid/python/vaid-pop
+COPY python/vaid-mint /opt/vaid/python/vaid-mint
+COPY python/vaid-spiffe /opt/vaid/python/vaid-spiffe
+
+RUN pip install --no-cache-dir \
+      -e /opt/vaid/python/vaid-pop \
+      -e /opt/vaid/python/vaid-mint \
+      -e /opt/vaid/python/vaid-spiffe
+
+ENV SPIFFE_ENDPOINT_SOCKET=unix:///tmp/spire-agent/public/api.sock
+
+COPY python/vaid-spiffe/spire-proof/entrypoint.sh /opt/vaid/entrypoint.sh
+RUN chmod +x /opt/vaid/entrypoint.sh
+
+ENTRYPOINT ["/opt/vaid/entrypoint.sh"]
