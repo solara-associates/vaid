@@ -539,9 +539,25 @@ export function isInScope(vaid: Vaid, resource: string): boolean {
 /**
  * Does this VAID hold `capability` (exact membership)? The single
  * capability-membership predicate.
+ *
+ * **Total: never throws** (AiSOC review of beenuar/AiSOC#1741, finding 1).
+ * `vaid: Vaid` is a compile-time promise only — TypeScript's types are
+ * erased at runtime, so a caller handing this an object that is not
+ * actually object-shaped, or whose `capability_set` is missing or not an
+ * array, previously hit `.includes()` on `undefined` and threw. Rust's
+ * `Vaid::has_capability` can never face this: it is a method on a struct
+ * `serde` already refused to construct from anything malformed. This
+ * function is handed a plain object, which has no such gate, so it is
+ * checked here explicitly. A document that is not object-shaped, or whose
+ * `capability_set` cannot be read, demonstrably does not hold the
+ * capability — fail closed to `false`, the same rule {@link isExpired} and
+ * {@link scopeContains} already apply.
  */
 export function hasCapability(vaid: Vaid, capability: string): boolean {
-  return capsContain(vaid.capability_set, capability);
+  if (typeof vaid !== 'object' || vaid === null) return false;
+  const capabilitySet = (vaid as { capability_set?: unknown }).capability_set;
+  if (!Array.isArray(capabilitySet)) return false;
+  return capsContain(capabilitySet as readonly string[], capability);
 }
 
 /**

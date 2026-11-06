@@ -547,8 +547,25 @@ def verify_vaid_standing_bound(
     :attr:`~VaidVerdict.VALID` is exactly what :func:`verify_vaid_standing`
     would have reported; the error is only raised once the document would
     otherwise have verified.
+
+    **Total for callers holding an already-parsed dict** (AiSOC review of
+    beenuar/AiSOC#1741, finding 1). This is the entry point integrators are
+    told to use — the docstring above says so — so unlike
+    :func:`verify_vaid_standing`, which documents and keeps its raise on a
+    malformed mapping for callers that have already gone through a stricter
+    gate, this function never raises :class:`~vaid_mint.error.MalformedDocumentError`:
+    a ``vaid`` that is not a mapping, or that fails
+    :func:`verify_vaid_standing`'s shape checks, is reported as
+    :attr:`~VaidVerdict.UNPARSEABLE` — the same reason a caller gets for
+    malformed JSON **text** via :func:`verify_vaid_standing_from_json`. A
+    :class:`~vaid_mint.error.CallerMismatchError` is still raised: that is a
+    deliberate refusal of a well-formed, authentic document, not a crash on a
+    malformed one.
     """
-    verdict = verify_vaid_standing(kernel_public_key, vaid, revocation)
+    try:
+        verdict = verify_vaid_standing(kernel_public_key, vaid, revocation)
+    except MalformedDocumentError:
+        return VaidVerdict.UNPARSEABLE
     if verdict.is_valid() and not expected.matches(vaid):
         raise CallerMismatchError("vaid does not belong to the expected caller")
     return verdict

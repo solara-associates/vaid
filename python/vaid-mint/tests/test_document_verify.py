@@ -24,7 +24,7 @@ from vaid_mint import (
     verify_vaid_standing_bound_from_json,
     verify_vaid_standing_from_json,
 )
-from vaid_mint.document import is_expired, require_vaid_shape
+from vaid_mint.document import has_capability, is_expired, require_vaid_shape
 from vaid_mint.document import prefix_entry
 from vaid_mint.error import CallerMismatchError, MalformedDocumentError
 from vaid_mint.revocation import RevocationStatus, assemble_lineage
@@ -224,6 +224,50 @@ def test_caller_binding_never_upgrades_a_failing_verdict() -> None:
     mismatched = ExpectedCaller(agent_id="someone-else")
     verdict = verify_vaid_standing_bound(wrong_key, doc, RevocationStatus.NOT_REVOKED, mismatched)
     assert verdict is VaidVerdict.ISSUER_MISMATCH
+
+
+@pytest.mark.parametrize(
+    "bad_vaid",
+    [
+        None,
+        [],
+        "not-a-document",
+        42,
+        {},
+        {"vaid_id": 123},
+        {"vaid_id": ""},
+    ],
+)
+def test_verify_vaid_standing_bound_refuses_malformed_input_without_raising(bad_vaid) -> None:
+    """verify_vaid_standing_bound is the entry point integrators are told to
+    use for an already-parsed dict (AiSOC review of beenuar/AiSOC#1741,
+    finding 1); it must report UNPARSEABLE, never raise, for an empty dict, a
+    wrong-typed value, or one missing a required field."""
+    public_key, _ = _public_key_and_doc()
+    verdict = verify_vaid_standing_bound(
+        public_key, bad_vaid, RevocationStatus.NOT_REVOKED, ExpectedCaller.none()
+    )
+    assert verdict is VaidVerdict.UNPARSEABLE
+
+
+@pytest.mark.parametrize(
+    "bad_vaid",
+    [
+        None,
+        [],
+        "not-a-document",
+        42,
+        {},
+        {"vaid_id": "a"},
+        {"vaid_id": "a", "capability_set": "read"},
+        {"vaid_id": "a", "capability_set": None},
+    ],
+)
+def test_has_capability_refuses_malformed_input_without_raising(bad_vaid) -> None:
+    """has_capability (AiSOC review of beenuar/AiSOC#1741, finding 1) must
+    never raise on an empty dict, a wrong-typed value, or one missing/
+    mistyping capability_set — it fails closed to False."""
+    assert has_capability(bad_vaid, "read") is False
 
 
 def test_caller_binding_from_json_mirrors_the_dict_entry_point() -> None:

@@ -620,6 +620,18 @@ function expectedCallerMatches(expected: ExpectedCaller, vaid: Vaid): boolean {
  * {@link VaidVerdict.Valid} is exactly what {@link verifyVaidStanding} would
  * have reported; the error is only thrown once the document would otherwise
  * have verified.
+ *
+ * **Total for callers holding an already-parsed object** (AiSOC review of
+ * beenuar/AiSOC#1741, finding 1). This is the entry point integrators are
+ * told to use — the doc comment above says so — so unlike
+ * {@link verifyVaidStanding}, which documents and keeps its throw on a
+ * malformed object for callers that have already gone through a stricter
+ * gate, this function never throws {@link MalformedDocumentError}: a `vaid`
+ * that is not an object, or that fails {@link verifyVaidStanding}'s shape
+ * checks, is reported as {@link VaidVerdict.Unparseable} — the same reason a
+ * caller gets for malformed JSON **text** via {@link verifyVaidStandingFromJson}.
+ * A {@link CallerMismatchError} is still thrown: that is a deliberate refusal
+ * of a well-formed, authentic document, not a crash on a malformed one.
  */
 export function verifyVaidStandingBound(
   kernelPublicKey: Uint8Array,
@@ -627,7 +639,13 @@ export function verifyVaidStandingBound(
   revocation: RevocationStatus,
   expected: ExpectedCaller,
 ): VaidVerdict {
-  const verdict = verifyVaidStanding(kernelPublicKey, vaid, revocation);
+  let verdict: VaidVerdict;
+  try {
+    verdict = verifyVaidStanding(kernelPublicKey, vaid, revocation);
+  } catch (err) {
+    if (err instanceof MalformedDocumentError) return VaidVerdict.Unparseable;
+    throw err;
+  }
   if (isVerdictValid(verdict) && !expectedCallerMatches(expected, vaid)) {
     throw new CallerMismatchError('vaid does not belong to the expected caller');
   }

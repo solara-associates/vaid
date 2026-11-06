@@ -479,5 +479,22 @@ def is_in_scope(vaid: dict, resource: str) -> bool:
 
 def has_capability(vaid: dict, capability: str) -> bool:
     """Does the document hold ``capability`` (exact membership)? Mirror of
-    ``Vaid::has_capability``."""
-    return caps_contain(vaid["capability_set"], capability)
+    ``Vaid::has_capability``.
+
+    **Total: never raises** (AiSOC review of beenuar/AiSOC#1741, finding 1).
+    Previously indexed ``vaid["capability_set"]`` directly, so a non-mapping
+    ``vaid`` or one missing/mistyping that member raised ``TypeError`` /
+    ``KeyError`` straight out of a predicate whose signature promises a
+    ``bool``. Rust's ``Vaid::has_capability`` can never face this: it is a
+    method on a struct serde already refused to construct from anything
+    malformed. Python hands this function a plain mapping, which has no such
+    gate, so it is checked here explicitly. A document that is not a mapping,
+    or whose ``capability_set`` is missing or not a list, demonstrably does
+    not hold the capability — fail closed to ``False``, the same rule
+    :func:`is_expired` and :func:`scope_contains` already apply."""
+    if not isinstance(vaid, dict):
+        return False
+    capability_set = vaid.get("capability_set")
+    if not isinstance(capability_set, list):
+        return False
+    return caps_contain(capability_set, capability)
