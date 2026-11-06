@@ -61,7 +61,7 @@
 
 import type { VaidId } from 'vaid-pop';
 
-import type { Vaid } from './document.js';
+import { requireVaidShape, type Vaid } from './document.js';
 
 /**
  * Defensive bound on lineage depth. A resolver map corrupted into a cycle, or an
@@ -153,11 +153,16 @@ export interface LineageResolver {
  * as {@link RevocationStatus.Unavailable} and MUST NOT be presented to the check
  * as though it were the whole lineage. It is never silently truncated to the leaf
  * alone; that truncation is the precise failure R.4.2 exists to forbid.
+ *
+ * Throws {@link MalformedDocumentError} (from `error.ts`) — never a bare
+ * `TypeError` — if `leaf` is not an object or lacks a well-typed
+ * `vaid_id`/`parent_vaid`; see {@link requireVaidShape}.
  */
 export function assembleLineage(
   leaf: Vaid,
   resolver: LineageResolver,
 ): VaidId[] | null {
+  leaf = requireVaidShape(leaf, 'leaf');
   const chain: VaidId[] = [leaf.vaid_id];
   let nextParent: VaidId | null = leaf.parent_vaid;
 

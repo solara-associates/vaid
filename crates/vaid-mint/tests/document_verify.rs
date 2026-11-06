@@ -10,7 +10,10 @@ use serde_json::json;
 
 use vaid_mint::document::{AgentClass, TenantId, Vaid};
 use vaid_mint::issuer::{ReferenceIssuer, VaidIssuer};
-use vaid_mint::{verify_lineage_hash, verify_vaid_authenticity};
+use vaid_mint::{
+    verify_lineage_hash, verify_vaid_authenticity, verify_vaid_standing_bound_from_json,
+    verify_vaid_standing_from_json, ExpectedCaller, RevocationStatus, VaidVerdict,
+};
 
 fn hex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -171,4 +174,166 @@ fn vaid_with_expiry(expires_at: &str) -> Vaid {
     let mut json = serde_json::to_value(&doc).unwrap();
     json["expires_at"] = serde_json::Value::String(expires_at.to_string());
     serde_json::from_value(json).unwrap()
+}
+
+// ── Malformed documents never panic (AiSOC review of beenuar/AiSOC#1741,
+// finding 1) ──────────────────────────────────────────────────────────────
+//
+// Rust's `Vaid` is a typed struct: deserialization is the structural gate, and
+// it is `serde`'s `Result`, never a panic. These three tests are the Rust half
+// of the cross-language guarantee — Python and TypeScript hand their verifiers
+// a plain map with no such gate and raise a typed `MalformedDocumentError`
+// instead of a bare `KeyError`/`TypeError`; here the equivalent "typed error,
+// never a crash" is `serde_json::Error`, already returned rather than panicked,
+// and `verify_vaid_standing_from_json` turning that into `VaidVerdict::Unparseable`
+// rather than letting the deserialization error escape at all.
+
+#[test]
+fn empty_document_is_a_typed_parse_error_not_a_panic() {
+    assert!(
+        serde_json::from_str::<Vaid>("").is_err(),
+        "empty input must be a typed Err, not a panic"
+    );
+    assert!(serde_json::from_str::<Vaid>("{}").is_err());
+    let (public_key, _) = public_key_and_doc();
+    assert_eq!(
+        verify_vaid_standing_from_json(&public_key, "", RevocationStatus::NotRevoked),
+        VaidVerdict::Unparseable
+    );
+    assert_eq!(
+        verify_vaid_standing_from_json(&public_key, "{}", RevocationStatus::NotRevoked),
+        VaidVerdict::Unparseable
+    );
+}
+
+#[test]
+fn document_missing_a_required_field_is_a_typed_parse_error_not_a_panic() {
+    let (public_key, doc) = public_key_and_doc();
+    let mut val = serde_json::to_value(&doc).unwrap();
+    val.as_object_mut().unwrap().remove("vaid_id");
+    assert!(
+        serde_json::from_value::<Vaid>(val.clone()).is_err(),
+        "a document missing vaid_id must be a typed Err, not a panic"
+    );
+    assert_eq!(
+        verify_vaid_standing_from_json(&public_key, &val.to_string(), RevocationStatus::NotRevoked),
+        VaidVerdict::Unparseable
+    );
+}
+
+#[test]
+fn document_with_a_wrong_typed_field_is_a_typed_parse_error_not_a_panic() {
+    let (public_key, doc) = public_key_and_doc();
+    let mut val = serde_json::to_value(&doc).unwrap();
+    val["vaid_id"] = json!(12345);
+    assert!(
+        serde_json::from_value::<Vaid>(val.clone()).is_err(),
+        "a wrong-typed vaid_id must be a typed Err, not a panic"
+    );
+    assert_eq!(
+        verify_vaid_standing_from_json(&public_key, &val.to_string(), RevocationStatus::NotRevoked),
+        VaidVerdict::Unparseable
+    );
+}
+
+// ── Caller binding (AiSOC review of beenuar/AiSOC#1741, finding 2)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `Valid` standing proves a VAID is real, unexpired and unrevoked. It proves
+// nothing about who presented it: anyone holding a copy of someone else's
+// genuine VAID can hand it over as if it were their own. These tests pin that
+// `verify_vaid_standing_bound`/`verify_vaid_standing_bound_from_json` refuse
+// exactly that, and that an unbound (`ExpectedCaller::none()`) call behaves
+// identically to `verify_vaid_standing` — the feature is additive.
+
+#[test]
+fn unbound_caller_check_matches_plain_standing() {
+    let (public_key, doc) = public_key_and_doc();
+    let json = serde_json::to_string(&doc).unwrap();
+    let verdict = verify_vaid_standing_bound_from_json(
+        &public_key,
+        &json,
+        RevocationStatus::NotRevoked,
+        &ExpectedCaller::none(),
+    );
+    assert_eq!(verdict, Ok(VaidVerdict::Valid));
+}
+
+#[test]
+fn caller_binding_accepts_the_genuine_caller() {
+    let (public_key, doc) = public_key_and_doc();
+    let json = serde_json::to_string(&doc).unwrap();
+    let expected = ExpectedCaller {
+        agent_id: Some(doc.agent_id().to_string()),
+        agent_class: Some(doc.agent_class().as_str().to_string()),
+        tenant_id: Some(doc.tenant_id().as_str().to_string()),
+    };
+    let verdict = verify_vaid_standing_bound_from_json(
+        &public_key,
+        &json,
+        RevocationStatus::NotRevoked,
+        &expected,
+    );
+    assert_eq!(verdict, Ok(VaidVerdict::Valid));
+}
+
+#[test]
+fn caller_binding_refuses_a_valid_vaid_presented_by_someone_else() {
+    let (public_key, doc) = public_key_and_doc();
+    let json = serde_json::to_string(&doc).unwrap();
+
+    let wrong_agent = ExpectedCaller {
+        agent_id: Some("not-the-agent-this-was-issued-to".to_string()),
+        ..ExpectedCaller::none()
+    };
+    assert!(
+        verify_vaid_standing_bound_from_json(
+            &public_key,
+            &json,
+            RevocationStatus::NotRevoked,
+            &wrong_agent
+        )
+        .is_err(),
+        "a document that verifies but was issued to someone else must be refused"
+    );
+
+    let wrong_tenant = ExpectedCaller {
+        tenant_id: Some("not-the-tenant".to_string()),
+        ..ExpectedCaller::none()
+    };
+    assert!(verify_vaid_standing_bound_from_json(
+        &public_key,
+        &json,
+        RevocationStatus::NotRevoked,
+        &wrong_tenant
+    )
+    .is_err());
+}
+
+#[test]
+fn caller_binding_never_upgrades_a_failing_verdict() {
+    // An expected caller that would NOT match is irrelevant if the document
+    // itself does not verify — the document's own problem is reported, never
+    // masked by a caller-mismatch refusal and never silently waved through.
+    let (_signing_key, doc) = public_key_and_doc();
+    let wrong_key = ReferenceIssuer::ephemeral(1, "vaid.example")
+        .unwrap()
+        .kernel_public_key()
+        .to_vec();
+    let json = serde_json::to_string(&doc).unwrap();
+    let mismatched = ExpectedCaller {
+        agent_id: Some("someone-else".to_string()),
+        ..ExpectedCaller::none()
+    };
+    let verdict = verify_vaid_standing_bound_from_json(
+        &wrong_key,
+        &json,
+        RevocationStatus::NotRevoked,
+        &mismatched,
+    );
+    assert_eq!(
+        verdict,
+        Ok(VaidVerdict::IssuerMismatch),
+        "a document that fails authenticity must report that failure, not a caller mismatch"
+    );
 }

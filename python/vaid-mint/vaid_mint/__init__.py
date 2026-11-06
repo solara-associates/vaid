@@ -97,11 +97,14 @@ from vaid_mint.document import (
     is_expired,
     has_conforming_timestamps,
     is_in_scope,
+    require_vaid_shape,
 )
 from vaid_mint.error import (
     AuditError,
+    CallerMismatchError,
     ConfigError,
     IdentityError,
+    MalformedDocumentError,
     MintError,
     UnauthorizedError,
 )
@@ -130,7 +133,10 @@ from vaid_mint.verify import (
     verify_vaid_authenticity,
     verify_vaid_authenticity_graded,
     verify_vaid_standing,
+    verify_vaid_standing_bound,
+    verify_vaid_standing_bound_from_json,
     verify_vaid_standing_from_json,
+    ExpectedCaller,
     VaidVerdict,
 )
 from vaid_mint.revocation import (
@@ -191,6 +197,9 @@ __all__ = [
     "verify_vaid_authenticity_graded",
     "verify_vaid_standing",
     "verify_vaid_standing_from_json",
+    "verify_vaid_standing_bound",
+    "verify_vaid_standing_bound_from_json",
+    "ExpectedCaller",
     "parse_vaid_document",
     "verify_chain",
     "ChainVerification",
@@ -217,6 +226,9 @@ __all__ = [
     "IdentityError",
     "AuditError",
     "ConfigError",
+    "MalformedDocumentError",
+    "CallerMismatchError",
+    "require_vaid_shape",
     "DEFAULT_MAX_DELEGATION_DEPTH",
     "validate_max_delegation_depth",
 ]

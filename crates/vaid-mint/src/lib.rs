@@ -146,5 +146,6 @@ pub use revocation::{
 };
 pub use verify::{
     verify_lineage_hash, verify_vaid_authenticity, verify_vaid_authenticity_graded,
-    verify_vaid_standing, verify_vaid_standing_from_json, VaidVerdict,
+    verify_vaid_standing, verify_vaid_standing_bound, verify_vaid_standing_bound_from_json,
+    verify_vaid_standing_from_json, CallerMismatchError, ExpectedCaller, VaidVerdict,
 };

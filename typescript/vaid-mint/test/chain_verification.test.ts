@@ -37,6 +37,7 @@ import {
   ChainVerification,
   computeLineageHash,
   kernelKeyThumbprint,
+  MalformedDocumentError,
   PresentedBundle,
   verifyChain,
   type Vaid,
@@ -405,4 +406,23 @@ test('the bundle assembles an ordered lineage, root first', () => {
     [vid(1), vid(2), vid(3)],
     'ordered root first, leaf last',
   );
+});
+
+// ── Malformed documents refuse with a typed error (AiSOC review of
+// beenuar/AiSOC#1741, finding 1) ────────────────────────────────────────────
+
+test('PresentedBundle refuses a malformed presented document', () => {
+  for (const bad of [null, undefined, [], 'not-a-document', 42, {}, { vaid_id: 1 }]) {
+    assert.throws(() => new PresentedBundle([bad as unknown as Vaid]), MalformedDocumentError);
+  }
+});
+
+test('verifyChain refuses a malformed leaf', () => {
+  const mint = new LocalMint();
+  for (const bad of [null, undefined, [], 'not-a-document', 42, {}, { vaid_id: 1 }]) {
+    assert.throws(
+      () => verifyChain(mint.publicKey, bad as unknown as Vaid, new PresentedBundle()),
+      MalformedDocumentError,
+    );
+  }
 });

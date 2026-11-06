@@ -36,8 +36,10 @@ import {
   VAID_SIG_VERSION_V4,
   boundaryIsEvaluable,
   isWellFormedScopeBoundary,
+  requireVaidShape,
   type Vaid,
 } from './document.js';
+import { CallerMismatchError, MalformedDocumentError } from './error.js';
 import { RevocationStatus } from './revocation.js';
 
 /**
@@ -451,6 +453,13 @@ export function verifyVaidAuthenticityGraded(
   kernelPublicKey: Uint8Array,
   vaid: Vaid,
 ): VaidVerdict {
+  // Throws MalformedDocumentError — never a bare TypeError — if `vaid` is not
+  // an object or lacks a well-typed `vaid_id`/`parent_vaid`. A caller that
+  // already went through `parseVaidDocument` (or `verifyVaidStandingFromJson`)
+  // never hits this: that gate is stricter and already refused such a
+  // document as `VaidVerdict.Unparseable`. This guards the callers who hand a
+  // raw, unparsed object straight to this function or to `verifyVaidStanding`.
+  vaid = requireVaidShape(vaid, 'vaid');
   if (vaid.sig_version !== VAID_SIG_VERSION_V4) return VaidVerdict.UnsupportedSigVersion;
   if (!isValidTrustDomain(vaid.trust_domain)) return VaidVerdict.MalformedTrustDomain;
   // The v3 key-commitment check: does the document's thumbprint CORRESPOND to
@@ -521,6 +530,9 @@ export function verifyVaidStanding(
   // revocation is the one input that can be unavailable. Inserting it here changes
   // no pre-existing verdict: no document in any existing vector carries an
   // unrecognised kind.
+  if (!Array.isArray(vaid.scope_boundary)) {
+    throw new MalformedDocumentError('vaid.scope_boundary is missing or not an array');
+  }
   if (!boundaryIsEvaluable(vaid.scope_boundary)) return VaidVerdict.UnknownScopeKind;
   if (revocation === RevocationStatus.NotRevoked) return VaidVerdict.Valid;
   if (revocation === RevocationStatus.Revoked) return VaidVerdict.Revoked;
@@ -550,4 +562,89 @@ export function verifyVaidStandingFromJson(
   const document = parseVaidDocument(documentJson);
   if (document === null) return VaidVerdict.Unparseable;
   return verifyVaidStanding(kernelPublicKey, document, revocation);
+}
+
+// ── Caller binding ───────────────────────────────────────────────────────────
+
+/**
+ * What the caller claims to be, to be matched against a verified document
+ * (caller binding — AiSOC review of the plugin, finding 2).
+ *
+ * {@link VaidVerdict.Valid} proves a VAID is real, unexpired and unrevoked. It
+ * does **not** prove the document belongs to whoever is presenting it: anyone
+ * holding a copy of someone else's authentic, unexpired, unrevoked VAID can
+ * present it as their own. A verifier that checks only standing and trusts
+ * the document's own `agent_id`/`agent_class`/`tenant_id` for *who is
+ * calling* has reconstructed that confused-deputy hole regardless of how
+ * carefully it checked the signature.
+ *
+ * Every field defaults to `undefined`, meaning "not checked by this object".
+ * **Integrators MUST bind every verified VAID to the identity of the actual
+ * caller presenting it** — from mTLS, SPIFFE, a session, or whatever
+ * establishes "who is talking to me" independently of the document itself —
+ * either by populating the relevant field(s) here, or by performing the
+ * equivalent comparison themselves immediately after a
+ * {@link VaidVerdict.Valid} verdict from {@link verifyVaidStanding}. `{}`
+ * performs no binding at all and is correct only when that identity has
+ * already been checked elsewhere.
+ */
+export interface ExpectedCaller {
+  readonly agent_id?: string;
+  readonly agent_class?: string;
+  readonly tenant_id?: string;
+}
+
+function expectedCallerMatches(expected: ExpectedCaller, vaid: Vaid): boolean {
+  if (expected.agent_id !== undefined && expected.agent_id !== vaid.agent_id) return false;
+  if (expected.agent_class !== undefined && expected.agent_class !== vaid.agent_class) {
+    return false;
+  }
+  if (expected.tenant_id !== undefined && expected.tenant_id !== vaid.tenant_id) return false;
+  return true;
+}
+
+/**
+ * {@link verifyVaidStanding}, plus binding the verified document to the
+ * caller presenting it.
+ *
+ * Deliberately **not** folded into {@link VaidVerdict}: that type's
+ * vocabulary is the conformance surface `verdict_v1.json` pins across all
+ * three implementations, and caller binding is not part of the VAID document
+ * format or its authenticity/standing — it is a property of the request the
+ * document arrived on. Adding a member here would mean either breaking that
+ * frozen vector or shipping a verdict no vector exercises, so the refusal is
+ * thrown instead, as {@link CallerMismatchError}.
+ *
+ * Checked AFTER standing, so a caller mismatch never masks — or is masked
+ * by — a forged, expired, or revoked document: a returned verdict that is not
+ * {@link VaidVerdict.Valid} is exactly what {@link verifyVaidStanding} would
+ * have reported; the error is only thrown once the document would otherwise
+ * have verified.
+ */
+export function verifyVaidStandingBound(
+  kernelPublicKey: Uint8Array,
+  vaid: Vaid,
+  revocation: RevocationStatus,
+  expected: ExpectedCaller,
+): VaidVerdict {
+  const verdict = verifyVaidStanding(kernelPublicKey, vaid, revocation);
+  if (isVerdictValid(verdict) && !expectedCallerMatches(expected, vaid)) {
+    throw new CallerMismatchError('vaid does not belong to the expected caller');
+  }
+  return verdict;
+}
+
+/**
+ * {@link verifyVaidStandingBound} over JSON **text** — the caller-binding
+ * counterpart to {@link verifyVaidStandingFromJson}.
+ */
+export function verifyVaidStandingBoundFromJson(
+  kernelPublicKey: Uint8Array,
+  documentJson: string,
+  revocation: RevocationStatus,
+  expected: ExpectedCaller,
+): VaidVerdict {
+  const document = parseVaidDocument(documentJson);
+  if (document === null) return VaidVerdict.Unparseable;
+  return verifyVaidStandingBound(kernelPublicKey, document, revocation, expected);
 }
