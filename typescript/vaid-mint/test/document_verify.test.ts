@@ -18,6 +18,7 @@ import { fromHex } from 'vaid-pop';
 
 import {
   CallerMismatchError,
+  hasCapability,
   isExpired,
   MalformedDocumentError,
   parseRfc3339,
@@ -276,6 +277,42 @@ test('caller binding never upgrades a failing verdict', () => {
     agent_id: 'someone-else',
   });
   assert.equal(verdict, VaidVerdict.IssuerMismatch);
+});
+
+test('verifyVaidStandingBound refuses malformed input without throwing', () => {
+  // verifyVaidStandingBound is the entry point integrators are told to use
+  // for an already-parsed object (AiSOC review of beenuar/AiSOC#1741,
+  // finding 1); it must report Unparseable, never throw, for an empty
+  // object, a wrong-typed value, or one missing a required field.
+  const { publicKey } = publicKeyAndDoc();
+  for (const bad of [null, undefined, [], 'not-a-document', 42, {}, { vaid_id: 123 }, { vaid_id: '' }]) {
+    const verdict = verifyVaidStandingBound(
+      publicKey,
+      bad as unknown as Vaid,
+      RevocationStatus.NotRevoked,
+      {},
+    );
+    assert.equal(verdict, VaidVerdict.Unparseable);
+  }
+});
+
+test('hasCapability refuses malformed input without throwing', () => {
+  // hasCapability (AiSOC review of beenuar/AiSOC#1741, finding 1) must never
+  // throw on an empty object, a wrong-typed value, or one missing/mistyping
+  // capability_set — it fails closed to false.
+  for (const bad of [
+    null,
+    undefined,
+    [],
+    'not-a-document',
+    42,
+    {},
+    { vaid_id: 'a' },
+    { vaid_id: 'a', capability_set: 'read' },
+    { vaid_id: 'a', capability_set: null },
+  ]) {
+    assert.equal(hasCapability(bad as unknown as Vaid, 'read'), false);
+  }
 });
 
 test('caller binding from JSON mirrors the object entry point', () => {

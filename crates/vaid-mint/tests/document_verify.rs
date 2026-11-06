@@ -246,6 +246,32 @@ fn document_with_a_wrong_typed_field_is_a_typed_parse_error_not_a_panic() {
 // exactly that, and that an unbound (`ExpectedCaller::none()`) call behaves
 // identically to `verify_vaid_standing` — the feature is additive.
 
+// `verify_vaid_standing_bound`/`verify_vaid_standing_bound_from_json` take a
+// typed `Vaid`, which `serde` already refuses to construct from anything
+// malformed — so, unlike the Python and TypeScript mirrors, there is no dict
+// value these functions could ever be called with that is missing a field or
+// mistypes one; the type system makes that call impossible to write, which is
+// strictly stronger than catching it at runtime. This pins the same guarantee
+// at the one Rust entry point that *does* take untrusted bytes directly: the
+// `_from_json` variant integrators actually use, mirroring the malformed-input
+// cases above for the bound entry point (AiSOC review of
+// beenuar/AiSOC#1741, finding 1).
+#[test]
+fn bound_entry_point_refuses_malformed_json_without_panicking() {
+    let (public_key, _doc) = public_key_and_doc();
+    for bad_json in ["", "{}"] {
+        assert_eq!(
+            verify_vaid_standing_bound_from_json(
+                &public_key,
+                bad_json,
+                RevocationStatus::NotRevoked,
+                &ExpectedCaller::none(),
+            ),
+            Ok(VaidVerdict::Unparseable)
+        );
+    }
+}
+
 #[test]
 fn unbound_caller_check_matches_plain_standing() {
     let (public_key, doc) = public_key_and_doc();
