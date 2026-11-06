@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 
 import rfc8785
 
+from vaid_mint.error import MalformedDocumentError
+
 # Signature-scheme discriminant; ``3`` for every VAID minted here. Covered by the
 # signature and gated at verify.
 #
@@ -116,6 +118,40 @@ def build_unsigned_vaid_document(
         "trust_domain": trust_domain,
         "kernel_key_thumbprint": kernel_key_thumbprint,
     }
+
+
+def require_vaid_shape(document: object, *, context: str = "document") -> dict:
+    """The minimal shape :func:`~vaid_mint.revocation.assemble_lineage` and the
+    chain-verification entry points need before they can index into a document:
+    a mapping with a string ``vaid_id``, and a ``parent_vaid`` that is a string
+    or absent/``None``.
+
+    Raises :class:`~vaid_mint.error.MalformedDocumentError` — never a bare
+    ``KeyError``/``AttributeError``/``TypeError`` — for anything else, including
+    a non-mapping input (``None``, a list, a string, ...). This is the Python
+    half of the gate Rust's typed ``Vaid`` struct gets for free from ``serde``:
+    Rust can never reach lineage assembly or chain verification holding
+    something that is not a well-formed ``Vaid`` in the first place, because
+    deserialization itself already refused it with a typed ``Result::Err``.
+    Python and TypeScript hand these functions a plain mapping, which has no
+    such gate, so this is the one checked here explicitly.
+
+    This is deliberately **not** full structural validation — it does not
+    replicate every check in :func:`parse_vaid_document`. It validates exactly
+    the fields assembly and chain verification touch directly, immediately,
+    before indexing. A document that passes this and is later found to lack
+    some other required member fails downstream, at the authenticity check,
+    which is where that absence is actually a problem.
+    """
+    if not isinstance(document, dict):
+        raise MalformedDocumentError(f"{context} is not an object")
+    vaid_id = document.get("vaid_id")
+    if not isinstance(vaid_id, str) or vaid_id == "":
+        raise MalformedDocumentError(f"{context}.vaid_id is missing or not a string")
+    parent_vaid = document.get("parent_vaid")
+    if parent_vaid is not None and not isinstance(parent_vaid, str):
+        raise MalformedDocumentError(f"{context}.parent_vaid is present but not a string")
+    return document
 
 
 def _parse_rfc3339(value: object) -> datetime | None:

@@ -83,6 +83,7 @@ export {
   isWellFormedScopeBoundary,
   isWellFormedScopeEntry,
   prefixEntry,
+  requireVaidShape,
   type ScopeBoundaryEntry,
   type AgentClass,
   type AgentId,
@@ -92,7 +93,15 @@ export {
   type VaidId,
 } from './document.js';
 
-export { AuditError, ConfigError, IdentityError, MintError, UnauthorizedError } from './error.js';
+export {
+  AuditError,
+  CallerMismatchError,
+  ConfigError,
+  IdentityError,
+  MalformedDocumentError,
+  MintError,
+  UnauthorizedError,
+} from './error.js';
 
 export {
   DEFAULT_VAID_TTL_HOURS,
@@ -162,6 +171,9 @@ export {
   verifyVaidAuthenticityGraded,
   verifyVaidStanding,
   verifyVaidStandingFromJson,
+  verifyVaidStandingBound,
+  verifyVaidStandingBoundFromJson,
+  type ExpectedCaller,
 } from './verify.js';
 
 export {

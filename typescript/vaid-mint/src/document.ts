@@ -36,6 +36,8 @@ import {
   type VaidId,
 } from 'vaid-pop';
 
+import { MalformedDocumentError } from './error.js';
+
 export type { Rfc3339Utc, TenantId, VaidId } from 'vaid-pop';
 
 /**
@@ -540,4 +542,42 @@ export function isInScope(vaid: Vaid, resource: string): boolean {
  */
 export function hasCapability(vaid: Vaid, capability: string): boolean {
   return capsContain(vaid.capability_set, capability);
+}
+
+/**
+ * The minimal shape {@link assembleLineage} and the chain-verification entry
+ * points need before they can index into a document: an object with a
+ * non-empty string `vaid_id`, and a `parent_vaid` that is a string or
+ * absent/`null`/`undefined`.
+ *
+ * Throws {@link MalformedDocumentError} — never a bare `TypeError` — for
+ * anything else, including a non-object input (`null`, an array, a string,
+ * ...). This is the TypeScript half of the gate Rust's typed `Vaid` struct
+ * gets for free from `serde`: Rust can never reach lineage assembly or chain
+ * verification holding something that is not a well-formed `Vaid` in the
+ * first place, because deserialization itself already refused it with a
+ * typed `Result::Err`. Python and TypeScript hand these functions a plain
+ * object, which has no such gate, so this is the one checked here explicitly.
+ *
+ * Deliberately **not** full structural validation — it does not replicate
+ * every check in {@link parseVaidDocument} (in `verify.ts`). It validates
+ * exactly the fields assembly and chain verification touch directly,
+ * immediately, before indexing. A document that passes this and is later
+ * found to lack some other required member fails downstream, at the
+ * authenticity check, which is where that absence is actually a problem.
+ */
+export function requireVaidShape(document: unknown, context = 'document'): Vaid {
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    throw new MalformedDocumentError(`${context} is not an object`);
+  }
+  const record = document as Record<string, unknown>;
+  const vaidId = record.vaid_id;
+  if (typeof vaidId !== 'string' || vaidId === '') {
+    throw new MalformedDocumentError(`${context}.vaid_id is missing or not a string`);
+  }
+  const parentVaid = record.parent_vaid;
+  if (parentVaid !== null && parentVaid !== undefined && typeof parentVaid !== 'string') {
+    throw new MalformedDocumentError(`${context}.parent_vaid is present but not a string`);
+  }
+  return document as Vaid;
 }

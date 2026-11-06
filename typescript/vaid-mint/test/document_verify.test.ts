@@ -17,11 +17,20 @@ import { test } from 'node:test';
 import { fromHex } from 'vaid-pop';
 
 import {
+  CallerMismatchError,
   isExpired,
+  MalformedDocumentError,
   parseRfc3339,
   ReferenceIssuer,
+  requireVaidShape,
+  RevocationStatus,
   verifyLineageHash,
   verifyVaidAuthenticity,
+  verifyVaidStandingBound,
+  verifyVaidStandingBoundFromJson,
+  verifyVaidStandingFromJson,
+  VaidVerdict,
+  type ExpectedCaller,
   type Vaid,
 } from '../src/index.js';
 import { loadMintVector } from './vectors.js';
@@ -163,4 +172,125 @@ test('the verdict does not move with the verifier timezone', () => {
   assert.equal(parseRfc3339('2026-06-05T12:00:00'), null, 'no offset is not RFC 3339');
   assert.equal(parseRfc3339('whenever'), null);
   assert.equal(parseRfc3339(null), null);
+});
+
+// ── Malformed documents refuse with a typed error (AiSOC review of
+// beenuar/AiSOC#1741, finding 1) — never a bare TypeError. ──
+
+test('requireVaidShape refuses malformed input with a typed error', () => {
+  for (const bad of [null, undefined, [], 'not-a-document', 42, {}, { vaid_id: 1 }]) {
+    assert.throws(() => requireVaidShape(bad), MalformedDocumentError);
+  }
+  assert.throws(
+    () => requireVaidShape({ vaid_id: 'a', parent_vaid: 123 }),
+    MalformedDocumentError,
+  );
+});
+
+test('verifyVaidAuthenticityGraded refuses a null/undefined document with a typed error, never a bare TypeError', () => {
+  const { publicKey } = publicKeyAndDoc();
+  for (const bad of [null, undefined]) {
+    assert.throws(
+      () => verifyVaidAuthenticity(publicKey, bad as unknown as Vaid),
+      MalformedDocumentError,
+    );
+  }
+});
+
+test('empty and missing-field document text is Unparseable, never a crash', () => {
+  const { publicKey } = publicKeyAndDoc();
+  assert.equal(verifyVaidStandingFromJson(publicKey, '', RevocationStatus.NotRevoked), VaidVerdict.Unparseable);
+  assert.equal(
+    verifyVaidStandingFromJson(publicKey, '{}', RevocationStatus.NotRevoked),
+    VaidVerdict.Unparseable,
+  );
+});
+
+test('a required field missing or wrong-typed in document text is Unparseable, never a crash', () => {
+  const { publicKey, vaid } = publicKeyAndDoc();
+
+  const missingVaidId: Record<string, unknown> = { ...vaid };
+  delete missingVaidId.vaid_id;
+  assert.equal(
+    verifyVaidStandingFromJson(publicKey, JSON.stringify(missingVaidId), RevocationStatus.NotRevoked),
+    VaidVerdict.Unparseable,
+  );
+
+  const wrongTypedVaidId = { ...vaid, vaid_id: 12345 };
+  assert.equal(
+    verifyVaidStandingFromJson(publicKey, JSON.stringify(wrongTypedVaidId), RevocationStatus.NotRevoked),
+    VaidVerdict.Unparseable,
+  );
+});
+
+// ── Caller binding (AiSOC review of beenuar/AiSOC#1741, finding 2) ──────────
+//
+// `Valid` standing proves a VAID is real, unexpired and unrevoked; it proves
+// nothing about who presented it. These pin that `verifyVaidStandingBound`
+// refuses a genuine document presented by the wrong caller, and that an
+// `ExpectedCaller` with every field unset behaves exactly like plain standing.
+
+test('an unbound caller check matches plain standing', () => {
+  const { publicKey, vaid } = publicKeyAndDoc();
+  const verdict = verifyVaidStandingBound(publicKey, vaid, RevocationStatus.NotRevoked, {});
+  assert.equal(verdict, VaidVerdict.Valid);
+});
+
+test('caller binding accepts the genuine caller', () => {
+  const { publicKey, vaid } = publicKeyAndDoc();
+  const expected: ExpectedCaller = {
+    agent_id: vaid.agent_id,
+    agent_class: vaid.agent_class,
+    tenant_id: vaid.tenant_id,
+  };
+  const verdict = verifyVaidStandingBound(publicKey, vaid, RevocationStatus.NotRevoked, expected);
+  assert.equal(verdict, VaidVerdict.Valid);
+});
+
+test('caller binding refuses a VALID vaid presented by someone else', () => {
+  const { publicKey, vaid } = publicKeyAndDoc();
+  assert.throws(
+    () =>
+      verifyVaidStandingBound(
+        publicKey,
+        vaid,
+        RevocationStatus.NotRevoked,
+        { agent_id: 'not-the-agent-this-was-issued-to' },
+      ),
+    CallerMismatchError,
+  );
+  assert.throws(
+    () =>
+      verifyVaidStandingBound(publicKey, vaid, RevocationStatus.NotRevoked, { tenant_id: 'not-the-tenant' }),
+    CallerMismatchError,
+  );
+});
+
+test('caller binding never upgrades a failing verdict', () => {
+  // A mismatched expected caller must not matter when the document itself does
+  // not verify — the document's own problem is reported, never masked by (or
+  // mistaken for) a caller-mismatch refusal.
+  const { vaid } = publicKeyAndDoc();
+  const wrongKey = ReferenceIssuer.ephemeral(1).kernelPublicKey();
+  const verdict = verifyVaidStandingBound(wrongKey, vaid, RevocationStatus.NotRevoked, {
+    agent_id: 'someone-else',
+  });
+  assert.equal(verdict, VaidVerdict.IssuerMismatch);
+});
+
+test('caller binding from JSON mirrors the object entry point', () => {
+  const { publicKey, vaid } = publicKeyAndDoc();
+  const documentJson = JSON.stringify(vaid);
+  const verdict = verifyVaidStandingBoundFromJson(publicKey, documentJson, RevocationStatus.NotRevoked, {
+    agent_id: vaid.agent_id,
+  });
+  assert.equal(verdict, VaidVerdict.Valid);
+
+  assert.throws(
+    () =>
+      verifyVaidStandingBoundFromJson(publicKey, documentJson, RevocationStatus.NotRevoked, {
+        agent_id: 'someone-else',
+      }),
+    CallerMismatchError,
+  );
 });

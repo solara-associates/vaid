@@ -56,7 +56,7 @@ import {
   isCurrent,
   verifyAttestationAuthenticity,
 } from './attestation.js';
-import { isExpired, type Vaid } from './document.js';
+import { isExpired, requireVaidShape, type Vaid } from './document.js';
 import { kernelKeyThumbprint } from './issuerIdentity.js';
 import {
   capsAttenuate,
@@ -171,11 +171,16 @@ export class PresentedBundle implements LineageResolver {
    * more privileged ancestor, because every document on the assembled chain is
    * authenticated against the kernel key and pinned by a signed `parent_vaid` (see
    * the module docs).
+   *
+   * Throws `MalformedDocumentError` (from `error.ts`) — never a bare
+   * `TypeError` — for any presented document that is not an object or lacks a
+   * well-typed `vaid_id`/`parent_vaid`.
    */
   constructor(documents: Iterable<Vaid> = []) {
     this.#documents = new Map();
     for (const doc of documents) {
-      this.#documents.set(doc.vaid_id, doc);
+      const shaped = requireVaidShape(doc, 'presented document');
+      this.#documents.set(shaped.vaid_id, shaped);
     }
   }
 
@@ -392,6 +397,12 @@ export function verifyChainAt(
   attestations: AttestationBundle,
   now: Date,
 ): ChainVerification {
+  // Throws MalformedDocumentError — never a bare TypeError — if `leaf` is not
+  // an object or lacks a well-typed `vaid_id`/`parent_vaid`. Every document in
+  // `bundle` was already checked the same way when it was presented to
+  // `PresentedBundle`.
+  leaf = requireVaidShape(leaf, 'leaf');
+
   // Step 1 — authenticate the leaf and EVERY presented document, before any of them
   // is allowed to influence assembly.
   const authenticate = (doc: Vaid): boolean => {

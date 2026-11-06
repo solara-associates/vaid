@@ -404,3 +404,114 @@ pub fn verify_vaid_standing_from_json(
         Err(_) => VaidVerdict::Unparseable,
     }
 }
+
+/// What the caller claims to be, to be matched against a verified document
+/// (caller binding — AiSOC review of the plugin, finding 2).
+///
+/// [`VaidVerdict::Valid`] proves a VAID is real, unexpired and unrevoked. It
+/// does **not** prove the document belongs to whoever is presenting it: anyone
+/// holding a copy of someone else's authentic, unexpired, unrevoked VAID can
+/// present it as their own. A verifier that checks only standing and trusts
+/// the document's own `agent_id`/`agent_class`/`tenant_id` for *who is calling*
+/// has reconstructed that confused-deputy hole regardless of how carefully it
+/// checked the signature.
+///
+/// Every field defaults to `None`, meaning "not checked by this struct".
+/// **Integrators MUST bind every verified VAID to the identity of the actual
+/// caller presenting it** — from mTLS, SPIFFE, a session, or whatever
+/// establishes "who is talking to me" independently of the document itself —
+/// either by populating the relevant field(s) here, or by performing the
+/// equivalent comparison themselves immediately after a `Valid` verdict from
+/// [`verify_vaid_standing`]. [`ExpectedCaller::none`] performs no binding at
+/// all and is correct only when that identity has already been checked
+/// elsewhere.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExpectedCaller {
+    pub agent_id: Option<String>,
+    pub agent_class: Option<String>,
+    pub tenant_id: Option<String>,
+}
+
+impl ExpectedCaller {
+    /// No binding requested — equivalent to calling [`verify_vaid_standing`]
+    /// directly. A named constructor so a call site can say "deliberately not
+    /// binding" rather than leaving every field implicitly absent.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Does `vaid` match every field this struct actually constrains? A field
+    /// left `None` imposes no constraint.
+    fn matches(&self, vaid: &Vaid) -> bool {
+        if let Some(expected) = &self.agent_id {
+            if *expected != vaid.agent_id().to_string() {
+                return false;
+            }
+        }
+        if let Some(expected) = &self.agent_class {
+            if expected != vaid.agent_class().as_str() {
+                return false;
+            }
+        }
+        if let Some(expected) = &self.tenant_id {
+            if expected != vaid.tenant_id().as_str() {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// The document verified as [`VaidVerdict::Valid`], but does not belong to the
+/// caller presenting it: at least one field of the [`ExpectedCaller`] did not
+/// match the document's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("vaid does not belong to the expected caller")]
+pub struct CallerMismatchError;
+
+/// [`verify_vaid_standing`], plus binding the verified document to the caller
+/// presenting it.
+///
+/// Deliberately **not** folded into [`VaidVerdict`]: that enum's vocabulary is
+/// the conformance surface `verdict_v1.json` pins across all three
+/// implementations, and caller binding is not part of the VAID document format
+/// or its authenticity/standing — it is a property of the request the document
+/// arrived on. Adding a variant here would mean either breaking that frozen
+/// vector or shipping a verdict no vector exercises, so the refusal is reported
+/// through [`Result`] instead.
+///
+/// Checked AFTER standing, so a caller mismatch never masks — or is masked by —
+/// a forged, expired, or revoked document: `Ok(verdict)` carrying a non-`Valid`
+/// `verdict` is exactly what [`verify_vaid_standing`] would have reported;
+/// [`Err`] is only possible once the document would otherwise have verified.
+pub fn verify_vaid_standing_bound(
+    kernel_public_key: &[u8],
+    vaid: &Vaid,
+    revocation: crate::revocation::RevocationStatus,
+    expected: &ExpectedCaller,
+) -> Result<VaidVerdict, CallerMismatchError> {
+    let verdict = verify_vaid_standing(kernel_public_key, vaid, revocation);
+    if verdict.is_valid() && !expected.matches(vaid) {
+        return Err(CallerMismatchError);
+    }
+    Ok(verdict)
+}
+
+/// [`verify_vaid_standing_bound`] over JSON text — the caller-binding
+/// counterpart to [`verify_vaid_standing_from_json`], for the same reason that
+/// function exists: Python and TypeScript need one shared entry point that
+/// starts from the bytes actually on the wire.
+pub fn verify_vaid_standing_bound_from_json(
+    kernel_public_key: &[u8],
+    document_json: &str,
+    revocation: crate::revocation::RevocationStatus,
+    expected: &ExpectedCaller,
+) -> Result<VaidVerdict, CallerMismatchError> {
+    if crate::document::has_duplicate_member_names(document_json) {
+        return Ok(VaidVerdict::Unparseable);
+    }
+    match serde_json::from_str::<Vaid>(document_json) {
+        Ok(vaid) => verify_vaid_standing_bound(kernel_public_key, &vaid, revocation, expected),
+        Err(_) => Ok(VaidVerdict::Unparseable),
+    }
+}

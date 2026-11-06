@@ -66,7 +66,7 @@ from vaid_mint.attestation import (
     verify_attestation_authenticity,
 )
 from vaid_mint.issuer_identity import kernel_key_thumbprint
-from vaid_mint.document import is_expired_at
+from vaid_mint.document import is_expired_at, require_vaid_shape
 from vaid_mint.mint import (
     caps_attenuate,
     caps_attenuate_within,
@@ -156,8 +156,15 @@ class PresentedBundle:
         substitute a more privileged ancestor, because every document on the
         assembled chain is authenticated against the kernel key and pinned by a
         signed ``parent_vaid`` (see the module docstring).
+
+        Raises :class:`~vaid_mint.error.MalformedDocumentError` — never a bare
+        ``KeyError`` — for any presented document that is not a mapping or lacks
+        a well-typed ``vaid_id``/``parent_vaid``.
         """
-        self._documents: dict[str, dict] = {d["vaid_id"]: d for d in documents}
+        self._documents: dict[str, dict] = {
+            require_vaid_shape(d, context="presented document")["vaid_id"]: d
+            for d in documents
+        }
 
     def get(self, vaid_id: str) -> dict | None:
         """Look up a presented document by ``vaid_id``."""
@@ -307,7 +314,13 @@ def verify_chain_at(
     failures (consent narrower than the child claims, or broader than the parent
     holds) are ``NOT_ATTENUATED``. No cross-key hop reaches ``ATTENUATED`` without
     valid consent.
+
+    Raises :class:`~vaid_mint.error.MalformedDocumentError` — never a bare
+    ``KeyError`` — if ``leaf`` is not a mapping or lacks a well-typed
+    ``vaid_id``/``parent_vaid``. Every document in ``bundle`` was already
+    checked the same way when it was presented to :class:`PresentedBundle`.
     """
+    leaf = require_vaid_shape(leaf, context="leaf")
 
     # Step 1 — authenticate the leaf and EVERY presented document, before any of
     # them is allowed to influence assembly.

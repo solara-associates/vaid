@@ -30,6 +30,8 @@ import uuid
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import pytest
+
 from vaid_mint.chain import ChainVerification, PresentedBundle, verify_chain
 from vaid_mint.document import (
     prefix_entry,
@@ -37,6 +39,7 @@ from vaid_mint.document import (
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
 )
+from vaid_mint.error import MalformedDocumentError
 from vaid_mint.issuer_identity import kernel_key_thumbprint
 from vaid_mint.revocation import MAX_LINEAGE_DEPTH, ParentResolution, assemble_lineage
 
@@ -377,3 +380,20 @@ def test_bundle_assembles_ordered_lineage_root_first() -> None:
         vid(2),
         vid(3),
     ], "ordered root first, leaf last"
+
+
+# ── Malformed documents refuse with a typed error (AiSOC review of
+# beenuar/AiSOC#1741, finding 1) ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("bad_doc", [None, [], "not-a-document", 42, {}, {"vaid_id": 1}])
+def test_presented_bundle_refuses_malformed_document(bad_doc) -> None:
+    with pytest.raises(MalformedDocumentError):
+        PresentedBundle([bad_doc])
+
+
+@pytest.mark.parametrize("bad_leaf", [None, [], "not-a-document", 42, {}, {"vaid_id": 1}])
+def test_verify_chain_refuses_malformed_leaf(bad_leaf) -> None:
+    mint = LocalMint()
+    with pytest.raises(MalformedDocumentError):
+        verify_chain(mint.public_key, bad_leaf, PresentedBundle())

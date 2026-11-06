@@ -52,6 +52,8 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from vaid_mint.document import require_vaid_shape
+
 # Defensive bound on lineage depth. A resolver map corrupted into a cycle, or an
 # implausibly deep chain, yields an incomplete assembly rather than looping —
 # incomplete fails closed, so this never fails *open*.
@@ -136,7 +138,12 @@ def assemble_lineage(leaf: dict, resolver: LineageResolver) -> list[str] | None:
     as :class:`RevocationStatus.UNAVAILABLE` and MUST NOT be silently truncated to
     the leaf alone. A leaf with no ``parent_vaid`` is its own root and returns a
     one-element list ("trivially complete").
+
+    Raises :class:`~vaid_mint.error.MalformedDocumentError` — never a bare
+    ``KeyError`` — if ``leaf`` is not a mapping or lacks a well-typed
+    ``vaid_id``/``parent_vaid``; see :func:`~vaid_mint.document.require_vaid_shape`.
     """
+    leaf = require_vaid_shape(leaf, context="leaf")
     chain = [leaf["vaid_id"]]
     next_parent = leaf.get("parent_vaid")
 

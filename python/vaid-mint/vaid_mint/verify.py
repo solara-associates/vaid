@@ -21,6 +21,7 @@ from __future__ import annotations
 import enum
 import json
 import uuid
+from dataclasses import dataclass
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -36,7 +37,9 @@ from vaid_mint.document import (
     canonical_vaid_signing_bytes,
     compute_lineage_hash,
     is_expired,
+    require_vaid_shape,
 )
+from vaid_mint.error import CallerMismatchError, MalformedDocumentError
 from vaid_mint.revocation import RevocationStatus
 
 
@@ -352,7 +355,16 @@ def verify_vaid_authenticity_graded(kernel_public_key: bytes, vaid: dict) -> Vai
     Never returns :attr:`~VaidVerdict.EXPIRED`, :attr:`~VaidVerdict.REVOKED` or
     :attr:`~VaidVerdict.INDETERMINATE`: authenticity is not standing. Use
     :func:`verify_vaid_standing` for that.
+
+    Raises :class:`~vaid_mint.error.MalformedDocumentError` — never a bare
+    ``AttributeError``/``KeyError`` — if ``vaid`` is not a mapping or lacks a
+    well-typed ``vaid_id``/``parent_vaid``. A caller that already went through
+    :func:`parse_vaid_document` (or :func:`verify_vaid_standing_from_json`) never
+    hits this: that gate is stricter and already refused such a document as
+    :attr:`~VaidVerdict.UNPARSEABLE`. This guards the callers who hand a raw,
+    unparsed mapping straight to this function or to :func:`verify_vaid_standing`.
     """
+    require_vaid_shape(vaid, context="vaid")
     if vaid.get("sig_version") != VAID_SIG_VERSION_V4:
         return VaidVerdict.UNSUPPORTED_SIG_VERSION
     if not is_valid_trust_domain(vaid.get("trust_domain")):
@@ -426,7 +438,10 @@ def verify_vaid_standing(
     # lookup, and because revocation is the one input that can be unavailable.
     # Inserting it here changes no pre-existing verdict: no document in any
     # existing vector carries an unrecognised kind.
-    if not boundary_is_evaluable(vaid["scope_boundary"]):
+    scope_boundary = vaid.get("scope_boundary")
+    if not isinstance(scope_boundary, list):
+        raise MalformedDocumentError("vaid.scope_boundary is missing or not a list")
+    if not boundary_is_evaluable(scope_boundary):
         return VaidVerdict.UNKNOWN_SCOPE_KIND
     if revocation is RevocationStatus.NOT_REVOKED:
         return VaidVerdict.VALID
@@ -457,3 +472,97 @@ def verify_vaid_standing_from_json(
     if document is None:
         return VaidVerdict.UNPARSEABLE
     return verify_vaid_standing(kernel_public_key, document, revocation)
+
+
+# ── Caller binding ───────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ExpectedCaller:
+    """What the caller claims to be, to be matched against a verified document
+    (caller binding — AiSOC review of the plugin, finding 2).
+
+    :attr:`~VaidVerdict.VALID` proves a VAID is real, unexpired and unrevoked.
+    It does **not** prove the document belongs to whoever is presenting it:
+    anyone holding a copy of someone else's authentic, unexpired, unrevoked
+    VAID can present it as their own. A verifier that checks only standing and
+    trusts the document's own ``agent_id``/``agent_class``/``tenant_id`` for
+    *who is calling* has reconstructed that confused-deputy hole regardless of
+    how carefully it checked the signature.
+
+    Every field defaults to ``None``, meaning "not checked by this object".
+    **Integrators MUST bind every verified VAID to the identity of the actual
+    caller presenting it** — from mTLS, SPIFFE, a session, or whatever
+    establishes "who is talking to me" independently of the document itself —
+    either by populating the relevant field(s) here, or by performing the
+    equivalent comparison themselves immediately after a :attr:`~VaidVerdict.VALID`
+    verdict from :func:`verify_vaid_standing`. :meth:`none` performs no binding
+    at all and is correct only when that identity has already been checked
+    elsewhere.
+    """
+
+    agent_id: str | None = None
+    agent_class: str | None = None
+    tenant_id: str | None = None
+
+    @classmethod
+    def none(cls) -> "ExpectedCaller":
+        """No binding requested — equivalent to calling
+        :func:`verify_vaid_standing` directly. A named constructor so a call
+        site can say "deliberately not binding" rather than leaving every field
+        implicitly absent."""
+        return cls()
+
+    def matches(self, vaid: dict) -> bool:
+        """Does ``vaid`` match every field this object actually constrains? A
+        field left ``None`` imposes no constraint."""
+        if self.agent_id is not None and self.agent_id != vaid.get("agent_id"):
+            return False
+        if self.agent_class is not None and self.agent_class != vaid.get("agent_class"):
+            return False
+        if self.tenant_id is not None and self.tenant_id != vaid.get("tenant_id"):
+            return False
+        return True
+
+
+def verify_vaid_standing_bound(
+    kernel_public_key: bytes,
+    vaid: dict,
+    revocation: RevocationStatus,
+    expected: ExpectedCaller,
+) -> VaidVerdict:
+    """:func:`verify_vaid_standing`, plus binding the verified document to the
+    caller presenting it.
+
+    Deliberately **not** folded into :class:`VaidVerdict`: that enum's
+    vocabulary is the conformance surface ``verdict_v1.json`` pins across all
+    three implementations, and caller binding is not part of the VAID document
+    format or its authenticity/standing — it is a property of the request the
+    document arrived on. Adding a member here would mean either breaking that
+    frozen vector or shipping a verdict no vector exercises, so the refusal is
+    raised instead, as :class:`~vaid_mint.error.CallerMismatchError`.
+
+    Checked AFTER standing, so a caller mismatch never masks — or is masked
+    by — a forged, expired, or revoked document: a returned verdict that is not
+    :attr:`~VaidVerdict.VALID` is exactly what :func:`verify_vaid_standing`
+    would have reported; the error is only raised once the document would
+    otherwise have verified.
+    """
+    verdict = verify_vaid_standing(kernel_public_key, vaid, revocation)
+    if verdict.is_valid() and not expected.matches(vaid):
+        raise CallerMismatchError("vaid does not belong to the expected caller")
+    return verdict
+
+
+def verify_vaid_standing_bound_from_json(
+    kernel_public_key: bytes,
+    document_json: str,
+    revocation: RevocationStatus,
+    expected: ExpectedCaller,
+) -> VaidVerdict:
+    """:func:`verify_vaid_standing_bound` over JSON **text** — the
+    caller-binding counterpart to :func:`verify_vaid_standing_from_json`."""
+    document = parse_vaid_document(document_json)
+    if document is None:
+        return VaidVerdict.UNPARSEABLE
+    return verify_vaid_standing_bound(kernel_public_key, document, revocation, expected)

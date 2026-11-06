@@ -36,3 +36,29 @@ export class AuditError extends MintError {
 export class ConfigError extends MintError {
   override readonly name = 'ConfigError';
 }
+
+/**
+ * A document is not shaped like a VAID: not an object, or `vaid_id` /
+ * `parent_vaid` is missing or the wrong type. Thrown by
+ * {@link requireVaidShape} in `document.ts`. Distinct from
+ * {@link VaidVerdict.Unparseable}, which is the graceful verdict
+ * `verifyVaidStandingFromJson` returns for JSON **text** that is not a VAID:
+ * this is thrown by the functions that take an already-parsed object and
+ * would otherwise fail with a bare `TypeError` deep inside lineage assembly.
+ */
+export class MalformedDocumentError extends MintError {
+  override readonly name = 'MalformedDocumentError';
+}
+
+/**
+ * A VAID verified as {@link VaidVerdict.Valid}, but does not belong to the
+ * caller presenting it: at least one field of the `ExpectedCaller` passed to
+ * `verifyVaidStandingBound` did not match the document's own. Thrown rather
+ * than folded into {@link VaidVerdict}: that type's vocabulary is the
+ * conformance surface `verdict_v1.json` pins across all three
+ * implementations, and caller binding is a property of the request the
+ * document arrived on, not of the document itself.
+ */
+export class CallerMismatchError extends MintError {
+  override readonly name = 'CallerMismatchError';
+}
