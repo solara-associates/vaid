@@ -385,6 +385,14 @@ def verify_chain_at(
             return ChainVerification.NOT_ATTENUATED
         if not scope_attenuates(parent, child["scope_boundary"]):
             return ChainVerification.NOT_ATTENUATED
+        # Budget caveat containment — re-performed here so a THIRD PARTY
+        # holding only a presented chain reaches the same verdict the mint
+        # would have (``docs/spec/budget.md``). Not folded into
+        # ``scope_attenuates`` — budget kinds are not resource-shaped.
+        from vaid_mint.budget import budget_attenuates
+
+        if not budget_attenuates(parent["scope_boundary"], child["scope_boundary"]):
+            return ChainVerification.NOT_ATTENUATED
         if not caps_attenuate(parent, child["capability_set"]):
             return ChainVerification.NOT_ATTENUATED
 
@@ -442,10 +450,10 @@ def verify_chain_at(
             return ChainVerification.NOT_ATTENUATED
 
         # The child may hold no more than the parent consented to...
-        if not scope_attenuates_within(
-            attestation["scope_boundary"], child["scope_boundary"]
-        ) or not caps_attenuate_within(
-            attestation["capability_set"], child["capability_set"]
+        if (
+            not scope_attenuates_within(attestation["scope_boundary"], child["scope_boundary"])
+            or not budget_attenuates(attestation["scope_boundary"], child["scope_boundary"])
+            or not caps_attenuate_within(attestation["capability_set"], child["capability_set"])
         ):
             return ChainVerification.NOT_ATTENUATED
 
@@ -453,9 +461,11 @@ def verify_chain_at(
         # from the hop containment above: that compares child to parent, this
         # compares the ATTESTATION to parent — an over-broad attestation with a
         # well-behaved child would otherwise pass.
-        if not scope_attenuates(
-            parent, attestation["scope_boundary"]
-        ) or not caps_attenuate(parent, attestation["capability_set"]):
+        if (
+            not scope_attenuates(parent, attestation["scope_boundary"])
+            or not budget_attenuates(parent["scope_boundary"], attestation["scope_boundary"])
+            or not caps_attenuate(parent, attestation["capability_set"])
+        ):
             return ChainVerification.NOT_ATTENUATED
 
     return ChainVerification.ATTENUATED
