@@ -462,6 +462,16 @@ pub fn verify_chain_at(
         if !scope_attenuates(parent, child.scope_boundary()) {
             return ChainVerification::NotAttenuated;
         }
+        // Budget caveat containment — the same check `mint_child` refuses on,
+        // re-performed here so a THIRD PARTY holding only a presented chain
+        // reaches the same verdict the mint would have (`docs/spec/budget.md`,
+        // the same offline-reproducibility requirement `docs/spec/scope.md`
+        // S.1 states for `prefix`). Not folded into `scope_attenuates` itself —
+        // budget kinds are not resource-shaped; see `crate::budget`'s module
+        // doc.
+        if !crate::budget::budget_attenuates(parent.scope_boundary(), child.scope_boundary()) {
+            return ChainVerification::NotAttenuated;
+        }
         if !caps_attenuate(parent, child.capability_set()) {
             return ChainVerification::NotAttenuated;
         }
@@ -534,6 +544,10 @@ pub fn verify_chain_at(
 
         // The child may hold no more than the parent consented to...
         if !scope_attenuates_within(&attestation.scope_boundary, child.scope_boundary())
+            || !crate::budget::budget_attenuates(
+                &attestation.scope_boundary,
+                child.scope_boundary(),
+            )
             || !caps_attenuate_within(&attestation.capability_set, child.capability_set())
         {
             return ChainVerification::NotAttenuated;
@@ -544,6 +558,10 @@ pub fn verify_chain_at(
         // child to the parent and this compares the ATTESTATION to the parent — an
         // over-broad attestation with a well-behaved child would otherwise pass.
         if !scope_attenuates(parent, &attestation.scope_boundary)
+            || !crate::budget::budget_attenuates(
+                parent.scope_boundary(),
+                &attestation.scope_boundary,
+            )
             || !caps_attenuate(parent, &attestation.capability_set)
         {
             return ChainVerification::NotAttenuated;

@@ -51,6 +51,9 @@ use vaid_mint::attestation::{
     canonical_attestation_signing_bytes, verify_attestation_authenticity, AttestationBundle,
     ConsentAttestation,
 };
+use vaid_mint::budget::{
+    budget_attenuation_reason, BudgetAttenuationReason, RECOGNISED_BUDGET_KINDS,
+};
 use vaid_mint::chain::{verify_chain_at, ChainVerification, PresentedBundle, SingleKernelKey};
 use vaid_mint::document::{
     boundary_is_evaluable, canonical_vaid_signing_bytes, compute_lineage_hash,
@@ -1011,6 +1014,67 @@ fn check_scope_kinds(v: &Value) -> Check {
     Ok(())
 }
 
+/// The wire string for a budget attenuation reason (`docs/spec/budget.md`).
+fn budget_code(reason: BudgetAttenuationReason) -> &'static str {
+    match reason {
+        BudgetAttenuationReason::Attenuated => "attenuated",
+        BudgetAttenuationReason::BudgetEscalation => "budget_escalation",
+        BudgetAttenuationReason::UnknownBudgetKind => "unknown_budget_kind",
+    }
+}
+
+/// `budget_v1.json` — budget scope kinds (`docs/spec/budget.md`, ADR-0011).
+///
+/// Mirrors `check_scope_kinds`'s structure but has a single surface:
+/// attenuation of one typed boundary's budget entries within another's.
+/// There is no containment surface (budget kinds are not resource-shaped —
+/// `crate::budget`'s module doc) and no shape surface here, because the shape
+/// gate for a budget-kind entry is exercised through the SAME
+/// `ScopeBoundaryEntry` deserializer `check_scope_kinds` already covers.
+fn check_budget(v: &Value) -> Check {
+    let declared: BTreeSet<&str> = match v["rule"]["kinds"].as_array() {
+        Some(a) => a.iter().filter_map(|k| k.as_str()).collect(),
+        None => return err("budget vector declares no `rule.kinds`"),
+    };
+    let built: BTreeSet<&str> = RECOGNISED_BUDGET_KINDS.iter().copied().collect();
+    if declared != built {
+        return err(format!(
+            "recognised budget kinds disagree: vector declares {declared:?}, this build              recognises {built:?} — a kind in one and not the other is a fail-closed              rule that fails open in whichever direction the gap runs"
+        ));
+    }
+
+    let cases = match v["attenuation_cases"].as_array() {
+        Some(c) if !c.is_empty() => c,
+        _ => return err("budget vector carries no attenuation_cases"),
+    };
+    let mut seen_reasons: BTreeSet<&str> = BTreeSet::new();
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let parent_scope = match boundary_of(&case["parent_scope"]) {
+            Ok(b) => b,
+            Err(e) => return err(format!("budget case {name:?}: parent_scope: {e}")),
+        };
+        let child_scope = match boundary_of(&case["child_scope"]) {
+            Ok(b) => b,
+            Err(e) => return err(format!("budget case {name:?}: child_scope: {e}")),
+        };
+        let expected_reason = case["expected_reason"].as_str().unwrap_or_default();
+        let got_reason = budget_code(budget_attenuation_reason(&parent_scope, &child_scope));
+        if got_reason != expected_reason {
+            return err(format!(
+                "budget case {name:?}: expected {expected_reason:?}, got {got_reason:?}"
+            ));
+        }
+        seen_reasons.insert(got_reason);
+    }
+    for reason in ["attenuated", "budget_escalation", "unknown_budget_kind"] {
+        if !seen_reasons.contains(reason) {
+            return err(format!("budget vector never exercises reason {reason:?}"));
+        }
+    }
+    Ok(())
+}
+
 /// Every vector this firewall knows how to check, by filename.
 ///
 /// The embedded set is enumerated by `build.rs`; this table says what each one
@@ -1025,6 +1089,7 @@ const VECTOR_CHECKS: &[VectorCheck] = &[
     ("roundtrip_v1.json", check_roundtrip),
     ("verdict_v1.json", check_verdict),
     ("scope_kinds_v1.json", check_scope_kinds),
+    ("budget_v1.json", check_budget),
 ];
 
 /// Run every check against every embedded vector, returning `(name, digest)` pairs.
