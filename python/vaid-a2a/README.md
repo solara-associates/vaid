@@ -21,12 +21,20 @@ alert, or retry the right thing.
 
 ## Install
 
+The current published release is 0.2.1:
+
+```sh
+pip install vaid-a2a
+```
+
+To work against this repository's checkout instead:
+
 ```sh
 pip install -e python/vaid-pop -e python/vaid-mint -e python/vaid-a2a
 ```
 
-(No published release yet — this is a draft extension on a feature branch.
-See `docs/a2a/drafts/a2a-2028-reply.md` and the branch's `REPORT-306.md`.)
+The extension itself is still a draft; see `docs/a2a/drafts/a2a-2028-reply.md`
+and the branch's `REPORT-306.md`.
 
 ## Use
 
