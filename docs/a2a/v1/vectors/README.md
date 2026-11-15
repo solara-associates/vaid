@@ -41,6 +41,9 @@ use, not a new taxonomy:
 | `out_of_scope` | the chain attenuates correctly, but the requested action is outside the leaf's own `scope_boundary` |
 | `unknown_scope_kind` | some presented document carries a `scope_boundary` entry of a `kind` this verifier does not recognise, so the boundary is refused rather than evaluated from the entries it could read (ADR-0009 S.10) |
 | `issuer_mismatch` | the document's issuer is not trusted **for the trust domain it claims**: either the signing kernel key is not in the verifier's `trust_config` at all (vector `06`), or it is in it but bound to a different `trustDomain` than the document claims (vector `12`) |
+| `inauthentic` | the leaf's own kernel signature does not verify over its own bytes (vectors `15`, `18`) |
+| `unverifiable` | an ancestor named by a signed `parent_vaid` is not present in the presented chain — fails closed, never falls back to checking the leaf alone (vector `16`) |
+| `no_vaid` | no VAID is present under the extension's metadata key at all; with `requireVaid` false this is a **pass**, not a denial (vector `17`) |
 
 ## The test key
 
@@ -124,30 +127,106 @@ and both careless verifiers wrongly ALLOW; only the real verifier reaches the
 vector's recorded verdict. Without that, "the vector passes the reference
 verifier" would be the only evidence either vector is discriminating at all.
 
-## Implementations that agree
+## Vectors 15 to 18: the verification-order triad, and the case that catches the wrong order
 
-Outside implementers who have run this vector set against their own
-verifier and agreed to be listed:
+Requested in [a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028)
+after @aeoess asked how VAID's extension orders a missing, unverifiable, or
+invalid credential. Allan's reply
+([issuecomment-6875045085](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6875045085))
+proposed the first three side by side; @aeoess
+([issuecomment-6881408913](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6881408913))
+asked for the fourth, the one that actually catches a verifier that gets the
+order wrong. All four are signed by the same fixed `0x42` test kernel key as
+01-05 and 07-11; none introduces a new scope or capability shape — each
+isolates one or two of extension.md §5's existing steps.
+
+- **`15-invalid-leaf-signature-complete-chain.json`** — the leaf's own
+  `kernel_signature` does not verify (its `scope_boundary` was rewritten
+  after signing), presented with a chain that is otherwise complete and
+  would attenuate cleanly on its own. Expected: `INAUTHENTIC`. Per §5 step 1,
+  the leaf's own signature reaches a final verdict before any chain document
+  is examined, regardless of the chain's standing.
+- **`16-incomplete-chain-valid-signature.json`** — the leaf's signature is
+  genuinely valid, but the chain presented is missing its middle ancestor (a
+  real three-hop lineage with the middle hop withheld, the same shape
+  `test_missing_ancestor_is_unverifiable` uses in
+  `python/vaid-mint/tests/test_chain_verification.py`). Expected:
+  `UNVERIFIABLE`. Per §5 step 3, an ancestor named by a signed `parent_vaid`
+  that is absent from `/vaidChain` is unverifiable, never a reason to fall
+  back to checking the leaf alone.
+- **`17-missing-vaid-not-a-denial.json`** — no `/vaid` metadata key at all,
+  `requireVaid` false (the default). Expected: a **pass**, with
+  `expected_error_code` `no_vaid` naming the reason it passed. Per §2's
+  `requireVaid` row, the extension degrades to absent rather than to a
+  weaker check: a missing credential must never be treated as a chain or
+  signature failure.
+- **`18-invalid-signature-and-incomplete-chain-ordering-trap.json`** — both
+  defects from `15` and `16` in the SAME input: a structurally valid leaf
+  (correct shape, a real `parent_vaid`, a real `scope_boundary`) whose
+  signature does not verify, presented with the same incomplete chain shape
+  as `16`. Expected: `INAUTHENTIC`. This is the case that actually
+  distinguishes the two possible orders: `15` and `16` each isolate one
+  defect, so a verifier that checked chain completeness BEFORE the leaf's
+  own signature would still happen to agree with the spec-required order on
+  both of them. Only `18`, where both defects are present at once, makes the
+  two orders disagree — chain-first reaches `UNVERIFIABLE` and stops before
+  ever looking at the leaf's own signature; signature-first (§5's required
+  order) reaches `INAUTHENTIC`.
+
+`python/vaid-a2a/tests/test_vector_ordering_positive_controls.py` proves this
+is not a vacuous claim: it derives a verdict for vector `18` using a
+chain-completeness-first check built from the same `assemble_lineage`
+primitive the reference verifier itself uses for its revocation step, and
+confirms that check alone would wrongly say `UNVERIFIABLE`, while the real,
+correctly-ordered reference verifier reaches `INAUTHENTIC`.
+
+## Implementations, and reproductions, that agree
+
+Outside parties who have run this vector set and agreed to be listed. Only a
+row backed by a **separate verifier that does not import or call vaid-a2a's
+reference verifier** is an independent implementation; a row that runs the
+reference verifier itself is a reproduction of the reference run, and is
+labelled as such below.
 
 | implementation | vector set / version | result | report |
 |---|---|---|---|
-| [giskard09/argentum-core](https://github.com/giskard09/argentum-core) | 0.1.1, then main / 0.2.0 | 12/12, then 14/14 (all verdicts and error codes matching) | [a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6125938510) |
+| [giskard09/argentum-core](https://github.com/giskard09/argentum-core) | 0.1.1, then main / 0.2.0 | 12/12, then 14/14 (all verdicts and error codes matching) — **reproduction of the reference verifier**, not an independent implementation (see note below) | [a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6125938510) |
 | [aeoess/Agent Passport System](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6148659932) | 0.1.1, sig_version 3 vectors only (01-12) | 12/12 | [aps-conformance-suite @ 1a25e5f](https://github.com/Agent-Authority-Conformance/aps-conformance-suite/tree/1a25e5fc4b002c1eaec46db4cfd9e36822a8cac4/interop/vaid-a2a-0.1.1-cleanroom-ca6077a2) |
+
+**Reproduction, not independence (giskard09/argentum-core).** Corrected per
+giskard09's own clarification
+([a2aproject/A2A#2028, issuecomment-6896207423](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6896207423)):
+both runs in the row above (`pip install vaid-a2a` then `main`; reported in
+[issuecomment-6123679775](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6123679775)
+and
+[issuecomment-6125938510](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6125938510))
+ran the vaid-a2a **reference verifier itself**, not a separate
+implementation — argentum-core has no VAID verifier of its own. The row
+correctly reproduces the reference verifier's own verdicts; it is not a
+second check of them, and "against their own verifier" in this file never
+described this row. It is tracked as a reproduction for the same reason the
+APS row below is, next.
 
 Two conditions apply to the Agent Passport System row above, as agreed in
 [a2aproject/A2A#2028](https://github.com/a2aproject/A2A/issues/2028#issuecomment-6148659932):
 
 - **Scope.** The result covers only the 12 `sig_version` 3 vectors in
   vaid-a2a 0.1.1. It does not cover `sig_version` 4, and it does not cover
-  vectors 13 and 14.
+  vectors 13 through 18.
 - **Independence.** Vectors 01 to 06 were checked by a clean-room verifier
   written from the spec, importing nothing from VAID, so those results are
   independent. Vectors 07 to 12 came from Agent Passport System's own
   proposals and report, so the results on those vectors are the author's own
   runs, not independent checks.
 
-If you run these vectors against your own implementation, open a PR or
-issue with your results and we will add you here.
+**The independent evidence for the verdicts in this vector set, as it
+stands, is the Agent Passport System clean-room run on vectors 01 to 06** —
+a verifier written from the spec text, importing nothing from this repo.
+Nothing else listed above is independent of the reference verifier.
+
+If you run these vectors against your own implementation — one that does
+not call vaid-a2a's reference verifier — open a PR or issue with your
+results and we will add you here.
 
 ## Reproducing
 
