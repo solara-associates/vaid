@@ -587,6 +587,172 @@ def main() -> None:
         "expected_error_code": "out_of_scope",
     })
 
+    # ── 15. Invalid leaf signature, chain otherwise complete and authentic
+    # (fail: INAUTHENTIC) ────────────────────────────────────────────────────
+    #
+    # a2aproject/A2A#2028, ordering case 1 (Allan's reply, 2026-11-14): spec §5
+    # states the leaf's own signature is checked, to a final verdict, before
+    # any chain document is examined (step 1 before step 3). This vector is
+    # the direct demonstration: a genuinely signed root plus a leaf whose
+    # scope_boundary was rewritten AFTER signing (the same tamper technique
+    # test_chain_verification.py's test_tampered_parent_vaid_is_inauthentic
+    # and test_document_verify.py's test_tampered_document_fails use — the
+    # kernel_signature is kept, so it no longer covers the rewritten field),
+    # with the chain otherwise complete and would-be-attenuated. The leaf's
+    # own signature failure is INAUTHENTIC regardless of the chain.
+    root15 = kernel_sign(
+        agent_id=vid(29), parent_vaid=None,
+        scope=["data.acme"], caps=["read"],
+    )
+    leaf15_signed = kernel_sign(
+        agent_id=vid(30), parent_vaid=vid(29),
+        scope=["data.acme.orders"], caps=["read"],
+    )
+    leaf15 = {**leaf15_signed, "scope_boundary": [prefix_entry("data.acme.orders.tampered")]}
+    write_vector("15-invalid-leaf-signature-complete-chain", {
+        "description": (
+            "The leaf's scope_boundary was rewritten after signing, so its "
+            "kernel_signature no longer covers its own bytes — inauthentic. "
+            "The presented chain (one root) is otherwise complete and would, "
+            "on its own, attenuate cleanly. Per spec §5 step 1, the leaf's own "
+            "signature is checked to a final verdict before any chain "
+            "document is examined, so this is INAUTHENTIC regardless of the "
+            "chain's standing. Ordering case 1 from a2aproject/A2A#2028."
+        ),
+        "trust_config": trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme.orders",
+        "inputs": {"leaf": leaf15, "chain": [root15]},
+        "revoked_vaid_ids": [],
+        "expected_result": "fail",
+        "expected_error_code": "inauthentic",
+    })
+
+    # ── 16. Incomplete chain, leaf signature genuinely valid (fail:
+    # UNVERIFIABLE) ──────────────────────────────────────────────────────────
+    #
+    # a2aproject/A2A#2028, ordering case 2. Three real hops (root -> mid ->
+    # leaf), all authentically signed and properly attenuated, but the MIDDLE
+    # ancestor is withheld from the presented chain — the same shape
+    # test_chain_verification.py's test_missing_ancestor_is_unverifiable uses.
+    # The leaf's own signature is genuinely valid; what is missing is proof of
+    # the rest of the lineage. Per spec §5 step 3, a missing or incomplete
+    # chain where one is required is UNVERIFIABLE, never a reason to fall back
+    # to checking the leaf in isolation and never collapsed into INAUTHENTIC.
+    root16 = kernel_sign(
+        agent_id=vid(31), parent_vaid=None,
+        scope=["data.acme"], caps=["read", "write"],
+    )
+    kernel_sign(  # mid16 — signed, then deliberately withheld from the chain below.
+        agent_id=vid(32), parent_vaid=vid(31),
+        scope=["data.acme.orders"], caps=["read", "write"],
+    )
+    leaf16 = kernel_sign(
+        agent_id=vid(33), parent_vaid=vid(32),
+        scope=["data.acme.orders.line_items"], caps=["read"],
+    )
+    write_vector("16-incomplete-chain-valid-signature", {
+        "description": (
+            "A real three-hop lineage (root -> mid -> leaf), every document "
+            "authentically signed and properly attenuated, but the MIDDLE "
+            "ancestor is withheld from the presented chain: only the root is "
+            "presented, and the leaf's parent_vaid names the withheld mid "
+            "document. The leaf's own signature is genuinely valid. Per spec "
+            "§5 step 3, an ancestor named by a signed parent_vaid that is not "
+            "present in /vaidChain is UNVERIFIABLE, not a reason to check the "
+            "leaf alone. Ordering case 2 from a2aproject/A2A#2028."
+        ),
+        "trust_config": trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme.orders.line_items",
+        "inputs": {"leaf": leaf16, "chain": [root16]},
+        "revoked_vaid_ids": [],
+        "expected_result": "fail",
+        "expected_error_code": "unverifiable",
+    })
+
+    # ── 17. Missing VAID, requireVaid false (pass: NO_VAID, never a denial) ──
+    #
+    # a2aproject/A2A#2028, ordering case 3. No /vaid metadata key at all. Per
+    # spec §2's requireVaid row, with requireVaid false (the default) a hop
+    # carrying no VAID is outside this extension's concern: it degrades to
+    # absent, never to a weaker check, and MUST NOT be denied. This is the
+    # NO_VAID code reached WITHOUT allowed being reached by clearing any
+    # check — there is nothing here to check.
+    write_vector("17-missing-vaid-not-a-denial", {
+        "description": (
+            "No VAID is present under the extension's /vaid metadata key, and "
+            "requireVaid is not set (defaults false). Per spec §2, the "
+            "extension degrades to absent rather than to a weaker check: this "
+            "hop is simply outside its concern, and the request is allowed "
+            "through this extension's check, never denied for lacking a "
+            "VAID. Ordering case 3 from a2aproject/A2A#2028 — a missing "
+            "credential must never be treated as a chain or signature "
+            "failure."
+        ),
+        "trust_config": trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme.orders",
+        "inputs": {"leaf": None, "chain": []},
+        "revoked_vaid_ids": [],
+        "expected_result": "pass",
+        "expected_error_code": "no_vaid",
+    })
+
+    # ── 18. Invalid leaf signature AND incomplete chain (fail: INAUTHENTIC) ──
+    #
+    # a2aproject/A2A#2028, ordering case 4, requested by @aeoess
+    # (issuecomment-6881408913) as the case that actually catches the wrong
+    # order: a structurally valid leaf whose signature is invalid, presented
+    # with an incomplete chain. A verifier that checks chain completeness
+    # BEFORE the leaf's own signature would reach UNVERIFIABLE (step 3) and
+    # stop there, never reaching the leaf's own INAUTHENTIC verdict (step 1).
+    # Per spec §5, step 1 runs to a final verdict on the leaf alone before
+    # step 3 examines any chain document, so the correct, and only correct,
+    # result is INAUTHENTIC. See
+    # test_vector_ordering_positive_controls.py for the wrongly-ordered
+    # verifier that this vector catches.
+    root18 = kernel_sign(
+        agent_id=vid(34), parent_vaid=None,
+        scope=["data.acme"], caps=["read", "write"],
+    )
+    kernel_sign(  # mid18 — signed, then deliberately withheld, same as vector 16.
+        agent_id=vid(35), parent_vaid=vid(34),
+        scope=["data.acme.orders"], caps=["read", "write"],
+    )
+    leaf18_signed = kernel_sign(
+        agent_id=vid(36), parent_vaid=vid(35),
+        scope=["data.acme.orders.line_items"], caps=["read"],
+    )
+    leaf18 = {
+        **leaf18_signed,
+        "scope_boundary": [prefix_entry("data.acme.orders.line_items.tampered")],
+    }
+    write_vector("18-invalid-signature-and-incomplete-chain-ordering-trap", {
+        "description": (
+            "A structurally valid leaf document (correct shape, a real "
+            "parent_vaid, a real scope_boundary) whose kernel_signature does "
+            "not verify — its scope_boundary was rewritten after signing, "
+            "same tamper technique as vector 15 — presented alongside an "
+            "incomplete chain: the leaf's parent (mid18) is withheld, same "
+            "shape as vector 16. Per spec §5, step 1 (the leaf's own "
+            "signature) runs to a final verdict before step 3 (chain "
+            "completeness) examines anything, so the correct result is "
+            "INAUTHENTIC. A verifier that checks chain completeness first "
+            "would wrongly return UNVERIFIABLE here, which is exactly why "
+            "this vector catches the wrong order where vectors 15 and 16, "
+            "each isolating one defect, do not. Requested by @aeoess, "
+            "a2aproject/A2A#2028 issuecomment-6881408913."
+        ),
+        "trust_config": trust_config,
+        "verification_time": VERIFICATION_TIME,
+        "requested_action": "data.acme.orders.line_items",
+        "inputs": {"leaf": leaf18, "chain": [root18]},
+        "revoked_vaid_ids": [],
+        "expected_result": "fail",
+        "expected_error_code": "inauthentic",
+    })
+
     print(f"\nkernel public key (vectors 01-05): base64url {b64url(KERNEL_PUBLIC_KEY)}")
     print(f"  derived thumbprint: {KERNEL_KEY_THUMBPRINT}")
     print(f"second key (vectors 06, 12):      base64url {b64url(UNTRUSTED_PUBLIC_KEY)}")

@@ -1,0 +1,20 @@
+{
+  "description": "No VAID is present under the extension's /vaid metadata key, and requireVaid is not set (defaults false). Per spec \u00a72, the extension degrades to absent rather than to a weaker check: this hop is simply outside its concern, and the request is allowed through this extension's check, never denied for lacking a VAID. Ordering case 3 from a2aproject/A2A#2028 \u2014 a missing credential must never be treated as a chain or signature failure.",
+  "trust_config": {
+    "trustedIssuers": [
+      {
+        "trustDomain": "vaid.example",
+        "kernelPublicKey": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI"
+      }
+    ]
+  },
+  "verification_time": "2026-07-01T00:00:00Z",
+  "requested_action": "data.acme.orders",
+  "inputs": {
+    "leaf": null,
+    "chain": []
+  },
+  "revoked_vaid_ids": [],
+  "expected_result": "pass",
+  "expected_error_code": "no_vaid"
+}
