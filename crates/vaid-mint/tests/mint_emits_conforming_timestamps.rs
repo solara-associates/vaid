@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use vaid_mint::audit::InMemoryAudit;
-use vaid_mint::{MintService, MintVaidRequest, ReferenceIssuer, VaidSeed};
+use vaid_mint::{InsecurePermitAll, MintService, MintVaidRequest, ReferenceIssuer, VaidSeed};
 
 /// The E.6 shape, spelled out rather than imported, so this test does not agree
 /// with the implementation merely by sharing its definition of the answer.
@@ -53,7 +53,7 @@ fn is_e6(s: &str) -> bool {
 
 async fn mint_one() -> Value {
     let issuer = Arc::new(ReferenceIssuer::ephemeral(24, "vaid.example").expect("issuer"));
-    let mint = MintService::new(issuer, Arc::new(InMemoryAudit::default()));
+    let mint = MintService::with_authorization(issuer, Arc::new(InMemoryAudit::default()), Arc::new(InsecurePermitAll));
     let response = mint
         .mint_root(MintVaidRequest {
             seed: VaidSeed {
@@ -91,7 +91,7 @@ async fn the_predicate_agrees_with_the_bytes() {
     // Guards against the predicate and the serialization drifting apart: it would
     // be entirely possible to satisfy one and not the other.
     let issuer = Arc::new(ReferenceIssuer::ephemeral(24, "vaid.example").expect("issuer"));
-    let mint = MintService::new(issuer, Arc::new(InMemoryAudit::default()));
+    let mint = MintService::with_authorization(issuer, Arc::new(InMemoryAudit::default()), Arc::new(InsecurePermitAll));
     let response = mint
         .mint_root(MintVaidRequest {
             seed: VaidSeed {

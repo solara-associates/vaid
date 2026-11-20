@@ -2,8 +2,8 @@
 
 :class:`MintService` wraps a :class:`~vaid_mint.issuer.ReferenceIssuer`, an
 :class:`~vaid_mint.audit.AuditSink`, and a root-mint
-:class:`~vaid_mint.authz.AuthorizationGate` (default :class:`PermitAll`). Two
-entry points:
+:class:`~vaid_mint.authz.AuthorizationGate` (default :class:`~vaid_mint.authz.DenyAll`
+— deny-by-default). Two entry points:
 
 - :meth:`MintService.mint_root` — mint a root/operator VAID (gated), BYO-key with
   a verified proof-of-possession or generate-and-discard.
@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from vaid_pop import canonical_request_signing_bytes
 
 from vaid_mint.audit import AuditSink
-from vaid_mint.authz import AuthorizationGate, PermitAll
+from vaid_mint.authz import AuthorizationGate, DenyAll
 from vaid_mint.document import (
     boundary_is_evaluable,
     entry_claimed_resource,
@@ -244,9 +244,10 @@ class MintService:
         authz: AuthorizationGate | None = None,
         max_delegation_depth: int | None = None,
     ) -> None:
-        """Construct the mint. ``authz`` defaults to :class:`PermitAll` — a
-        reference choice, NOT a security recommendation; a production deployment
-        supplies a real gate here.
+        """Construct the mint. ``authz`` defaults to :class:`~vaid_mint.authz.DenyAll`
+        — deny-by-default; ``mint_root`` refuses every request until a real gate is
+        supplied here, or :class:`~vaid_mint.authz.InsecurePermitAll` is opted into
+        explicitly for tests/demos.
 
         ``max_delegation_depth`` defaults to :data:`DEFAULT_MAX_DELEGATION_DEPTH`
         (1) when omitted or ``None``. An explicit value is validated by
@@ -257,7 +258,7 @@ class MintService:
         """
         self._issuer = issuer
         self._audit = audit
-        self._authz: AuthorizationGate = authz if authz is not None else PermitAll()
+        self._authz: AuthorizationGate = authz if authz is not None else DenyAll()
         self._consumed_pop_nonces: set[str] = set()
         self._max_delegation_depth = validate_max_delegation_depth(
             DEFAULT_MAX_DELEGATION_DEPTH
@@ -342,7 +343,7 @@ class MintService:
         # document is refused before the authorization seam is consulted, so a
         # malformed request is never recorded as an authorization decision.
         self._require_well_formed_boundary(seed)
-        # Root-mint authorization seam (defaults to PermitAll). First, before any
+        # Root-mint authorization seam (defaults to DenyAll). First, before any
         # key work — a denied mint has no side effects.
         self._authz.authorize_root_mint(seed)
 

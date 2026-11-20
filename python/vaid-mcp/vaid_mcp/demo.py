@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from vaid_pop import canonical_request_signing_bytes, utc_whole_second_rfc3339
 
 from vaid_mint.audit import NoopAudit
+from vaid_mint.authz import InsecurePermitAll
 from vaid_mint.document import prefix_entry
 from vaid_mint.issuer import ReferenceIssuer
 from vaid_mint.issuer_identity import kernel_key_thumbprint
@@ -46,7 +47,11 @@ def mint_demo_chain(resource: str = "demo.sandbox", capability: str = "read") ->
     they will pass `verify_chain` against the returned public key — but the
     key behind them exists only for the duration of this call."""
     issuer = ReferenceIssuer.ephemeral(DEMO_TTL_HOURS, DEMO_TRUST_DOMAIN).assuming_nothing_revoked()
-    mint = MintService(issuer, NoopAudit())
+    # `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+    # `InsecurePermitAll` is asked for BY NAME here — fine for this ephemeral
+    # demo chain, never for production. A production deployment supplies a real
+    # `AuthorizationGate` instead.
+    mint = MintService(issuer, NoopAudit(), authz=InsecurePermitAll())
 
     root = mint.mint_root(
         VaidSeed(

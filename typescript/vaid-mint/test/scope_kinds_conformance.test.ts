@@ -33,6 +33,7 @@ import {
   scopeAttenuationReason,
 } from '../src/mint.js';
 import { InMemoryAudit } from '../src/audit.js';
+import { InsecurePermitAll } from '../src/authz.js';
 import { MintError } from '../src/error.js';
 import { ReferenceIssuer } from '../src/issuer.js';
 import { parseVaidDocument } from '../src/verify.js';
@@ -233,6 +234,7 @@ for (const c of VECTOR.shape_cases) {
     const service = new MintService(
       ReferenceIssuer.ephemeral(1).assumingNothingRevoked(),
       new InMemoryAudit(),
+      new InsecurePermitAll(),
     );
     const seed = {
       agentClass: 'orchestrator',

@@ -36,7 +36,7 @@ import uuid
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa, padding
 
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed, prefix_entry
+from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed, prefix_entry
 from vaid_mint import build_mint_pop_payload
 from vaid_mint.error import IdentityError
 from vaid_mint.mint_types import MintPop
@@ -136,7 +136,7 @@ def _mint_and_verify(svid, trust_domain: str, trust_bundle_der: list[bytes]):
     audit = InMemoryAudit()
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
     mint = SpiffeMint(
-        MintService(issuer, audit),
+        MintService(issuer, audit, authz=InsecurePermitAll()),
         audit,
         trust_bundle=trust_bundle_der,
         expected_trust_domain=trust_domain,
@@ -181,7 +181,7 @@ def run_core_checks(ctx) -> list[str]:
     # (2) Same real SVID, wrong expected_trust_domain: refused, nothing minted.
     audit2 = InMemoryAudit()
     mint2 = SpiffeMint(
-        MintService(ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(), audit2),
+        MintService(ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(), audit2, authz=InsecurePermitAll()),
         audit2,
         trust_bundle=trust_bundle_der,
         expected_trust_domain="not-" + trust_domain,
@@ -205,7 +205,7 @@ def run_core_checks(ctx) -> list[str]:
     # genuine, currently-valid certificate chain in hand.
     audit3 = InMemoryAudit()
     mint3 = SpiffeMint(
-        MintService(ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(), audit3),
+        MintService(ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(), audit3, authz=InsecurePermitAll()),
         audit3,
         trust_bundle=trust_bundle_der,
         expected_trust_domain=trust_domain,

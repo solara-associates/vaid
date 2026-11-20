@@ -20,7 +20,7 @@
 import { utcWholeSecondRfc3339, verifySignedPayload, type Rfc3339Utc } from 'vaid-pop';
 
 import type { AuditSink } from './audit.js';
-import { PermitAll, type AuthorizationGate } from './authz.js';
+import { DenyAll, type AuthorizationGate } from './authz.js';
 import {
   capsContain,
   hasCapability,
@@ -354,8 +354,7 @@ export class MintService {
   readonly #issuer: VaidIssuer;
   readonly #audit: AuditSink;
   /**
-   * Root-mint authorization seam. Defaults to {@link PermitAll} — a
-   * reference-implementation choice, NOT a security recommendation.
+   * Root-mint authorization seam. Defaults to {@link DenyAll} (deny-by-default).
    */
   readonly #authz: AuthorizationGate;
   readonly #consumedPopNonces = new Set<string>();
@@ -369,10 +368,10 @@ export class MintService {
   /**
    * Construct with an optional root-mint {@link AuthorizationGate} and an
    * optional maximum delegation depth. Omitting the gate selects
-   * {@link PermitAll} — convenient for tests and local self-hosting; a
-   * production deployment should supply a real gate. This is the seam that
-   * closes the "mintRoot has no authorization" gap visibly rather than
-   * silently.
+   * {@link DenyAll} — deny-by-default; `mintRoot` refuses every request until
+   * a real gate is supplied here, or {@link InsecurePermitAll} is opted into
+   * explicitly for tests/demos. This is the seam that closes the "mintRoot
+   * has no authorization" gap visibly rather than silently.
    *
    * Omitting `maxDelegationDepth` selects
    * {@link DEFAULT_MAX_DELEGATION_DEPTH} (1). An explicit value is validated
@@ -384,7 +383,7 @@ export class MintService {
   constructor(
     issuer: VaidIssuer,
     audit: AuditSink,
-    authz: AuthorizationGate = new PermitAll(),
+    authz: AuthorizationGate = new DenyAll(),
     maxDelegationDepth: number = DEFAULT_MAX_DELEGATION_DEPTH,
   ) {
     this.#issuer = issuer;
@@ -448,7 +447,7 @@ export class MintService {
 
   /**
    * Mint a root (or operator) VAID. The root-mint {@link AuthorizationGate} is
-   * consulted first (defaults to {@link PermitAll}); then, when
+   * consulted first (defaults to {@link DenyAll} — deny-by-default); then, when
    * `seed.publicKeyDer` is present, this is a BYO-key mint and a valid
    * {@link MintPop} is required; otherwise the issuer generates a keypair and
    * discards the private half.
@@ -461,7 +460,7 @@ export class MintService {
     // malformed request is never recorded as an authorization decision.
     requireWellFormedBoundary(seed);
 
-    // Root-mint authorization seam (defaults to PermitAll). Runs first, before
+    // Root-mint authorization seam (defaults to DenyAll). Runs first, before
     // any key work or nonce consumption, so a denied mint has no side effects.
     await this.#authz.authorizeRootMint(seed);
 

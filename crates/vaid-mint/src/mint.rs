@@ -23,7 +23,7 @@ use serde_json::json;
 use vaid_pop::vaid_pop::verify_signed_payload;
 
 use crate::audit::AuditSink;
-use crate::authz::{AuthorizationGate, PermitAll};
+use crate::authz::{AuthorizationGate, DenyAll};
 use crate::document::{AgentClass, ScopeBoundaryEntry, TenantId, Vaid, VaidId};
 use crate::error::{MintError, MintResult};
 use crate::issuer::VaidIssuer;
@@ -270,9 +270,8 @@ pub fn expiry_attenuates_within(parent_expires_at: &str, child_expires_at: Optio
 pub struct MintService {
     issuer: Arc<dyn VaidIssuer>,
     audit: Arc<dyn AuditSink>,
-    /// Root-mint authorization seam. Defaults to [`PermitAll`] — a
-    /// reference-implementation choice, NOT a security recommendation. See
-    /// [`crate::authz`].
+    /// Root-mint authorization seam. Defaults to [`DenyAll`] (deny-by-default).
+    /// See [`crate::authz`].
     authz: Arc<dyn AuthorizationGate>,
     consumed_pop_nonces: Mutex<HashSet<String>>,
     /// Maximum delegation depth [`MintService::mint_child`] will mint to
@@ -282,15 +281,15 @@ pub struct MintService {
 }
 
 impl MintService {
-    /// Construct with the default root-mint authorization gate ([`PermitAll`])
-    /// and the default maximum delegation depth
-    /// ([`DEFAULT_MAX_DELEGATION_DEPTH`], i.e. 1). Convenience for tests and
-    /// local self-hosting; a production deployment should use
-    /// [`MintService::with_authorization`] or
-    /// [`MintService::with_max_delegation_depth`] to supply a real gate or a
+    /// Construct with the default root-mint authorization gate ([`DenyAll`] —
+    /// deny-by-default) and the default maximum delegation depth
+    /// ([`DEFAULT_MAX_DELEGATION_DEPTH`], i.e. 1). `mint_root` will refuse every
+    /// request until a real gate is supplied via [`MintService::with_authorization`]
+    /// (or [`crate::authz::InsecurePermitAll`] is opted into explicitly for
+    /// tests/demos). See [`MintService::with_max_delegation_depth`] for a
     /// non-default depth.
     pub fn new(issuer: Arc<dyn VaidIssuer>, audit: Arc<dyn AuditSink>) -> Self {
-        Self::with_authorization(issuer, audit, Arc::new(PermitAll))
+        Self::with_authorization(issuer, audit, Arc::new(DenyAll))
     }
 
     /// Construct with an explicit root-mint [`AuthorizationGate`] and the
@@ -394,14 +393,14 @@ impl MintService {
     }
 
     /// Mint a root (or operator) VAID. The root-mint [`AuthorizationGate`] is
-    /// consulted first (defaults to [`PermitAll`]); then, when
+    /// consulted first (defaults to [`DenyAll`] — deny-by-default); then, when
     /// `seed.public_key_der` is `Some`, this is a BYO-key mint and a valid
     /// [`MintPop`] is required; otherwise the issuer generates a keypair and
     /// discards the private half.
     pub async fn mint_root(&self, request: MintVaidRequest) -> MintResult<MintVaidResponse> {
         let seed = request.seed;
 
-        // Root-mint authorization seam (defaults to PermitAll). Runs first, before
+        // Root-mint authorization seam (defaults to DenyAll). Runs first, before
         // any key work or nonce consumption, so a denied mint has no side effects.
         self.authz.authorize_root_mint(&seed).await?;
 
@@ -702,7 +701,15 @@ mod tests {
     fn fixture() -> (MintService, Arc<InMemoryAudit>) {
         let audit = Arc::new(InMemoryAudit::new());
         let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
-        let svc = MintService::new(issuer, audit.clone());
+        // Most tests in this module exercise `mint_root`/`mint_child` behavior
+        // other than the authorization gate itself, so they opt into
+        // `InsecurePermitAll` explicitly; the gate's own deny-by-default and
+        // explicit-gate behavior is covered by dedicated tests below.
+        let svc = MintService::with_authorization(
+            issuer,
+            audit.clone(),
+            Arc::new(crate::authz::InsecurePermitAll),
+        );
         (svc, audit)
     }
 
@@ -777,11 +784,11 @@ mod tests {
     async fn root_mint_denied_by_authorization_gate_has_no_side_effects() {
         use crate::authz::AuthorizationGate;
 
-        // A gate that denies every root mint. Proves the seam is real: the mint
-        // is rejected before any issuance or audit.
-        struct DenyAll;
+        // A custom gate that denies every root mint. Proves the seam is real: the
+        // mint is rejected before any issuance or audit.
+        struct CustomDenyAll;
         #[async_trait::async_trait]
-        impl AuthorizationGate for DenyAll {
+        impl AuthorizationGate for CustomDenyAll {
             async fn authorize_root_mint(&self, _seed: &VaidSeed) -> MintResult<()> {
                 Err(MintError::Unauthorized("root mint denied by gate".into()))
             }
@@ -789,7 +796,7 @@ mod tests {
 
         let audit = Arc::new(InMemoryAudit::new());
         let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
-        let svc = MintService::with_authorization(issuer, audit.clone(), Arc::new(DenyAll));
+        let svc = MintService::with_authorization(issuer, audit.clone(), Arc::new(CustomDenyAll));
 
         let req = MintVaidRequest {
             seed: VaidSeed {
@@ -806,6 +813,60 @@ mod tests {
         let err = svc.mint_root(req).await.unwrap_err();
         assert!(err.to_string().contains("denied by gate"), "got: {err}");
         assert!(audit.is_empty(), "a gate-denied root mint must not audit");
+    }
+
+    #[tokio::test]
+    async fn mint_service_new_denies_root_mint_by_default() {
+        // `MintService::new` (no explicit authz) must deny-by-default: no caller
+        // gets root-mint authority just by omitting a gate.
+        let audit = Arc::new(InMemoryAudit::new());
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        let svc = MintService::new(issuer, audit.clone());
+
+        let req = MintVaidRequest {
+            seed: VaidSeed {
+                agent_class: "researcher".into(),
+                version: "1.0.0".into(),
+                tenant_id: "acme".into(),
+                parent_vaid: None,
+                scope_boundary: vec![],
+                capability_set: vec![],
+                public_key_der: None,
+            },
+            pop: None,
+        };
+        let err = svc.mint_root(req).await.unwrap_err();
+        assert!(err.to_string().contains("deny-by-default"), "got: {err}");
+        assert!(audit.is_empty(), "a deny-by-default root mint must not audit");
+    }
+
+    #[tokio::test]
+    async fn insecure_permit_all_opt_in_still_permits_root_mint() {
+        // The explicit, clearly-named opt-in must still work for local
+        // self-hosting/tests/demos.
+        let audit = Arc::new(InMemoryAudit::new());
+        let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
+        let svc = MintService::with_authorization(
+            issuer,
+            audit.clone(),
+            Arc::new(crate::authz::InsecurePermitAll),
+        );
+
+        let req = MintVaidRequest {
+            seed: VaidSeed {
+                agent_class: "researcher".into(),
+                version: "1.0.0".into(),
+                tenant_id: "acme".into(),
+                parent_vaid: None,
+                scope_boundary: vec![],
+                capability_set: vec![],
+                public_key_der: None,
+            },
+            pop: None,
+        };
+        let resp = svc.mint_root(req).await.unwrap();
+        assert_eq!(resp.vaid.agent_class().as_str(), "researcher");
+        assert_eq!(audit.len(), 1);
     }
 
     #[tokio::test]
@@ -1172,7 +1233,7 @@ mod tests {
         let svc = MintService::with_max_delegation_depth(
             issuer,
             audit,
-            Arc::new(crate::authz::PermitAll),
+            Arc::new(crate::authz::InsecurePermitAll),
             1,
         )
         .unwrap();
@@ -1188,7 +1249,7 @@ mod tests {
         let svc = MintService::with_max_delegation_depth(
             issuer,
             audit,
-            Arc::new(crate::authz::PermitAll),
+            Arc::new(crate::authz::InsecurePermitAll),
             2,
         )
         .unwrap();
@@ -1267,7 +1328,7 @@ mod tests {
         let result = MintService::with_max_delegation_depth(
             issuer,
             audit,
-            Arc::new(crate::authz::PermitAll),
+            Arc::new(crate::authz::InsecurePermitAll),
             0,
         );
         match result {
@@ -1339,7 +1400,11 @@ mod tests {
     async fn depth_1_refuses_when_the_grandparent_cannot_be_resolved_after_a_restart() {
         let issuer = Arc::new(ReferenceIssuer::ephemeral(1, "vaid.example").unwrap());
         let audit = Arc::new(InMemoryAudit::new());
-        let svc = MintService::new(issuer.clone(), audit.clone()); // default depth 1
+        let svc = MintService::with_authorization(
+            issuer.clone(),
+            audit.clone(),
+            Arc::new(crate::authz::InsecurePermitAll),
+        ); // default depth 1
         let root = mint_real_root(&svc, "aifactory").await;
         let child = mint_real_child(&svc, &root, "restart-root-to-child").await;
 
@@ -1406,7 +1471,7 @@ mod tests {
         let svc = MintService::with_max_delegation_depth(
             issuer,
             audit,
-            Arc::new(crate::authz::PermitAll),
+            Arc::new(crate::authz::InsecurePermitAll),
             2,
         )
         .unwrap();
@@ -1570,7 +1635,11 @@ mod tests {
                 .unwrap()
                 .assuming_nothing_revoked(),
         );
-        let svc = MintService::new(issuer.clone(), audit);
+        let svc = MintService::with_authorization(
+            issuer.clone(),
+            audit,
+            Arc::new(crate::authz::InsecurePermitAll),
+        );
         // Mint a REAL parent root through the issuer, so its lineage is recorded and
         // the child's ancestry is resolvable at verification (R.4.2). A synthetic
         // parent never minted here would — correctly — leave the child's lineage
@@ -2038,7 +2107,14 @@ mod tests {
     ) -> (MintService, Arc<InMemoryAudit>) {
         let audit = Arc::new(InMemoryAudit::new());
         let issuer = Arc::new(issuer_with_lineage_store(store));
-        (MintService::new(issuer, audit.clone()), audit)
+        (
+            MintService::with_authorization(
+                issuer,
+                audit.clone(),
+                Arc::new(crate::authz::InsecurePermitAll),
+            ),
+            audit,
+        )
     }
 
     /// A failed durable lineage write must fail `mint_root` closed with

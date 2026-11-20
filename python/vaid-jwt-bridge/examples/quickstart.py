@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vaid_mint import (
     InMemoryAudit,
+    InsecurePermitAll,
     MintService,
     ReferenceIssuer,
     VaidSeed,
@@ -69,7 +70,10 @@ def main() -> None:
     # report-worker -> report-reader), one hop deeper than the mint's 0.11.0
     # default of 1. The library default stays at 1; this is this example's own
     # mint policy, set explicitly for the two-hop delegation it demonstrates.
-    mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+    # `MintService` also defaults `mint_root` to deny-by-default (`DenyAll`);
+    # `InsecurePermitAll` is asked for BY NAME here — fine for this demo, never
+    # for production, where a real `AuthorizationGate` is supplied instead.
+    mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll(), max_delegation_depth=2)
 
     root = mint.mint_root(
         VaidSeed(
