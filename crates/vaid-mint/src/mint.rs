@@ -147,11 +147,26 @@ pub fn scope_attenuation_reason(
     {
         return AttenuationReason::UnknownScopeKind;
     }
-    let attenuates = if child_scope.is_empty() {
-        // Child wants ⊤; allowed only if the parent is also ⊤.
-        parent_scope.is_empty()
+    // Budget-kind entries (`docs/spec/budget.md`) are not resource-shaped and
+    // are excluded from this walk entirely — `crate::budget::budget_attenuation_reason`
+    // is the separate, additional check for them (`crate::budget`'s module
+    // doc: "one matcher, independent call sites", the same pattern ADR-0007
+    // uses for `expires_at`). Filtering here, rather than teaching
+    // `entry_claimed_resource` a budget arm, keeps this function's existing
+    // resource-containment guarantees — including the frozen `scope_v1.json`
+    // / `chain_v1.json` verdicts — untouched by a kind they never contain.
+    let child_resource_entries: Vec<&ScopeBoundaryEntry> = child_scope
+        .iter()
+        .filter(|e| !crate::budget::is_budget_kind(e.kind()))
+        .collect();
+    let parent_resource_entries_is_empty = parent_scope
+        .iter()
+        .all(|e| crate::budget::is_budget_kind(e.kind()));
+    let attenuates = if child_resource_entries.is_empty() {
+        // Child wants ⊤ on the resource axis; allowed only if the parent is too.
+        parent_resource_entries_is_empty
     } else {
-        child_scope.iter().all(|child| {
+        child_resource_entries.iter().all(|child| {
             crate::document::entry_claimed_resource(child)
                 .is_some_and(|resource| crate::document::scope_contains(parent_scope, resource))
         })
@@ -564,6 +579,48 @@ impl MintService {
             ));
         }
 
+        // (4a) The boundary itself must be a well-formed set of budget caveats
+        // before it is compared to anything — two entries of the same budget
+        // identity are not alternative admissible limits (`docs/spec/budget.md`
+        // B.3). Checked before attenuation so a malformed request is refused
+        // for that reason, not read as whichever entry happened to be seen
+        // first by the attenuation walk.
+        if let Err(reason) = crate::budget::validate_budget_boundary(&seed.scope_boundary) {
+            return Err(MintError::Unauthorized(format!(
+                "child scope_boundary is malformed: {reason}"
+            )));
+        }
+
+        // (4b) Budget attenuation — every budget caveat the parent carries must
+        // be matched, at no wider a limit, by the child (`docs/spec/budget.md`
+        // B.5); a child MAY add a new budget caveat the parent never had, which
+        // only narrows further and is always attenuated. A separate check from
+        // (4) because budget kinds are not resource-shaped — see
+        // `crate::budget`'s module doc.
+        match crate::budget::budget_attenuation_reason(
+            parent.scope_boundary(),
+            &seed.scope_boundary,
+        ) {
+            crate::budget::BudgetAttenuationReason::Attenuated => {}
+            crate::budget::BudgetAttenuationReason::BudgetEscalation => {
+                return Err(MintError::Unauthorized(
+                    "child scope_boundary omits or widens a budget caveat the parent \
+                     carries — least-privilege attenuation denied. Use \
+                     `inherit_parent_budgets` to carry the parent's limits forward \
+                     unchanged"
+                        .into(),
+                ));
+            }
+            crate::budget::BudgetAttenuationReason::UnknownBudgetKind => {
+                return Err(MintError::Unauthorized(
+                    "child or parent scope_boundary carries a scope_boundary kind this \
+                     mint does not recognise — budget containment cannot be computed, \
+                     fail-closed"
+                        .into(),
+                ));
+            }
+        }
+
         // (5) Capability attenuation — single `has_capability`.
         if !caps_attenuate(parent, &seed.capability_set) {
             return Err(MintError::Unauthorized(
@@ -959,6 +1016,209 @@ mod tests {
             seed,
             pop: Some(pop),
         }
+    }
+
+    // ── budget-caveat test helpers: `parent_doc`/`signed_child` above only take
+    // bare `&str` scope (always `prefix`); these take typed entries directly, so
+    // a test can mix `prefix` and budget-kind entries on either side. ──────────
+
+    fn parent_doc_with_entries(
+        tenant: &str,
+        scope: Vec<ScopeBoundaryEntry>,
+        caps: Vec<&str>,
+    ) -> Vaid {
+        Vaid::with_lineage(
+            AgentId::new(),
+            AgentClass::new("parent"),
+            "1.0.0".into(),
+            TenantId::new(tenant),
+            Utc::now(),
+            Utc::now() + chrono::Duration::hours(1),
+            vec![],
+            vec![],
+            None,
+            scope,
+            "lineage".into(),
+            caps.into_iter().map(String::from).collect(),
+            "vaid.example".into(),
+            crate::issuer_identity::kernel_key_thumbprint(&[0u8; 32]),
+        )
+    }
+
+    fn signed_child_with_entries(
+        parent: &Vaid,
+        scope: Vec<ScopeBoundaryEntry>,
+        caps: Vec<&str>,
+        nonce: &str,
+    ) -> MintVaidRequest {
+        let kp = holder_keypair();
+        let pubk = pubkey(&kp);
+        let seed = VaidSeed {
+            agent_class: "child".into(),
+            version: "1.0.0".into(),
+            tenant_id: parent.tenant_id().as_str().to_string(),
+            parent_vaid: Some(parent.vaid_id()),
+            scope_boundary: scope,
+            capability_set: caps.into_iter().map(String::from).collect(),
+            public_key_der: Some(pubk.clone()),
+        };
+        let pop = make_pop(&seed, &pubk, &kp, nonce, Utc::now());
+        MintVaidRequest {
+            seed,
+            pop: Some(pop),
+        }
+    }
+
+    fn budget_cost(limit: u64) -> ScopeBoundaryEntry {
+        ScopeBoundaryEntry::new(
+            crate::budget::BUDGET_KIND_COST_USD_MICRO,
+            serde_json::json!({ "limit": limit }),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_child_narrower_budget_than_its_parent_mints() {
+        let (svc, _) = fixture();
+        let parent = parent_doc_with_entries(
+            "aifactory",
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+        );
+        let req = signed_child_with_entries(
+            &parent,
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(100_000),
+            ],
+            vec!["read"],
+            "budget-ok",
+        );
+        assert!(svc.mint_child(req, Some(&parent)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_child_wider_budget_than_its_parent_is_denied() {
+        let (svc, audit) = fixture();
+        let parent = parent_doc_with_entries(
+            "aifactory",
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+        );
+        let req = signed_child_with_entries(
+            &parent,
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_001),
+            ],
+            vec!["read"],
+            "budget-wide",
+        );
+        let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
+        assert!(err.to_string().contains("budget caveat"), "got: {err}");
+        assert!(audit.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_child_omitting_a_parent_budget_caveat_is_denied() {
+        let (svc, audit) = fixture();
+        let parent = parent_doc_with_entries(
+            "aifactory",
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+        );
+        let req = signed_child_with_entries(
+            &parent,
+            vec![ScopeBoundaryEntry::prefix("data.aifactory")],
+            vec!["read"],
+            "budget-omit",
+        );
+        let err = svc.mint_child(req, Some(&parent)).await.unwrap_err();
+        assert!(err.to_string().contains("budget caveat"), "got: {err}");
+        assert!(audit.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fan_out_two_children_each_at_the_parents_exact_budget_both_mint() {
+        let (svc, _) = fixture();
+        let parent = parent_doc_with_entries(
+            "aifactory",
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+        );
+        let req_a = signed_child_with_entries(
+            &parent,
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+            "fan-a",
+        );
+        let req_b = signed_child_with_entries(
+            &parent,
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+            "fan-b",
+        );
+        // This function has no concept of what a sibling already holds — fan-out
+        // safety is the ledger's job, not mint_child's (`crate::budget`'s module
+        // doc). Both mint successfully here.
+        assert!(svc.mint_child(req_a, Some(&parent)).await.is_ok());
+        assert!(svc.mint_child(req_b, Some(&parent)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_budget_only_boundary_does_not_block_resource_access() {
+        let (svc, _) = fixture();
+        // Parent has NO prefix entry at all — unrestricted on the resource axis
+        // — plus a cost cap. The child inherits the cap and narrows nothing else;
+        // it must still be able to request any resource.
+        let parent = parent_doc_with_entries("aifactory", vec![budget_cost(500_000)], vec!["read"]);
+        let req = signed_child_with_entries(
+            &parent,
+            vec![
+                ScopeBoundaryEntry::prefix("data.anything"),
+                budget_cost(100_000),
+            ],
+            vec!["read"],
+            "budget-only-parent",
+        );
+        assert!(svc.mint_child(req, Some(&parent)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn inherit_parent_budgets_helper_produces_a_mintable_child() {
+        let (svc, _) = fixture();
+        let parent = parent_doc_with_entries(
+            "aifactory",
+            vec![
+                ScopeBoundaryEntry::prefix("data.aifactory"),
+                budget_cost(500_000),
+            ],
+            vec!["read"],
+        );
+        let mut child_scope = vec![ScopeBoundaryEntry::prefix("data.aifactory.sub")];
+        child_scope.extend(crate::budget::inherit_parent_budgets(
+            parent.scope_boundary(),
+        ));
+        let req = signed_child_with_entries(&parent, child_scope, vec!["read"], "inherit-ok");
+        assert!(svc.mint_child(req, Some(&parent)).await.is_ok());
     }
 
     #[tokio::test]

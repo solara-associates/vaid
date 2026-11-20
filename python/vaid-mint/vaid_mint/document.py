@@ -314,6 +314,14 @@ def is_well_formed_scope_entry(entry: object) -> bool:
         return False
     if kind == SCOPE_KIND_PREFIX and not isinstance(entry["value"], str):
         return False
+    # Budget kinds (``docs/spec/budget.md``) are the second recognised kind this
+    # build understands, so their shape is enforced here too — the same S.8 rule
+    # the ``prefix`` check above applies, not the S.10 hands-off treatment an
+    # UNRECOGNISED kind gets.
+    from vaid_mint.budget import is_budget_kind, validate_budget_value
+
+    if is_budget_kind(kind) and validate_budget_value(kind, entry["value"]) is not None:
+        return False
     return True
 
 
@@ -370,16 +378,23 @@ def _entry_contains(entry: dict, resource: str) -> bool | None:
 
 
 def entry_is_evaluable(entry: dict) -> bool:
-    """Can ``entry`` be evaluated here at all?
+    """Can ``entry`` be evaluated here at all — i.e. is its kind RECOGNISED by
+    this build, whether or not that kind is resource-shaped?
 
-    DERIVED from :func:`_entry_contains` rather than restated, so a kind cannot be
-    added to one and forgotten in the other. Whether ``_entry_contains`` returns
-    a verdict is a property of the entry alone and never of the resource, which is
-    what makes deriving it from a single arbitrary resource exact rather than
-    approximate; ``test_evaluability_does_not_depend_on_the_resource`` asserts
-    that over every boundary in the conformance vector.
+    Before budget kinds existed this was exactly "can ``_entry_contains``
+    classify it," because ``prefix`` was the only recognised kind. Budget
+    kinds broke that equivalence: they ARE recognised
+    (:func:`vaid_mint.budget.is_recognised_kind`), but they are not
+    resource-shaped (``docs/spec/scope.md`` S.13 constraint 3) and
+    ``_entry_contains`` has no branch for them and gets none. Recognition is
+    therefore its own question now, answered by the union of both registries,
+    and is still independent of the resource.
     """
-    return _entry_contains(entry, "") is not None
+    from vaid_mint.budget import is_recognised_kind
+
+    return isinstance(entry, dict) and isinstance(entry.get("kind"), str) and is_recognised_kind(
+        entry["kind"]
+    )
 
 
 def boundary_is_evaluable(boundary: list[dict]) -> bool:
@@ -455,14 +470,30 @@ def scope_contains(boundary: list[dict], resource: str) -> bool:
     boundary that never passed document verify, so the refusal lives here and not
     only in the standing verdict.
     """
+    from vaid_mint.budget import is_budget_kind
+
     contained = False
+    resource_shaped_entries = 0
     for entry in boundary:
+        if isinstance(entry, dict) and is_budget_kind(entry.get("kind")):
+            # Budget kinds (``docs/spec/budget.md``) answer a different axis —
+            # HOW MUCH, never WHERE — so they are skipped here: they neither
+            # satisfy nor block a resource question, and unlike an entry of an
+            # UNRECOGNISED kind they do NOT trigger the S.10 refusal below,
+            # because this build recognises them, it has simply formed no
+            # opinion about resource reach.
+            continue
         verdict = _entry_contains(entry, resource)
         if verdict is None:
             # S.10: refuse the whole boundary, even with a match already found.
             return False
         contained = contained or verdict
-    return not boundary or contained
+        resource_shaped_entries += 1
+    # Generalises "the list is empty ⇒ ⊤" to "the list has no resource-shaped
+    # entries ⇒ ⊤": a boundary carrying only a cost cap and no `prefix` entry
+    # adds a spending ceiling to an otherwise-unrestricted scope, and must not
+    # become unreachable for every resource as a side effect of stating it.
+    return resource_shaped_entries == 0 or contained
 
 
 def caps_contain(capabilities: list[str], capability: str) -> bool:

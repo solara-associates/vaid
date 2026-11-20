@@ -56,6 +56,7 @@ import {
   isCurrent,
   verifyAttestationAuthenticity,
 } from './attestation.js';
+import { budgetAttenuates } from './budget.js';
 import { isExpired, requireVaidShape, type Vaid } from './document.js';
 import { kernelKeyThumbprint } from './issuerIdentity.js';
 import {
@@ -468,6 +469,13 @@ export function verifyChainAt(
     if (!scopeAttenuates(parent, child.scope_boundary)) {
       return ChainVerification.NotAttenuated;
     }
+    // Budget caveat containment — re-performed here so a THIRD PARTY holding
+    // only a presented chain reaches the same verdict the mint would have
+    // (`docs/spec/budget.md`). Not folded into `scopeAttenuates` — budget
+    // kinds are not resource-shaped.
+    if (!budgetAttenuates(parent.scope_boundary, child.scope_boundary)) {
+      return ChainVerification.NotAttenuated;
+    }
     if (!capsAttenuate(parent, child.capability_set)) {
       return ChainVerification.NotAttenuated;
     }
@@ -533,6 +541,7 @@ export function verifyChainAt(
     // The child may hold no more than the parent consented to...
     if (
       !scopeAttenuatesWithin(attestation.scope_boundary, child.scope_boundary) ||
+      !budgetAttenuates(attestation.scope_boundary, child.scope_boundary) ||
       !capsAttenuateWithin(attestation.capability_set, child.capability_set)
     ) {
       return ChainVerification.NotAttenuated;
@@ -544,6 +553,7 @@ export function verifyChainAt(
     // child would otherwise pass.
     if (
       !scopeAttenuates(parent, attestation.scope_boundary) ||
+      !budgetAttenuates(parent.scope_boundary, attestation.scope_boundary) ||
       !capsAttenuate(parent, attestation.capability_set)
     ) {
       return ChainVerification.NotAttenuated;

@@ -1,0 +1,99 @@
+{
+  "_comment": "Budget scope-kind conformance vector (v1), per docs/spec/budget.md and ADR-0011. Pins the budget_attenuation_reason predicate over two bare scope_boundary arrays — a verdict over given bytes, never bytes over a given input. CARRIES NO DIGEST AND NO SIGNATURE, for the same reason scope_kinds_v1.json does not: there are no canonical bytes to pin, only a verdict. Shared byte-identical across crates/vaid-mint, python/vaid-mint and typescript/vaid-mint; each loads this exact file and must reproduce every expected_reason.",
+  "rule": {
+    "kinds": ["budget_cost_usd_micro", "budget_tokens", "budget_calls", "budget_wall_clock_s"],
+    "singleton_kinds": ["budget_cost_usd_micro", "budget_tokens", "budget_wall_clock_s"],
+    "statement": "A budget-kind entry's value is a JSON object carrying a non-negative integer `limit` (and, for budget_calls only, a non-empty string `scope`). Containment is `child.limit <= parent.limit` for a MATCHING identity (kind, plus scope for budget_calls). A budget identity present in a non-empty parent and absent from the child is budget_escalation (omission is escalation, decided — not the generic S.13 default). A child MAY add a new identity the parent never had: narrowing is always safe and this is always attenuated. A kind not recognised by this build anywhere in either boundary is unknown_budget_kind, and refuses rather than escalates — the same fail-closed posture S.10 gives an unrecognised scope kind."
+  },
+  "attenuation_cases": [
+    {
+      "name": "control: narrower child cost ceiling attenuates",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 100000 } }],
+      "expected_reason": "attenuated",
+      "why": "THE CONTROL. A strictly narrower limit is always permitted."
+    },
+    {
+      "name": "control: equal child cost ceiling attenuates",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "expected_reason": "attenuated",
+      "why": "Equality is containment — a child at exactly the parent's ceiling holds no authority the parent lacks, the same reasoning ADR-0007 gives expiry equality."
+    },
+    {
+      "name": "escalation: wider child cost ceiling",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500001 } }],
+      "expected_reason": "budget_escalation",
+      "why": "A single micro-USD over the parent's declared ceiling is still an escalation; there is no rounding tolerance."
+    },
+    {
+      "name": "escalation: child omits a budget kind the parent carries",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [],
+      "expected_reason": "budget_escalation",
+      "why": "Decided (not the generic S.13 default): an omitted ceiling is an unlimited one, strictly wider than the parent's limited one. A caller that meant to inherit calls inherit_parent_budgets explicitly."
+    },
+    {
+      "name": "safe: child adds a cap the parent never had",
+      "parent_scope": [],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "expected_reason": "attenuated",
+      "why": "A budget entry can only ever narrow (refuse an action, never grant one), so a NEW identity the parent lacked is always safe — unlike the generic S.13 constraint 2 default for an arbitrary future kind, whose semantics are not known to be narrowing-only."
+    },
+    {
+      "name": "fan-out: first child at the parent's exact limit attenuates",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "expected_reason": "attenuated",
+      "why": "Fan-out case 1 of 2 (docs/spec/budget.md B.7): this predicate is pairwise and has no concept of a sibling. Minting several children each at the parent's limit is NOT restricted here."
+    },
+    {
+      "name": "fan-out: second child at the parent's exact limit ALSO attenuates",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "expected_reason": "attenuated",
+      "why": "Fan-out case 2 of 2: identical to the previous case by construction — the point is that THIS function returns the same verdict regardless of how many siblings exist, because it is not where fan-out safety is enforced. Safety comes from the ledger aggregating every descendant's spend against every ancestor's remaining budget (phase 3, outside this conformance surface, the same posture ADR-0001 gives revocation)."
+    },
+    {
+      "name": "per-identity: a total cap narrows while a per-tool cap stays equal — attenuated",
+      "parent_scope": [
+        { "kind": "budget_calls", "value": { "scope": "*", "limit": 500 } },
+        { "kind": "budget_calls", "value": { "scope": "tool:browser.navigate", "limit": 50 } }
+      ],
+      "child_scope": [
+        { "kind": "budget_calls", "value": { "scope": "*", "limit": 100 } },
+        { "kind": "budget_calls", "value": { "scope": "tool:browser.navigate", "limit": 50 } }
+      ],
+      "expected_reason": "attenuated",
+      "why": "budget_calls entries are matched by (kind, scope), not by kind alone — narrowing the total while holding one scoped entry steady is still attenuated."
+    },
+    {
+      "name": "per-identity: narrowing the total but widening ONE scoped entry is still escalation",
+      "parent_scope": [
+        { "kind": "budget_calls", "value": { "scope": "*", "limit": 500 } },
+        { "kind": "budget_calls", "value": { "scope": "tool:browser.navigate", "limit": 50 } }
+      ],
+      "child_scope": [
+        { "kind": "budget_calls", "value": { "scope": "*", "limit": 100 } },
+        { "kind": "budget_calls", "value": { "scope": "tool:browser.navigate", "limit": 51 } }
+      ],
+      "expected_reason": "budget_escalation",
+      "why": "Each (kind, scope) identity is checked independently; a narrower total cannot offset a wider per-tool one."
+    },
+    {
+      "name": "undecidable: an unrecognised kind in the child",
+      "parent_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "child_scope": [{ "kind": "future_kind_v9", "value": "whatever" }],
+      "expected_reason": "unknown_budget_kind",
+      "why": "A kind this build has never heard of refuses rather than escalates — the verifier has formed no opinion about width, which is a different accusation from 'this is wider' (S.10's distinction, carried over to budget)."
+    },
+    {
+      "name": "undecidable: an unrecognised kind in the parent",
+      "parent_scope": [{ "kind": "future_kind_v9", "value": "whatever" }],
+      "child_scope": [{ "kind": "budget_cost_usd_micro", "value": { "limit": 500000 } }],
+      "expected_reason": "unknown_budget_kind",
+      "why": "Both sides are checked for recognition, not only the child — an unreadable parent bounds nothing this implementation can compute either."
+    }
+  ]
+}

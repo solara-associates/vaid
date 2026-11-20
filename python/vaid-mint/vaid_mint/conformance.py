@@ -707,6 +707,47 @@ def check_verdict(v: dict) -> None:
 #: rather than naming a fixed set, and it fails in BOTH directions — see
 #: :func:`run`. Adding a vector to the package without adding it here is a hard
 #: failure, by design.
+def check_budget(v: dict) -> None:
+    """``budget_v1.json`` — budget scope kinds (``docs/spec/budget.md``, ADR-0011).
+
+    Mirrors :func:`check_scope_kinds`'s structure but has a single surface:
+    attenuation of one typed boundary's budget entries within another's. There
+    is no containment surface here (budget kinds are not resource-shaped —
+    ``vaid_mint.budget``'s module doc) and no shape surface, because the shape
+    gate for a budget-kind entry is exercised through the SAME
+    ``is_well_formed_scope_entry`` path :func:`check_scope_kinds` already covers.
+    """
+    from vaid_mint.budget import RECOGNISED_BUDGET_KINDS, budget_attenuation_reason
+
+    declared = v.get("rule", {}).get("kinds")
+    if declared is None:
+        raise ConformanceError("budget vector declares no `rule.kinds`")
+    built = list(RECOGNISED_BUDGET_KINDS)
+    if declared != built:
+        raise ConformanceError(
+            f"recognised budget kinds disagree: vector declares {declared!r}, this "
+            f"build recognises {built!r} — a kind in one and not the other is a "
+            "fail-closed rule that fails open in whichever direction the gap runs"
+        )
+
+    cases = v.get("attenuation_cases") or []
+    if not cases:
+        raise ConformanceError("budget vector carries no attenuation_cases")
+    seen_reasons: set[str] = set()
+    for case in cases:
+        name = case["name"]
+        reason = budget_attenuation_reason(case["parent_scope"], case["child_scope"])
+        if reason.value != case["expected_reason"]:
+            raise ConformanceError(
+                f"budget case {name!r}: expected {case['expected_reason']!r}, got "
+                f"{reason.value!r}"
+            )
+        seen_reasons.add(reason.value)
+    for reason in ("attenuated", "budget_escalation", "unknown_budget_kind"):
+        if reason not in seen_reasons:
+            raise ConformanceError(f"budget vector never exercises reason {reason!r}")
+
+
 VECTOR_CHECKS = {
     "mint_v1.json": [
         check_document_digest,
@@ -722,6 +763,7 @@ VECTOR_CHECKS = {
     "roundtrip_v1.json": [check_roundtrip],
     "verdict_v1.json": [check_verdict],
     "scope_kinds_v1.json": [check_scope_kinds],
+    "budget_v1.json": [check_budget],
 }
 
 

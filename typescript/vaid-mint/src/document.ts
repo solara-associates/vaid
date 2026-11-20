@@ -36,6 +36,7 @@ import {
   type VaidId,
 } from 'vaid-pop';
 
+import { isBudgetKind, isRecognisedKind, validateBudgetValue } from './budget.js';
 import { MalformedDocumentError } from './error.js';
 
 export type { Rfc3339Utc, TenantId, VaidId } from 'vaid-pop';
@@ -397,6 +398,11 @@ export function isWellFormedScopeEntry(entry: unknown): entry is ScopeBoundaryEn
   const { kind, value } = entry as { kind: unknown; value: unknown };
   if (typeof kind !== 'string' || kind === '') return false;
   if (kind === SCOPE_KIND_PREFIX && typeof value !== 'string') return false;
+  // Budget kinds (`docs/spec/budget.md`) are the second recognised kind this
+  // build understands, so their shape is enforced here too — the same S.8
+  // rule the `prefix` check above applies, not the S.10 hands-off treatment
+  // an UNRECOGNISED kind gets.
+  if (isBudgetKind(kind) && validateBudgetValue(kind, value) !== null) return false;
   return true;
 }
 
@@ -451,17 +457,19 @@ function entryContains(entry: ScopeBoundaryEntry, resource: string): boolean | n
 }
 
 /**
- * Can `entry` be evaluated here at all?
+ * Can `entry` be evaluated here at all — i.e. is its kind RECOGNISED by this
+ * build, whether or not that kind is resource-shaped?
  *
- * DERIVED from {@link entryContains} rather than restated, so a kind cannot be
- * added to one and forgotten in the other. Whether `entryContains` returns a
- * verdict is a property of the entry alone and never of the resource, which is
- * what makes deriving it from a single arbitrary resource exact rather than
- * approximate; `evaluability does not depend on the resource` asserts that over
- * every boundary in the conformance vector.
+ * Before budget kinds existed this was exactly "can `entryContains` classify
+ * it," because `prefix` was the only recognised kind. Budget kinds broke that
+ * equivalence: they ARE recognised ({@link isRecognisedKind}), but they are not
+ * resource-shaped (`docs/spec/scope.md` S.13 constraint 3) and `entryContains`
+ * has no branch for them and gets none. Recognition is therefore its own
+ * question now, answered by the union of both registries, and is still
+ * independent of the resource.
  */
 export function entryIsEvaluable(entry: ScopeBoundaryEntry): boolean {
-  return entryContains(entry, '') !== null;
+  return !!entry && typeof entry.kind === 'string' && isRecognisedKind(entry.kind);
 }
 
 /**
@@ -512,13 +520,28 @@ export function scopeContains(
   resource: string,
 ): boolean {
   let contained = false;
+  let resourceShapedEntries = 0;
   for (const entry of boundary) {
+    if (entry && typeof entry.kind === 'string' && isBudgetKind(entry.kind)) {
+      // Budget kinds (`docs/spec/budget.md`) answer a different axis — HOW
+      // MUCH, never WHERE — so they are skipped here: they neither satisfy
+      // nor block a resource question, and unlike an entry of an
+      // UNRECOGNISED kind they do NOT trigger the S.10 refusal below,
+      // because this build recognises them, it has simply formed no opinion
+      // about resource reach.
+      continue;
+    }
     const verdict = entryContains(entry, resource);
     // S.10: refuse the whole boundary, even with a match already found.
     if (verdict === null) return false;
     contained = contained || verdict;
+    resourceShapedEntries += 1;
   }
-  return boundary.length === 0 || contained;
+  // Generalises "the list is empty ⇒ ⊤" to "the list has no resource-shaped
+  // entries ⇒ ⊤": a boundary carrying only a cost cap and no `prefix` entry
+  // adds a spending ceiling to an otherwise-unrestricted scope, and must not
+  // become unreachable for every resource as a side effect of stating it.
+  return resourceShapedEntries === 0 || contained;
 }
 
 /**

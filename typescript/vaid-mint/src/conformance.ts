@@ -30,6 +30,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 
+import { RECOGNISED_BUDGET_KINDS, budgetAttenuationReason } from './budget.js';
 import {
   canonicalize,
   canonicalizeToString,
@@ -713,6 +714,62 @@ export function checkScopeKinds(v: ScopeKindsVector): void {
   }
 }
 
+/** A budget scope-kind vector: a single attenuation surface, no digest. */
+interface BudgetVector {
+  rule: { kinds: string[] };
+  attenuation_cases: {
+    name: string;
+    parent_scope: ScopeBoundaryEntry[];
+    child_scope: ScopeBoundaryEntry[];
+    expected_reason: string;
+    why: string;
+  }[];
+}
+
+/**
+ * Check the budget scope-kind vector (`docs/spec/budget.md`, ADR-0011).
+ *
+ * Mirrors {@link checkScopeKinds}'s structure but has a single surface:
+ * attenuation of one typed boundary's budget entries within another's. There
+ * is no containment surface here (budget kinds are not resource-shaped — see
+ * `budget.ts`'s module doc) and no shape surface, because the shape gate for a
+ * budget-kind entry is exercised through the SAME `isWellFormedScopeEntry`
+ * path {@link checkScopeKinds} already covers.
+ */
+export function checkBudget(v: BudgetVector): void {
+  const declared = v.rule?.kinds;
+  if (declared === undefined) {
+    throw new ConformanceError('budget vector declares no `rule.kinds`');
+  }
+  const built = [...RECOGNISED_BUDGET_KINDS];
+  if (JSON.stringify(declared) !== JSON.stringify(built)) {
+    throw new ConformanceError(
+      `recognised budget kinds disagree: vector declares ${JSON.stringify(declared)}, ` +
+        `this build recognises ${JSON.stringify(built)} — a kind in one and not the ` +
+        'other is a fail-closed rule that fails open in whichever direction the gap runs',
+    );
+  }
+
+  if (!v.attenuation_cases?.length) {
+    throw new ConformanceError('budget vector carries no attenuation_cases');
+  }
+  const seenReasons = new Set<string>();
+  for (const c of v.attenuation_cases) {
+    const reason = budgetAttenuationReason(c.parent_scope, c.child_scope);
+    if ((reason as string) !== c.expected_reason) {
+      throw new ConformanceError(
+        `budget case "${c.name}": expected "${c.expected_reason}", got "${reason}" — ${c.why}`,
+      );
+    }
+    seenReasons.add(reason as string);
+  }
+  for (const reason of ['attenuated', 'budget_escalation', 'unknown_budget_kind']) {
+    if (!seenReasons.has(reason)) {
+      throw new ConformanceError(`budget vector never exercises reason "${reason}"`);
+    }
+  }
+}
+
 /** A graded-verdict vector: predicate cases over two surfaces, no digest. */
 interface VerdictVector {
   reasons: { standing: string[]; attenuation: string[] };
@@ -895,6 +952,7 @@ export const VECTOR_CHECKS: Record<string, (v: never) => void> = {
   'attestation_v1.json': (v: AttestationVector) => checkAttestation(v),
   'scope_v1.json': (v: ScopeVector) => checkScope(v),
   'scope_kinds_v1.json': (v: ScopeKindsVector) => checkScopeKinds(v),
+  'budget_v1.json': (v: BudgetVector) => checkBudget(v),
   'roundtrip_v1.json': (v: RoundtripVector) => checkRoundtrip(v),
   'verdict_v1.json': (v: VerdictVector) => checkVerdict(v),
 } as Record<string, (v: never) => void>;

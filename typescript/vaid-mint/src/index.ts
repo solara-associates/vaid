@@ -63,6 +63,23 @@ export {
 export { DenyAll, PermitAll, type AuthorizationGate } from './authz.js';
 
 export {
+  BUDGET_KIND_CALLS,
+  BUDGET_KIND_COST_USD_MICRO,
+  BUDGET_KIND_TOKENS,
+  BUDGET_KIND_WALL_CLOCK_S,
+  RECOGNISED_BUDGET_KINDS,
+  BudgetAttenuationReason,
+  budgetAttenuates,
+  budgetAttenuationReason,
+  budgetEntry,
+  inheritParentBudgets,
+  isBudgetKind,
+  isRecognisedKind,
+  validateBudgetBoundary,
+  validateBudgetValue,
+} from './budget.js';
+
+export {
   buildUnsignedVaidDocument,
   canonicalVaidSigningBytes,
   computeLineageHash,

@@ -107,6 +107,7 @@
 pub mod attestation;
 pub mod audit;
 pub mod authz;
+pub mod budget;
 pub mod chain;
 pub mod document;
 pub mod error;

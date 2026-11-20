@@ -146,14 +146,24 @@ def scope_attenuation_reason(
     """
     if not boundary_is_evaluable(parent_scope) or not boundary_is_evaluable(child_scope):
         return AttenuationReason.UNKNOWN_SCOPE_KIND
-    if not child_scope:
-        # Child wants ⊤; allowed only if the parent is also ⊤.
-        attenuates = not parent_scope
+
+    # Budget-kind entries (``docs/spec/budget.md``) are not resource-shaped and
+    # are excluded from this walk entirely — ``budget_attenuation_reason`` is
+    # the separate, additional check for them (the same "one matcher,
+    # independent call sites" pattern ADR-0007 uses for ``expires_at``).
+    from vaid_mint.budget import is_budget_kind
+
+    child_resource_entries = [e for e in child_scope if not is_budget_kind(e.get("kind"))]
+    parent_resource_entries_is_empty = all(is_budget_kind(e.get("kind")) for e in parent_scope)
+
+    if not child_resource_entries:
+        # Child wants ⊤ on the resource axis; allowed only if the parent is too.
+        attenuates = parent_resource_entries_is_empty
     else:
         attenuates = all(
             (resource := entry_claimed_resource(e)) is not None
             and scope_contains(parent_scope, resource)
-            for e in child_scope
+            for e in child_resource_entries
         )
     return (
         AttenuationReason.ATTENUATED if attenuates else AttenuationReason.SCOPE_ESCALATION
@@ -467,6 +477,36 @@ class MintService:
             raise UnauthorizedError(
                 "child scope_boundary exceeds the parent's — least-privilege "
                 "attenuation denied"
+            )
+
+        # (4a) The boundary itself must be a well-formed set of budget caveats
+        # before it is compared to anything (``docs/spec/budget.md`` B.3).
+        from vaid_mint.budget import (
+            BudgetAttenuationReason,
+            budget_attenuation_reason,
+            validate_budget_boundary,
+        )
+
+        malformed = validate_budget_boundary(seed.scope_boundary)
+        if malformed is not None:
+            raise UnauthorizedError(f"child scope_boundary is malformed: {malformed}")
+
+        # (4b) Budget attenuation — every budget caveat the parent carries must
+        # be matched, at no wider a limit, by the child; a child MAY add a new
+        # budget caveat the parent never had. A separate check from (4) because
+        # budget kinds are not resource-shaped — see ``vaid_mint.budget``.
+        reason = budget_attenuation_reason(parent["scope_boundary"], seed.scope_boundary)
+        if reason is BudgetAttenuationReason.BUDGET_ESCALATION:
+            raise UnauthorizedError(
+                "child scope_boundary omits or widens a budget caveat the parent "
+                "carries — least-privilege attenuation denied. Use "
+                "inherit_parent_budgets to carry the parent's limits forward unchanged"
+            )
+        if reason is BudgetAttenuationReason.UNKNOWN_BUDGET_KIND:
+            raise UnauthorizedError(
+                "child or parent scope_boundary carries a scope_boundary kind this "
+                "mint does not recognise — budget containment cannot be computed, "
+                "fail-closed"
             )
 
         # (5) Capability attenuation — single matcher.

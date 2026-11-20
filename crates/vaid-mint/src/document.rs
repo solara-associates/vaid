@@ -668,6 +668,13 @@ fn validate_scope_entry(kind: &str, value: &serde_json::Value) -> Result<(), Str
             "scope_boundary entry of kind `{SCOPE_KIND_PREFIX}` must carry a string `value`"
         ));
     }
+    // Budget kinds (`docs/spec/budget.md`) are the second recognised kind this
+    // build understands, so their shape is enforced here too — the same S.8
+    // rule the `prefix` arm above applies, not the S.10 hands-off treatment an
+    // UNRECOGNISED kind gets.
+    if crate::budget::is_budget_kind(kind) {
+        crate::budget::validate_budget_value(kind, value)?;
+    }
     Ok(())
 }
 
@@ -735,16 +742,22 @@ pub fn entry_claimed_resource(entry: &ScopeBoundaryEntry) -> Option<&str> {
     }
 }
 
-/// Can `entry` be evaluated here at all?
+/// Can `entry` be evaluated here at all — i.e. is its kind RECOGNISED by this
+/// build, whether or not that kind is resource-shaped?
 ///
-/// DERIVED from [`entry_contains`] rather than restated, so a kind cannot be
-/// added to one and forgotten in the other. Whether `entry_contains` returns
-/// `Some` is a property of the entry alone and never of the resource, which is
-/// what makes deriving it from a single arbitrary resource exact rather than
-/// approximate. `evaluability_does_not_depend_on_the_resource` asserts that
-/// over every boundary in the conformance vector.
+/// Before budget kinds existed this was exactly "can [`entry_contains`]
+/// classify it," because `prefix` was the only recognised kind and recognition
+/// and resource-shapedness were the same question. Budget kinds broke that
+/// equivalence: they ARE recognised (`crate::budget::is_recognised_kind`), but
+/// they are not resource-shaped (`docs/spec/scope.md` S.13 constraint 3) and
+/// [`entry_contains`] has no arm for them and gets none — see `crate::budget`'s
+/// module doc for why the resource matcher does not grow a kind it cannot
+/// meaningfully answer for. Recognition is therefore its own question now,
+/// answered by the union of both registries, and is still independent of the
+/// resource — `evaluability_does_not_depend_on_the_resource` still holds
+/// trivially, since this no longer reads a resource at all.
 fn entry_is_evaluable(entry: &ScopeBoundaryEntry) -> bool {
-    entry_contains(entry, "").is_some()
+    crate::budget::is_recognised_kind(&entry.kind)
 }
 
 /// Can every entry of `boundary` be evaluated here (spec S.10)?
@@ -816,17 +829,38 @@ pub fn boundary_is_evaluable(boundary: &[ScopeBoundaryEntry]) -> bool {
 /// Formulated with only `==`, `starts_with`, `ends_with` and concatenation — no
 /// character indexing — so Rust (bytes), Python (code points) and TypeScript
 /// (UTF-16) cannot diverge on a multi-byte boundary.
+///
+/// # Budget-kind entries are transparent here (`docs/spec/budget.md`)
+///
+/// A recognised budget-kind entry (`crate::budget::is_budget_kind`) answers a
+/// different axis entirely — *how much*, never *where* (S.12 extended) — so it
+/// is skipped by this loop: it neither satisfies nor blocks a resource
+/// containment question, and unlike an entry of an UNRECOGNISED kind it does
+/// NOT trigger the S.10 refusal below, because this build does recognise it,
+/// it has simply formed no opinion about resource reach. The "is this boundary
+/// unrestricted" base case generalises from "the list is empty" to "the list
+/// has no resource-shaped entries" for the same reason an empty list is ⊤: a
+/// boundary carrying only a cost cap and no `prefix` entry adds a spending
+/// ceiling to an otherwise-unrestricted scope, and must not become
+/// unreachable for every resource as a side effect of stating that ceiling.
 pub fn scope_contains(boundary: &[ScopeBoundaryEntry], resource: &str) -> bool {
     let mut contained = false;
+    let mut resource_shaped_entries = 0usize;
     for entry in boundary {
+        if crate::budget::is_budget_kind(&entry.kind) {
+            continue;
+        }
         match entry_contains(entry, resource) {
             // S.10: refuse the whole boundary, even with a match already found.
             None => return false,
-            Some(true) => contained = true,
-            Some(false) => {}
+            Some(true) => {
+                contained = true;
+                resource_shaped_entries += 1;
+            }
+            Some(false) => resource_shaped_entries += 1,
         }
     }
-    boundary.is_empty() || contained
+    resource_shaped_entries == 0 || contained
 }
 
 /// Does a single `prefix` value contain `resource`? The one-entry core of

@@ -20,6 +20,12 @@
 import { utcWholeSecondRfc3339, verifySignedPayload, type Rfc3339Utc } from 'vaid-pop';
 
 import type { AuditSink } from './audit.js';
+import {
+  BudgetAttenuationReason,
+  budgetAttenuationReason,
+  isBudgetKind,
+  validateBudgetBoundary,
+} from './budget.js';
 import { PermitAll, type AuthorizationGate } from './authz.js';
 import {
   capsContain,
@@ -228,11 +234,21 @@ export function scopeAttenuationReason(
   if (!boundaryIsEvaluable(parentScope) || !boundaryIsEvaluable(childScope)) {
     return AttenuationReason.UnknownScopeKind;
   }
+  // Budget-kind entries (`docs/spec/budget.md`) are not resource-shaped and
+  // are excluded from this walk entirely — `budgetAttenuationReason` is the
+  // separate, additional check for them (the same "one matcher, independent
+  // call sites" pattern ADR-0007 uses for `expires_at`).
+  const childResourceEntries = childScope.filter(
+    (e) => !(e && typeof e.kind === 'string' && isBudgetKind(e.kind)),
+  );
+  const parentResourceEntriesIsEmpty = parentScope.every(
+    (e) => e && typeof e.kind === 'string' && isBudgetKind(e.kind),
+  );
   const attenuates =
-    childScope.length === 0
-      ? // Child wants ⊤; allowed only if the parent is also ⊤.
-        parentScope.length === 0
-      : childScope.every((entry) => {
+    childResourceEntries.length === 0
+      ? // Child wants ⊤ on the resource axis; allowed only if the parent is too.
+        parentResourceEntriesIsEmpty
+      : childResourceEntries.every((entry) => {
           const resource = entryClaimedResource(entry);
           return resource !== null && scopeContains(parentScope, resource);
         });
@@ -594,6 +610,32 @@ export class MintService {
     if (!scopeAttenuates(parent, attributes.scopeBoundary)) {
       throw new UnauthorizedError(
         "child scope_boundary exceeds the parent's — least-privilege attenuation denied",
+      );
+    }
+
+    // (4a) The boundary itself must be a well-formed set of budget caveats
+    // before it is compared to anything (`docs/spec/budget.md` B.3).
+    const malformed = validateBudgetBoundary(attributes.scopeBoundary);
+    if (malformed !== null) {
+      throw new UnauthorizedError(`child scope_boundary is malformed: ${malformed}`);
+    }
+
+    // (4b) Budget attenuation — every budget caveat the parent carries must
+    // be matched, at no wider a limit, by the child; a child MAY add a new
+    // budget caveat the parent never had. A separate check from (4) because
+    // budget kinds are not resource-shaped — see `budget.ts`.
+    const budgetReason = budgetAttenuationReason(parent.scope_boundary, attributes.scopeBoundary);
+    if (budgetReason === BudgetAttenuationReason.BudgetEscalation) {
+      throw new UnauthorizedError(
+        "child scope_boundary omits or widens a budget caveat the parent carries — " +
+          'least-privilege attenuation denied. Use inheritParentBudgets to carry the ' +
+          "parent's limits forward unchanged",
+      );
+    }
+    if (budgetReason === BudgetAttenuationReason.UnknownBudgetKind) {
+      throw new UnauthorizedError(
+        'child or parent scope_boundary carries a scope_boundary kind this mint does ' +
+          'not recognise — budget containment cannot be computed, fail-closed',
       );
     }
 
