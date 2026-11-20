@@ -99,13 +99,15 @@ distinguishes *absent* state (`Unavailable`) from *initialised-and-empty*
 (`NotRevoked`). The hosted product additionally offers a durable, hash-chained
 revocation store; the open crate gives you the seam to plug your own into.
 
-### Unguarded defaults: authorization and delegation
+### Defaults: authorization and delegation
 
-This is a reference implementation with two deliberate, **unguarded** defaults:
+This is a reference implementation with one deny-by-default gate and one
+intentionally ungated path:
 
-1. **`mint_root` has no authorization gate by default (`PermitAll`).** Anyone who
-   can call this code can mint a root VAID. Supply a real `AuthorizationGate` for
-   anything beyond local experimentation.
+1. **`mint_root` denies every request by default (`DenyAll`).** Supply a real
+   `AuthorizationGate` via `MintService::with_authorization` for anything beyond
+   local experimentation; the explicit, clearly-named `InsecurePermitAll` opt-in
+   exists for local self-hosting, tests and demos — never for production.
 2. **`mint_child` is intentionally ungated — attenuation *is* the authorization.**
    Any holder of a valid parent VAID can mint children from it; a child can only
    *narrow* scope/capabilities relative to its parent, never widen
@@ -113,9 +115,8 @@ This is a reference implementation with two deliberate, **unguarded** defaults:
    boundary for delegation here. **Treat parent-VAID custody with the same care as
    a credential.**
 
-Neither of these is a security recommendation for production use — they are the
-honest defaults of a self-hostable reference mint. See the sections below (and the
-`AuthorizationGate` / attenuation notes) for where each is enforced in code.
+See the sections below (and the `AuthorizationGate` / attenuation notes) for
+where each is enforced in code.
 
 ## The split (why this is only the engine)
 
@@ -134,15 +135,15 @@ and non-durable. See the **Trust model** section above for how to mitigate it.
 | Audit | in-memory / no-op sink | audit-of-record |
 | Policy / mesh / federation | — | control plane |
 
-### `mint_root` has no authorization gate by default
+### `mint_root` denies by default
 
 `mint_root` is gated by an explicit **`AuthorizationGate` seam that defaults to
-`PermitAll`** — mirroring how `AuditSink` defaults to an in-memory/no-op sink.
-This is a **reference-implementation choice, not a security recommendation**:
-with `PermitAll` in place, anyone who can reach the mint can issue a root VAID.
-Production deployments should supply a real gate via
-`MintService::with_authorization(issuer, audit, gate)`. The gap is made *visible
-as a seam* rather than silently absent.
+`DenyAll`** — deny-by-default, mirroring how `AuditSink` defaults to an
+in-memory/no-op sink. Production deployments should supply a real gate via
+`MintService::with_authorization(issuer, audit, gate)`. For local self-hosting,
+tests, or demos that intentionally want every root mint to succeed, opt in
+explicitly with `InsecurePermitAll` — **insecure, never for production**: with it
+in place, anyone who can reach the mint can issue a root VAID.
 
 `mint_child` is intentionally **ungated because attenuation *is* the
 authorization**: any holder of a valid parent VAID can mint children from it, and
@@ -211,7 +212,7 @@ other.
 ## Status
 
 Rust + Python reference complete (`mint_root` + `mint_child`, incl. the
-`AuthorizationGate`/`PermitAll` seam). Byte-identity of the signed VAID document
+`AuthorizationGate`/`DenyAll` seam). Byte-identity of the signed VAID document
 across both languages is locked by the frozen `mint_v1.json` vector (Rust
 `tests/mint_conformance.rs` and Python `vaid_mint/conformance.py` both reproduce
 it; a CI drift-check enforces the two vendored copies are identical). Self-consistent

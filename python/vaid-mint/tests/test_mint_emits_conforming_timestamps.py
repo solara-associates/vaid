@@ -24,6 +24,7 @@ import re
 from vaid_mint.document import prefix_entry
 from vaid_mint import (
     InMemoryAudit,
+    InsecurePermitAll,
     MintService,
     ReferenceIssuer,
     VaidSeed,
@@ -37,7 +38,7 @@ E6 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 def _mint_one() -> dict:
     issuer = ReferenceIssuer.ephemeral(24, "vaid.example")
-    mint = MintService(issuer, InMemoryAudit())
+    mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
     return mint.mint_root(
         VaidSeed(
             agent_class="conformance",

@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from vaid_mint import (
     InMemoryAudit,
+    InsecurePermitAll,
     MintService,
     ReferenceIssuer,
     VaidSeed,
@@ -78,7 +79,7 @@ def issuer(kernel_key):
 
 @pytest.fixture
 def mint(issuer):
-    return MintService(issuer, InMemoryAudit())
+    return MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
 
 
 #: The trust domain `issuer` stamps into every document it mints, and the one
@@ -115,7 +116,7 @@ def three_hop_chain(issuer):
     `mint` fixture's own default is left alone for everything else that uses
     it.
     """
-    mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+    mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll(), max_delegation_depth=2)
     root = mint.mint_root(
         VaidSeed(
             agent_class="orchestrator",

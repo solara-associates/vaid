@@ -25,6 +25,7 @@ from vaid_mint.document import (
 from vaid_mint import (
     DenyAll,
     InMemoryAudit,
+    InsecurePermitAll,
     MintService,
     ReferenceIssuer,
     VaidSeed,
@@ -63,7 +64,11 @@ def fixture():
     # so `verify_vaid` would fail closed on UNAVAILABLE regardless of what the child's
     # scope says — a rejection for the wrong reason.
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
-    return MintService(issuer, audit), audit, issuer
+    # Most tests in this module exercise mint_root/mint_child behavior other than
+    # the authorization gate itself, so they opt into InsecurePermitAll
+    # explicitly; the gate's own deny-by-default and explicit-gate behavior is
+    # covered by dedicated tests below.
+    return MintService(issuer, audit, authz=InsecurePermitAll()), audit, issuer
 
 
 def holder_key() -> Ed25519PrivateKey:
@@ -207,9 +212,37 @@ def test_root_mint_denied_by_gate_has_no_side_effects():
     audit = InMemoryAudit()
     svc = MintService(ReferenceIssuer.ephemeral(1, "vaid.example"), audit, DenyAll())
     seed = VaidSeed(agent_class="x", version="1.0.0", tenant_id="acme")
-    with pytest.raises(UnauthorizedError, match="denied by gate"):
+    with pytest.raises(UnauthorizedError, match="deny-by-default"):
         svc.mint_root(seed)
     assert audit.is_empty()
+
+
+def test_mint_service_denies_root_mint_by_default():
+    # No explicit `authz=` — must deny-by-default: no caller gets root-mint
+    # authority just by omitting a gate.
+    audit = InMemoryAudit()
+    svc = MintService(ReferenceIssuer.ephemeral(1, "vaid.example"), audit)
+    seed = VaidSeed(agent_class="x", version="1.0.0", tenant_id="acme")
+    with pytest.raises(UnauthorizedError, match="deny-by-default"):
+        svc.mint_root(seed)
+    assert audit.is_empty()
+
+
+def test_insecure_permit_all_opt_in_still_permits_root_mint():
+    audit = InMemoryAudit()
+    svc = MintService(
+        ReferenceIssuer.ephemeral(1, "vaid.example"), audit, InsecurePermitAll()
+    )
+    seed = VaidSeed(
+        agent_class="researcher",
+        version="1.0.0",
+        tenant_id="acme",
+        scope_boundary=[prefix_entry("data.governance")],
+        capability_set=["read.documents"],
+    )
+    vaid = svc.mint_root(seed)
+    assert vaid["agent_class"] == "researcher"
+    assert len(audit.entries) == 1
 
 
 # ── mint_child — attenuated delegation ──
@@ -357,7 +390,9 @@ def test_default_depth_mints_a_root_child_but_refuses_a_grandchild():
 
 def test_a_root_child_is_always_allowed_regardless_of_configured_depth():
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
-    svc = MintService(issuer, InMemoryAudit(), max_delegation_depth=1)
+    svc = MintService(
+        issuer, InMemoryAudit(), authz=InsecurePermitAll(), max_delegation_depth=1
+    )
     root = mint_real_root(svc, "aifactory")
     child = mint_real_child(svc, root, "root-to-child-explicit-1")
     assert child["parent_vaid"] == root["vaid_id"]
@@ -365,7 +400,9 @@ def test_a_root_child_is_always_allowed_regardless_of_configured_depth():
 
 def test_depth_2_mints_a_grandchild_but_refuses_a_great_grandchild():
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
-    svc = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+    svc = MintService(
+        issuer, InMemoryAudit(), authz=InsecurePermitAll(), max_delegation_depth=2
+    )
     root = mint_real_root(svc, "aifactory")
     child = mint_real_child(svc, root, "depth2-root-to-child")
     # Grandchild (depth 2): allowed under max_delegation_depth = 2.
@@ -508,7 +545,7 @@ def test_depth_1_refuses_when_the_grandparent_cannot_be_resolved_after_a_restart
     refusal."""
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
     audit = InMemoryAudit()
-    svc = MintService(issuer, audit)  # default depth 1
+    svc = MintService(issuer, audit, authz=InsecurePermitAll())  # default depth 1
     root = mint_real_root(svc, "aifactory")
     child = mint_real_child(svc, root, "restart-root-to-child")
 
@@ -655,7 +692,7 @@ def test_minted_child_verifies_and_is_contained_by_parent():
     # Vouching: the subject is attenuation and scope containment, not the 0.9.0
     # fail-closed default (see test_revocation.py::test_cross_language_scenarios).
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
-    svc = MintService(issuer, audit)
+    svc = MintService(issuer, audit, authz=InsecurePermitAll())
     # Mint a REAL parent root through the issuer, so its lineage is recorded and the
     # child's ancestry is resolvable at verification (R.4.2). A synthetic parent
     # never minted here would — correctly — leave the child's lineage incomplete and
@@ -733,7 +770,7 @@ def test_delegation_works_across_a_second_boundary():
     not assumed — this test sleeps past a second boundary."""
     audit = InMemoryAudit()
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
-    svc = MintService(issuer, audit)
+    svc = MintService(issuer, audit, authz=InsecurePermitAll())
     parent = svc.mint_root(
         VaidSeed(
             agent_class="parent",
@@ -831,7 +868,7 @@ def test_the_root_path_is_unclamped():
     a test because a clamp applied indiscriminately would silently shorten every
     root mint in the estate."""
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example")
-    svc = MintService(issuer, InMemoryAudit())
+    svc = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
 
     root = svc.mint_root(
         VaidSeed(

@@ -8,7 +8,7 @@ Run: python examples/quickstart.py
 
 import asyncio
 import os
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed, prefix_entry
+from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed, prefix_entry
 from vaid_mint.revocation import InMemoryRevocationList
 from vaid_adk import ToolAuthorization, TrustedIssuers, VaidAuthPlugin, VaidPresentation
 from google.adk.agents import BaseAgent
@@ -43,7 +43,11 @@ async def main():
     # Ordinary vaid_mint: mint a root VAID, then a child attenuated to
     # read-only access over data.orders (no data.payments, no write).
     issuer = ReferenceIssuer.from_seed(os.urandom(32), vaid_ttl_hours=1, trust_domain=TRUST_DOMAIN)
-    mint = MintService(issuer, InMemoryAudit())
+    # `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+    # `InsecurePermitAll` is asked for BY NAME here — fine for this offline demo,
+    # never for production. A production deployment supplies a real
+    # `AuthorizationGate` instead.
+    mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
     root = mint.mint_root(VaidSeed(
         agent_class="worker", version="1.0.0", tenant_id="acme",
         scope_boundary=[prefix_entry("data.orders")], capability_set=["read"],

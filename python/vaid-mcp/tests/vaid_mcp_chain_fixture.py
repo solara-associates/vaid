@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from vaid_pop import canonical_request_signing_bytes, utc_whole_second_rfc3339
 
 from vaid_mint.audit import NoopAudit
+from vaid_mint.authz import InsecurePermitAll
 from vaid_mint.document import prefix_entry
 from vaid_mint.issuer import ReferenceIssuer
 from vaid_mint.mint import MintService
@@ -47,7 +48,7 @@ class ChainFixture:
 
     def __init__(self, ttl_hours: int = 1) -> None:
         self.issuer = ReferenceIssuer.ephemeral(ttl_hours, "vaid-mcp-test.example").assuming_nothing_revoked()
-        self.mint = MintService(self.issuer, NoopAudit())
+        self.mint = MintService(self.issuer, NoopAudit(), authz=InsecurePermitAll())
         self.public_key = self.issuer.kernel_public_key()
 
         self.root = self.mint.mint_root(

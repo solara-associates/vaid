@@ -16,7 +16,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.x509.oid import NameOID
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed, prefix_entry
+from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed, prefix_entry
 from vaid_pop import canonical_request_signing_bytes, utc_whole_second_rfc3339
 from vaid_mint import build_mint_pop_payload
 from vaid_mint.mint_types import MintPop
@@ -100,8 +100,11 @@ def main() -> None:
     # Mint-side setup: an ephemeral reference issuer and the SPIFFE mint.
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
     audit = InMemoryAudit()
+    # `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+    # `InsecurePermitAll` is asked for BY NAME here — fine for this quickstart,
+    # never for production, where a real `AuthorizationGate` is supplied instead.
     spiffe_mint = SpiffeMint(
-        MintService(issuer, audit),
+        MintService(issuer, audit, authz=InsecurePermitAll()),
         audit,
         trust_bundle=[trust_bundle_der],
         expected_trust_domain=TRUST_DOMAIN,

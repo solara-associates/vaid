@@ -34,7 +34,7 @@ ESM only, and typed. Node ≥ 20.19; CommonJS consumers on that version can
 `require('vaid-mint')` via `require(esm)`.
 
 ```ts
-import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
+import { InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer } from 'vaid-mint';
 
 // `assumingNothingRevoked()` is the pre-0.9.0 default, asked for BY NAME. Since
 // 0.9.0 a bare issuer's revocation store is ABSENT: it reports Unavailable and
@@ -42,7 +42,11 @@ import { InMemoryAudit, MintService, ReferenceIssuer } from 'vaid-mint';
 // fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
 // survive a restart. For anything that must, use `withRevocationBackend`.
 const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();
-const mint = new MintService(issuer, new InMemoryAudit());
+// `MintService` defaults `mintRoot` to deny-by-default (`DenyAll`).
+// `InsecurePermitAll` is asked for BY NAME here — fine for a quickstart with no
+// real caller/operator authority to check, never for production. A production
+// deployment supplies a real `AuthorizationGate` instead.
+const mint = new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll());
 
 const { vaid } = await mint.mintRoot({
   seed: {
@@ -165,9 +169,10 @@ dev.verifyVaid(vaid); // false
 - **Wire a durable `RevocationCheck`**, or hold the store absent until you have
   loaded revocation state into it. An absent store reports `Unavailable`, so
   verification fails closed until the load completes.
-- **Supply a real `AuthorizationGate`.** The default is `PermitAll`: a
-  reference-implementation choice, not a security recommendation. With it in
-  place, anyone who can reach the mint can issue a root VAID.
+- **Supply a real `AuthorizationGate`.** The default is `DenyAll` —
+  deny-by-default: `mintRoot` refuses every request until you supply one. The
+  explicit, clearly-named `InsecurePermitAll` opt-in exists for local
+  self-hosting, tests and demos — never use it in production.
 - **Supply a real `AuditSink`.** The reference sinks are in-memory and no-op.
 
 ## Authenticity is not standing

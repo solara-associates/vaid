@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from vaid_pop import canonical_request_signing_bytes
 from vaid_mint import (
-    MintService, InMemoryAudit, ReferenceIssuer, VaidSeed, prefix_entry,
+    MintService, InMemoryAudit, InsecurePermitAll, ReferenceIssuer, VaidSeed, prefix_entry,
     build_mint_pop_payload, MintPop,
 )
 from vaid_mint.error import UnauthorizedError
@@ -60,7 +60,11 @@ def pop(seed, sk, pub):
 
 # A mint is the thing that issues badges. One kernel key, held in memory here.
 issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
-mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+# `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+# `InsecurePermitAll` is asked for BY NAME here — fine for this demo's single
+# in-memory mint with no real caller/operator authority to check, never for
+# production. A production deployment supplies a real `AuthorizationGate` instead.
+mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll(), max_delegation_depth=2)
 
 # 1. Mint a root badge for an orchestrator agent: it may read and write "data.acme".
 orch_sk, orch_pub = keypair()

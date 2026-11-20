@@ -50,10 +50,14 @@ parse, with nothing failing at the point the mistake is made.
 Usage::
 
     from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed
-    from vaid_mint import prefix_entry
+    from vaid_mint import InsecurePermitAll, prefix_entry
 
     issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
-    mint = MintService(issuer, InMemoryAudit())
+    # `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+    # `InsecurePermitAll` is asked for BY NAME here — fine for a quickstart with
+    # no real caller/operator authority to check, never for production. A
+    # production deployment supplies a real `AuthorizationGate` instead.
+    mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
     vaid = mint.mint_root(VaidSeed(agent_class="orchestrator", version="1.0.0",
                                    tenant_id="acme",
                                    scope_boundary=[prefix_entry("data.acme")],
@@ -79,7 +83,7 @@ from vaid_mint.chain import (
     verify_chain_at,
     verify_chain_with,
 )
-from vaid_mint.authz import AuthorizationGate, DenyAll, PermitAll
+from vaid_mint.authz import AuthorizationGate, DenyAll, InsecurePermitAll
 from vaid_mint.document import (
     VAID_SIG_VERSION_V4,
     RECOGNISED_SCOPE_KINDS,
@@ -219,7 +223,7 @@ __all__ = [
     "InMemoryAudit",
     "NoopAudit",
     "AuthorizationGate",
-    "PermitAll",
+    "InsecurePermitAll",
     "DenyAll",
     "MintError",
     "UnauthorizedError",

@@ -15,6 +15,26 @@ version number.
 
 Published as [GHSA-3664-9ghr-pjqc](https://github.com/solara-associates/vaid/security/advisories/GHSA-3664-9ghr-pjqc).
 
+### Changed: `mintRoot`'s default `AuthorizationGate` is deny-by-default, not `PermitAll` (SECURITY, BREAKING)
+
+`MintService`'s constructor defaulted its `authz` parameter to `new
+PermitAll()`: anyone who could reach a mint constructed without an explicit
+gate could issue a root VAID, with no opt-in required.
+
+**Fix:** the default gate is now `new DenyAll()` — `mintRoot` refuses every
+request until a real `AuthorizationGate` is passed. `PermitAll` is renamed to
+`InsecurePermitAll`, an explicit, clearly-named opt-in for local
+self-hosting, tests, and demos, documented as insecure and never for
+production use. `mintChild` is unaffected: it was never routed through this
+gate (attenuation is its own authorization).
+
+**This is a breaking behavior change**: any caller that constructed a
+`MintService` without an explicit `authz` argument and relied on `mintRoot`
+succeeding must now pass `new InsecurePermitAll()` (to keep the old, insecure
+behavior) or a real gate (to get an actual authorization decision). See
+`'MintService denies root mint by default (no explicit authz)'` and
+`'InsecurePermitAll opt-in still permits root mint'`.
+
 ### Fixed: `mintChild` enforces a configurable maximum delegation depth (SECURITY)
 
 Same defect as the Rust crate's entry: `mintChild` never checked whether

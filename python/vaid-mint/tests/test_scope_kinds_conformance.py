@@ -194,12 +194,13 @@ def test_every_registered_kind_is_evaluable() -> None:
 )
 def test_the_mint_refuses_every_boundary_the_vector_calls_unparseable(case: dict) -> None:
     """A producer must not be able to sign what no verifier can read."""
-    from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
+    from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed
     from vaid_mint.error import MintError
 
     mint = MintService(
         ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(),
         InMemoryAudit(),
+        authz=InsecurePermitAll(),
     )
     with pytest.raises(MintError):
         mint.mint_root(
@@ -223,12 +224,13 @@ def test_the_mint_accepts_every_boundary_the_vector_calls_parsed(case: dict) -> 
     "only a prefix entry is acceptable": one of these cases is an UNRECOGNISED
     kind, which is well formed and must mint even though it is refused at
     verify as ``unknown_scope_kind``."""
-    from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed
+    from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed
     from vaid_mint.verify import parse_vaid_document
 
     mint = MintService(
         ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked(),
         InMemoryAudit(),
+        authz=InsecurePermitAll(),
     )
     vaid = mint.mint_root(
         VaidSeed(

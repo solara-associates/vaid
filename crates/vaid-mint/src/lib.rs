@@ -17,7 +17,8 @@
 //!   [`mint::MintService::mint_child`] (attenuated delegation).
 //! - [`audit`] — a stubbed [`audit::AuditSink`] seam (in-memory / no-op).
 //! - [`authz`] — the [`authz::AuthorizationGate`] seam for root mints, defaulting
-//!   to [`authz::PermitAll`] (a reference choice, not a security recommendation).
+//!   to [`authz::DenyAll`] (deny-by-default). [`authz::InsecurePermitAll`] is the
+//!   explicit, clearly-named opt-in for tests/demos — never production.
 //!
 //! - [`revocation`] — the three-state, lineage-aware [`revocation::RevocationCheck`]
 //!   seam (spec `docs/spec/revocation.md` R.4). The verifier assembles the ordered
@@ -61,6 +62,7 @@
 //! ```
 //! use std::sync::Arc;
 //! use vaid_mint::audit::InMemoryAudit;
+//! use vaid_mint::authz::InsecurePermitAll;
 //! use vaid_mint::issuer::{ReferenceIssuer, VaidIssuer};
 //! use vaid_mint::mint::MintService;
 //! use vaid_mint::mint_types::{MintVaidRequest, VaidSeed};
@@ -79,7 +81,12 @@
 //!         .assuming_nothing_revoked(),
 //! );
 //! let audit = Arc::new(InMemoryAudit::new());
-//! let mint = MintService::new(issuer.clone(), audit);
+//! // `MintService::new` defaults `mint_root` to deny-by-default (`DenyAll`).
+//! // `InsecurePermitAll` is asked for BY NAME here — fine for a quickstart with
+//! // no real caller/operator authority to check, never for production. A
+//! // production deployment supplies a real `AuthorizationGate` via
+//! // `MintService::with_authorization` instead.
+//! let mint = MintService::with_authorization(issuer.clone(), audit, Arc::new(InsecurePermitAll));
 //!
 //! // Mint a root VAID (generate-and-discard key path).
 //! let root = mint
@@ -121,7 +128,7 @@ pub use attestation::{
     canonical_attestation_signing_bytes, verify_attestation_authenticity, AttestationBundle,
     ConsentAttestation, ATTESTATION_VERSION,
 };
-pub use authz::{AuthorizationGate, PermitAll};
+pub use authz::{AuthorizationGate, DenyAll, InsecurePermitAll};
 pub use chain::{
     verify_chain, verify_chain_at, verify_chain_with, ChainVerification, KernelKeyMap,
     KernelKeyResolver, PresentedBundle, SingleKernelKey,

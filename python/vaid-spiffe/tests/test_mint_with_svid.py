@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed, prefix_entry
+from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed, prefix_entry
 from vaid_mint.error import IdentityError, UnauthorizedError
 
 from vaid_spiffe import SpiffeMint, SvidPresentation
@@ -18,7 +18,7 @@ from helpers import make_mint_pop, make_svid_possession, operating_keypair, seed
 def build_mint(tenant_id: str = "acme"):
     audit = InMemoryAudit()
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
-    return MintService(issuer, audit), audit, issuer
+    return MintService(issuer, audit, authz=InsecurePermitAll()), audit, issuer
 
 
 def test_valid_svid_mints_and_verifies_and_carries_spiffe_id(valid_svid, trust_domain):

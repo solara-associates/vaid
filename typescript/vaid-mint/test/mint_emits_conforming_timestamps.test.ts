@@ -26,6 +26,7 @@ import { test } from 'node:test';
 
 import { hasConformingTimestamps } from '../src/document.js';
 import { InMemoryAudit } from '../src/audit.js';
+import { InsecurePermitAll } from '../src/authz.js';
 import { MintService } from '../src/mint.js';
 import { ReferenceIssuer } from '../src/issuer.js';
 
@@ -37,7 +38,7 @@ const E6 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 async function mintOne() {
   const issuer = await ReferenceIssuer.ephemeral(24, 'vaid.example');
-  const mint = new MintService(issuer, new InMemoryAudit());
+  const mint = new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll());
   const { vaid } = await mint.mintRoot({
     seed: {
       agentClass: 'conformance',

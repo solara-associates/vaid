@@ -38,13 +38,13 @@ import {
   InMemoryRevocationList,
   MAX_LINEAGE_DEPTH,
   MINT_POP_FRESHNESS_SECS,
+  InsecurePermitAll,
   MintError,
   MintService,
   parentResolutionOf,
   parentResolutionRoot,
   parentResolutionUnknown,
   parseVaidDocument,
-  PermitAll,
   ReferenceIssuer,
   RevocationBackend,
   UnauthorizedError,
@@ -65,7 +65,11 @@ function fixture(): { service: MintService; audit: InMemoryAudit; issuer: Refere
   // `verifyVaid` would fail closed on Unavailable regardless of what the child's scope
   // says — a rejection for the wrong reason.
   const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
-  return { service: new MintService(issuer, audit), audit, issuer };
+  // Most tests in this file exercise mintRoot/mintChild behavior other than the
+  // authorization gate itself, so they opt into InsecurePermitAll explicitly;
+  // the gate's own deny-by-default and explicit-gate behavior is covered by
+  // dedicated tests below.
+  return { service: new MintService(issuer, audit, new InsecurePermitAll()), audit, issuer };
 }
 
 /** A holder keypair: the seed stays with the holder, only the public half travels. */
@@ -125,9 +129,35 @@ test('a root mint denied by the authorization gate has no side effects', async (
   const service = new MintService(ReferenceIssuer.ephemeral(1), audit, new DenyAll());
   await assert.rejects(
     service.mintRoot({ seed: { agentClass: 'researcher', version: '1.0.0', tenantId: 'acme' } }),
-    (error: Error) => error instanceof UnauthorizedError && /denied by gate/.test(error.message),
+    (error: Error) => error instanceof UnauthorizedError && /deny-by-default/.test(error.message),
   );
   assert.equal(audit.isEmpty(), true, 'a gate-denied root mint must not audit');
+});
+
+test('MintService denies root mint by default (no explicit authz)', async () => {
+  const audit = new InMemoryAudit();
+  const service = new MintService(ReferenceIssuer.ephemeral(1), audit);
+  await assert.rejects(
+    service.mintRoot({ seed: { agentClass: 'researcher', version: '1.0.0', tenantId: 'acme' } }),
+    (error: Error) => error instanceof UnauthorizedError && /deny-by-default/.test(error.message),
+  );
+  assert.equal(audit.isEmpty(), true, 'a deny-by-default root mint must not audit');
+});
+
+test('InsecurePermitAll opt-in still permits root mint', async () => {
+  const audit = new InMemoryAudit();
+  const service = new MintService(ReferenceIssuer.ephemeral(1), audit, new InsecurePermitAll());
+  const { vaid } = await service.mintRoot({
+    seed: {
+      agentClass: 'researcher',
+      version: '1.0.0',
+      tenantId: 'acme',
+      scopeBoundary: [prefixEntry('data.governance')],
+      capabilitySet: ['read.documents'],
+    },
+  });
+  assert.equal(vaid.agent_class, 'researcher');
+  assert.equal(audit.length, 1);
 });
 
 test('root BYO-key with a valid PoP binds the registered key', async () => {
@@ -346,7 +376,7 @@ test('default depth mints a root child but refuses a grandchild', async () => {
 
 test('a root child is always allowed regardless of configured depth', async () => {
   const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
-  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 1);
+  const service = new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll(), 1);
   const root = await mintRealRoot(service, 'aifactory');
   const child = await mintRealChild(service, root, 'root-to-child-explicit-1');
   assert.equal(child.parent_vaid, root.vaid_id);
@@ -354,7 +384,7 @@ test('a root child is always allowed regardless of configured depth', async () =
 
 test('depth 2 mints a grandchild but refuses a great-grandchild', async () => {
   const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
-  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 2);
+  const service = new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll(), 2);
   const root = await mintRealRoot(service, 'aifactory');
   const child = await mintRealChild(service, root, 'depth2-root-to-child');
   const grandchild = await mintRealChild(service, child, 'depth2-child-to-grandchild');
@@ -423,7 +453,7 @@ test('maxDelegationDepth one is accepted', () => {
 test('constructing a mint with an invalid depth fails closed', () => {
   const issuer = ReferenceIssuer.ephemeral(1);
   assert.throws(
-    () => new MintService(issuer, new InMemoryAudit(), new PermitAll(), 0),
+    () => new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll(), 0),
     ConfigError,
   );
 });
@@ -473,7 +503,7 @@ test('depth 1 refuses when the grandparent cannot be resolved after a restart', 
   // incomplete assembly, and refusal.
   const issuer = ReferenceIssuer.ephemeral(1);
   const audit = new InMemoryAudit();
-  const service = new MintService(issuer, audit); // default depth 1
+  const service = new MintService(issuer, audit, new InsecurePermitAll()); // default depth 1
   const root = await mintRealRoot(service, 'aifactory');
   const child = await mintRealChild(service, root, 'restart-root-to-child');
 
@@ -518,7 +548,7 @@ test('depth 2 refuses when an ancestor beyond the first hop is unresolvable', as
   const issuer = ReferenceIssuer.ephemeral(1).withRevocationBackend(
     new RevocationBackend(InMemoryRevocationList.assumeNothingRevoked(), store),
   );
-  const service = new MintService(issuer, new InMemoryAudit(), new PermitAll(), 2);
+  const service = new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll(), 2);
 
   const request = signedChild(
     grandchild,
@@ -635,7 +665,7 @@ test('end-to-end: a minted child verifies against its issuer and is contained by
   // Vouching: the subject is attenuation and scope containment, not the 0.9.0
   // fail-closed default (see revocation_seam.test.ts, cross-language scenarios).
   const issuer = ReferenceIssuer.ephemeral(1).assumingNothingRevoked();
-  const service = new MintService(issuer, audit);
+  const service = new MintService(issuer, audit, new InsecurePermitAll());
 
   // Mint a REAL parent root through the issuer, so its lineage is recorded and
   // the child's ancestry is resolvable at verification (R.4.2). A synthetic

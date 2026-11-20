@@ -34,6 +34,7 @@ from vaid_pop import canonical_request_signing_bytes
 from vaid_mint import (
     ChainVerification,
     InMemoryAudit,
+    InsecurePermitAll,
     MintService,
     MintPop,
     PresentedBundle,
@@ -100,7 +101,10 @@ issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked(
 # max_delegation_depth=2 so step 4c's root -> child -> grandchild attempt reaches
 # the SCOPE check this quickstart is demonstrating, instead of being refused one
 # hop earlier by the depth limit (0.11.0 default is 1, i.e. root -> child only).
-mint = MintService(issuer, InMemoryAudit(), max_delegation_depth=2)
+# `MintService` also defaults `mint_root` to deny-by-default (`DenyAll`);
+# `InsecurePermitAll` is asked for BY NAME here — fine for this quickstart, never
+# for production, where a real `AuthorizationGate` is supplied instead.
+mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll(), max_delegation_depth=2)
 kernel_key = issuer.kernel_public_key()
 
 print(

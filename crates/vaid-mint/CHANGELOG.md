@@ -7,6 +7,29 @@ All notable changes to `vaid-mint` are documented here. This project adheres to
 
 Published as [GHSA-3664-9ghr-pjqc](https://github.com/solara-associates/vaid/security/advisories/GHSA-3664-9ghr-pjqc).
 
+### Changed: `mint_root`'s default `AuthorizationGate` is deny-by-default, not `PermitAll` (SECURITY, BREAKING)
+
+`MintService::new` (and every constructor that omitted an explicit gate)
+defaulted `mint_root` to `PermitAll`: anyone who could reach a mint
+constructed this way could issue a root VAID, with no opt-in required. That
+default survived from the seam's introduction and was documented as a known
+gap rather than closed.
+
+**Fix:** the default gate is now `DenyAll` — `mint_root` refuses every
+request until a real `AuthorizationGate` is supplied via
+`MintService::with_authorization`. `PermitAll` is renamed to
+`InsecurePermitAll`, an explicit, clearly-named opt-in for local
+self-hosting, tests, and demos, documented as insecure and never for
+production use. `mint_child` is unaffected: it was never routed through
+this gate (attenuation is its own authorization).
+
+**This is a breaking behavior change**: any caller that constructed a
+`MintService` without an explicit `AuthorizationGate` and relied on
+`mint_root` succeeding must now pass `InsecurePermitAll` (to keep the old,
+insecure behavior) or a real gate (to get an actual authorization decision).
+See `mint_service_new_denies_root_mint_by_default` and
+`insecure_permit_all_opt_in_still_permits_root_mint`.
+
 ### Fixed: `mint_child` enforces a configurable maximum delegation depth (SECURITY)
 
 `mint_child` attenuated a new child's tenant, scope, and capability set

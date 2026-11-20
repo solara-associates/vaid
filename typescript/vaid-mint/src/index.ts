@@ -36,10 +36,14 @@
  * TypeScript), NOT byte-conformant against the managed authority's VAID format.
  *
  * ```ts
- * import { InMemoryAudit, MintService, ReferenceIssuer, prefixEntry } from 'vaid-mint';
+ * import { InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, prefixEntry } from 'vaid-mint';
  *
  * const issuer = ReferenceIssuer.ephemeral(24).assumingNothingRevoked();
- * const mint = new MintService(issuer, new InMemoryAudit());
+ * // `MintService` defaults `mintRoot` to deny-by-default (`DenyAll`).
+ * // `InsecurePermitAll` is asked for BY NAME here — fine for a quickstart with
+ * // no real caller/operator authority to check, never for production. A
+ * // production deployment supplies a real `AuthorizationGate` instead.
+ * const mint = new MintService(issuer, new InMemoryAudit(), new InsecurePermitAll());
  * const { vaid } = await mint.mintRoot({
  *   seed: {
  *     agentClass: 'orchestrator',
@@ -60,7 +64,7 @@ export {
   type AuditSink,
 } from './audit.js';
 
-export { DenyAll, PermitAll, type AuthorizationGate } from './authz.js';
+export { DenyAll, InsecurePermitAll, type AuthorizationGate } from './authz.js';
 
 export {
   buildUnsignedVaidDocument,

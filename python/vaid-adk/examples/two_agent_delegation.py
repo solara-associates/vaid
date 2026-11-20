@@ -22,6 +22,7 @@ from google.genai import types as gtypes
 
 from vaid_mint import (
     InMemoryAudit,
+    InsecurePermitAll,
     MintService,
     ReferenceIssuer,
     VaidSeed,
@@ -113,7 +114,11 @@ async def main() -> None:
         kernel_key.private_bytes_raw(), vaid_ttl_hours=1, trust_domain=TRUST_DOMAIN
     )
     revocation = InMemoryRevocationList.assume_nothing_revoked()
-    mint = MintService(issuer, InMemoryAudit())
+    # `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+    # `InsecurePermitAll` is asked for BY NAME here — fine for this offline demo,
+    # never for production. A production deployment supplies a real
+    # `AuthorizationGate` instead.
+    mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
 
     root = mint.mint_root(
         VaidSeed(

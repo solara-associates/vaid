@@ -13,13 +13,16 @@ question it leaves (an open, cross-language field for this).
 
 Usage::
 
-    from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer
+    from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer
     from vaid_spiffe import SpiffeMint, SvidPresentation
 
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
     audit = InMemoryAudit()
+    # `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+    # `InsecurePermitAll` is asked for BY NAME here — fine for this quickstart,
+    # never for production, where a real `AuthorizationGate` is supplied instead.
     mint = SpiffeMint(
-        MintService(issuer, audit),
+        MintService(issuer, audit, authz=InsecurePermitAll()),
         audit,
         trust_bundle=[root_ca_der],
         expected_trust_domain="example.org",

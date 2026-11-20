@@ -34,7 +34,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.x509.oid import NameOID
 
-from vaid_mint import InMemoryAudit, MintService, ReferenceIssuer, VaidSeed, prefix_entry
+from vaid_mint import InMemoryAudit, InsecurePermitAll, MintService, ReferenceIssuer, VaidSeed, prefix_entry
 from vaid_mint import build_mint_pop_payload
 from vaid_mint.error import IdentityError
 from vaid_mint.mint_types import MintPop
@@ -140,7 +140,7 @@ def _build_mint(trust_bundle_der: list[bytes], trust_domain: str):
     audit = InMemoryAudit()
     issuer = ReferenceIssuer.ephemeral(1, "vaid.example").assuming_nothing_revoked()
     mint = SpiffeMint(
-        MintService(issuer, audit),
+        MintService(issuer, audit, authz=InsecurePermitAll()),
         audit,
         trust_bundle=trust_bundle_der,
         expected_trust_domain=trust_domain,

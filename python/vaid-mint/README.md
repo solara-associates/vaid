@@ -151,13 +151,15 @@ absent state (the default `InMemoryRevocationList()` constructor, which reports
 it. The hosted product additionally offers a durable, hash-chained revocation
 store; the open package gives you the seam to plug your own into.
 
-### Unguarded defaults: authorization and delegation
+### Defaults: authorization and delegation
 
-This is a reference implementation with two deliberate, **unguarded** defaults:
+This is a reference implementation with one deny-by-default gate and one
+intentionally ungated path:
 
-1. **`mint_root` has no authorization gate by default (`PermitAll`).** Anyone who
-   can call this code can mint a root VAID. Supply a real `AuthorizationGate` for
-   anything beyond local experimentation.
+1. **`mint_root` denies every request by default (`DenyAll`).** Supply a real
+   `AuthorizationGate` to `MintService(..., authz=...)` for anything beyond local
+   experimentation; the explicit, clearly-named `InsecurePermitAll` opt-in exists
+   for local self-hosting, tests and demos — never for production.
 2. **`mint_child` is intentionally ungated — attenuation *is* the authorization.**
    Any holder of a valid parent VAID can mint children from it; a child can only
    *narrow* scope/capabilities relative to its parent, never widen
@@ -165,12 +167,10 @@ This is a reference implementation with two deliberate, **unguarded** defaults:
    boundary for delegation here. **Treat parent-VAID custody with the same care as
    a credential.**
 
-Neither of these is a security recommendation for production use — they are the
-honest defaults of a self-hostable reference mint. See the sections below for
-where each is enforced in code.
+See the sections below for where each is enforced in code.
 
 ```python
-from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed, prefix_entry
+from vaid_mint import ReferenceIssuer, InMemoryAudit, InsecurePermitAll, MintService, VaidSeed, prefix_entry
 
 # `assuming_nothing_revoked()` is the pre-0.9.0 default, asked for BY NAME. Since
 # 0.9.0 a bare issuer's revocation store is ABSENT: it reports UNAVAILABLE and
@@ -178,7 +178,11 @@ from vaid_mint import ReferenceIssuer, InMemoryAudit, MintService, VaidSeed, pre
 # fail-OPEN posture — fine for a quickstart with no revocation store, and it does not
 # survive a restart. For anything that must, use `with_revocation_backend`.
 issuer = ReferenceIssuer.ephemeral(24, "vaid.example").assuming_nothing_revoked()
-mint = MintService(issuer, InMemoryAudit())
+# `MintService` defaults `mint_root` to deny-by-default (`DenyAll`).
+# `InsecurePermitAll` is asked for BY NAME here — fine for a quickstart with no
+# real caller/operator authority to check, never for production. A production
+# deployment supplies a real `AuthorizationGate` instead.
+mint = MintService(issuer, InMemoryAudit(), authz=InsecurePermitAll())
 root = mint.mint_root(VaidSeed(
     agent_class="orchestrator", version="1.0.0", tenant_id="acme",
     scope_boundary=[prefix_entry("data.acme")], capability_set=["read", "write"],
@@ -209,8 +213,10 @@ the durability.
 | Policy / mesh / federation | — | control plane |
 
 `mint_root` is gated by an `AuthorizationGate` that defaults
-to `PermitAll` — a reference-implementation choice, **not** a security
-recommendation; production deployments should pass a real gate to `MintService`.
+to `DenyAll` — deny-by-default; production deployments should pass a real gate to
+`MintService(..., authz=...)`. For local self-hosting, tests, or demos that
+intentionally want every root mint to succeed, opt in explicitly with
+`InsecurePermitAll` — **insecure, never for production**.
 
 `mint_child` is intentionally **ungated because attenuation *is* the
 authorization**: any holder of a valid parent VAID can mint children from it, and
