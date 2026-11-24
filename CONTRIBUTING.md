@@ -32,11 +32,30 @@ cargo clippy --workspace -- -D warnings
 **Python** (`python/vaid-pop`)
 ```bash
 cd python/vaid-pop
-uv sync && uv run pytest        # runs the same conformance vectors
+uv sync --extra test && uv run pytest    # runs the same conformance vectors
 ```
+`pytest` is behind the `test` extra, not a base dependency — a plain
+`uv sync` will not install it, and `uv run pytest` then silently falls back
+to whatever `pytest` is already on `PATH` outside the project's venv, which
+fails every test with `ModuleNotFoundError: No module named 'vaid_pop'`. Use
+`--extra test` on a fresh clone.
 
-A PR must keep **both** languages green and reproduce the conformance vector
-identically.
+**TypeScript** (`typescript/`, an npm workspace of `vaid-pop`, `vaid-mint`,
+`vaid-client`)
+```bash
+cd typescript
+npm install
+npm run build --workspaces       # vaid-mint/vaid-client import vaid-pop's
+                                  # built dist/, not its source
+npm test                         # runs the same conformance vectors
+```
+The build step is required before `npm test`: `vaid-pop`'s `package.json`
+points `main`/`types` at `dist/`, which only exists after a build, so
+running `npm test` first fails `vaid-mint` and `vaid-client` with
+`TS2307: Cannot find module 'vaid-pop'`.
+
+A PR must keep **all three languages** green and reproduce the conformance
+vector identically.
 
 ## Releasing and version tags
 

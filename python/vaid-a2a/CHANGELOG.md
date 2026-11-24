@@ -7,7 +7,7 @@ This package versions **independently** of `vaid-pop`, `vaid-mint` and
 `vaid-langchain`; a shared version number between them is a coincidence, not
 a guarantee.
 
-## [0.2.1] — UNRELEASED
+## [0.2.1] — released 2026-10-14
 
 This release exists because of [GHSA-3664-9ghr-pjqc](https://github.com/solara-associates/vaid/security/advisories/GHSA-3664-9ghr-pjqc), the `vaid-mint` 0.11.0 delegation-depth fix.
 
